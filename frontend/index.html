@@ -1,0 +1,1003 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Translation Provenance System</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
+
+  :root {
+    --bg: #0a0b0f;
+    --surface: #111318;
+    --surface2: #181c24;
+    --border: #1e2433;
+    --accent: #4ade80;
+    --accent2: #818cf8;
+    --accent3: #fb923c;
+    --accent4: #38bdf8;
+    --text: #e2e8f0;
+    --text-dim: #64748b;
+    --text-muted: #334155;
+    --danger: #f87171;
+    --warning: #fbbf24;
+    --mono: 'JetBrains Mono', monospace;
+    --sans: 'Space Grotesk', sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Grid background */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(74,222,128,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(74,222,128,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .container { max-width: 1400px; margin: 0 auto; padding: 0 24px; position: relative; z-index: 1; }
+
+  /* ── Header ── */
+  header {
+    border-bottom: 1px solid var(--border);
+    background: rgba(10,11,15,0.9);
+    backdrop-filter: blur(12px);
+    position: sticky; top: 0; z-index: 100;
+  }
+  .header-inner {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 0;
+  }
+  .logo {
+    display: flex; align-items: center; gap: 12px;
+    font-family: var(--mono); font-size: 13px; font-weight: 600;
+    letter-spacing: 0.05em; color: var(--accent);
+  }
+  .logo-mark {
+    width: 32px; height: 32px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px;
+  }
+  .header-badges {
+    display: flex; gap: 8px;
+  }
+  .badge {
+    font-family: var(--mono); font-size: 10px;
+    padding: 4px 8px; border-radius: 4px;
+    border: 1px solid; letter-spacing: 0.08em;
+  }
+  .badge-green { color: var(--accent); border-color: rgba(74,222,128,0.3); background: rgba(74,222,128,0.05); }
+  .badge-blue  { color: var(--accent4); border-color: rgba(56,189,248,0.3); background: rgba(56,189,248,0.05); }
+  .badge-purple{ color: var(--accent2); border-color: rgba(129,140,248,0.3); background: rgba(129,140,248,0.05); }
+
+  /* ── Tabs ── */
+  .tabs {
+    display: flex; gap: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .tab {
+    padding: 12px 24px; font-size: 13px; font-weight: 500;
+    cursor: pointer; border: none; background: none;
+    color: var(--text-dim); font-family: var(--sans);
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+    transition: all 0.15s; letter-spacing: 0.02em;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  /* ── Tab Panels ── */
+  .tab-panel { display: none; padding: 32px 0; }
+  .tab-panel.active { display: block; }
+
+  /* ── Stats Bar ── */
+  .stats-bar {
+    display: grid; grid-template-columns: repeat(4, 1fr);
+    gap: 16px; margin-bottom: 32px;
+  }
+  .stat-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 20px 24px;
+  }
+  .stat-label { font-size: 11px; color: var(--text-dim); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 8px; }
+  .stat-value { font-family: var(--mono); font-size: 28px; font-weight: 700; }
+  .stat-value.green { color: var(--accent); }
+  .stat-value.blue  { color: var(--accent4); }
+  .stat-value.purple{ color: var(--accent2); }
+  .stat-value.orange{ color: var(--accent3); }
+
+  /* ── Two-column layout ── */
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .three-col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+
+  /* ── Cards ── */
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; overflow: hidden;
+  }
+  .card-header {
+    padding: 16px 20px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .card-title {
+    font-size: 13px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+    color: var(--text-dim);
+  }
+  .card-body { padding: 20px; }
+
+  /* ── Form elements ── */
+  .form-group { margin-bottom: 16px; }
+  label { display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 6px; letter-spacing: 0.06em; text-transform: uppercase; }
+  input, textarea, select {
+    width: 100%; padding: 10px 14px;
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 8px; color: var(--text); font-family: var(--sans); font-size: 14px;
+    transition: border-color 0.15s, box-shadow 0.15s;
+    outline: none;
+  }
+  input:focus, textarea:focus, select:focus {
+    border-color: rgba(74,222,128,0.4);
+    box-shadow: 0 0 0 3px rgba(74,222,128,0.08);
+  }
+  textarea { resize: vertical; min-height: 100px; font-family: var(--sans); }
+  select option { background: var(--surface2); }
+
+  /* ── Buttons ── */
+  .btn {
+    padding: 10px 20px; border-radius: 8px; font-size: 13px; font-weight: 600;
+    cursor: pointer; border: none; font-family: var(--sans); letter-spacing: 0.03em;
+    transition: all 0.15s; display: inline-flex; align-items: center; gap: 8px;
+  }
+  .btn-primary { background: var(--accent); color: #000; }
+  .btn-primary:hover { background: #6ee7a0; transform: translateY(-1px); }
+  .btn-secondary { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  .btn-secondary:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-sm { padding: 6px 12px; font-size: 12px; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+  /* ── Translation result card ── */
+  .result-card {
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 10px; padding: 20px; margin-top: 20px;
+  }
+  .result-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+  .result-lang {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 14px;
+  }
+  .result-lang-label { font-size: 11px; color: var(--text-dim); margin-bottom: 8px; }
+  .result-lang-text { font-size: 14px; line-height: 1.6; }
+
+  /* ── Provenance chain ── */
+  .prov-chain {
+    display: flex; align-items: center; gap: 0;
+    overflow-x: auto; padding: 4px 0 16px;
+  }
+  .prov-node {
+    flex-shrink: 0;
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 12px 16px; min-width: 160px;
+    text-align: center;
+  }
+  .prov-node-type {
+    font-size: 10px; color: var(--text-dim); letter-spacing: 0.08em;
+    text-transform: uppercase; margin-bottom: 6px;
+  }
+  .prov-node-label { font-size: 13px; font-weight: 600; }
+  .prov-node.entity { border-color: rgba(74,222,128,0.3); }
+  .prov-node.entity .prov-node-label { color: var(--accent); }
+  .prov-node.activity { border-color: rgba(56,189,248,0.3); }
+  .prov-node.activity .prov-node-label { color: var(--accent4); }
+  .prov-node.agent { border-color: rgba(129,140,248,0.3); }
+  .prov-node.agent .prov-node-label { color: var(--accent2); }
+  .prov-node.deployment { border-color: rgba(251,146,60,0.3); }
+  .prov-node.deployment .prov-node-label { color: var(--accent3); }
+  .prov-arrow {
+    flex-shrink: 0; width: 32px; text-align: center;
+    color: var(--text-muted); font-size: 18px;
+  }
+
+  /* ── Code block ── */
+  .code-block {
+    background: #050709; border: 1px solid var(--border);
+    border-radius: 8px; padding: 16px; overflow-x: auto;
+    font-family: var(--mono); font-size: 12px; line-height: 1.7;
+    color: #94a3b8; max-height: 400px; overflow-y: auto;
+  }
+  .code-block .k { color: var(--accent2); }
+  .code-block .s { color: var(--accent); }
+  .code-block .c { color: var(--text-muted); font-style: italic; }
+
+  /* ── Translation list ── */
+  .translation-row {
+    display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 120px;
+    gap: 16px; align-items: center;
+    padding: 14px 0; border-bottom: 1px solid var(--border);
+    font-size: 13px;
+  }
+  .translation-row:last-child { border-bottom: none; }
+  .translation-text { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .method-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 600;
+  }
+  .method-ai { background: rgba(74,222,128,0.1); color: var(--accent); }
+  .method-human { background: rgba(129,140,248,0.1); color: var(--accent2); }
+  .method-hybrid { background: rgba(251,146,60,0.1); color: var(--accent3); }
+
+  /* ── Context tags ── */
+  .context-tag {
+    display: inline-flex; padding: 2px 8px; border-radius: 4px;
+    font-size: 10px; font-weight: 600; letter-spacing: 0.05em;
+    background: rgba(56,189,248,0.1); color: var(--accent4);
+    border: 1px solid rgba(56,189,248,0.2);
+  }
+
+  /* ── Notification ── */
+  .toast {
+    position: fixed; bottom: 24px; right: 24px;
+    background: var(--surface); border: 1px solid var(--accent);
+    border-radius: 10px; padding: 14px 20px;
+    color: var(--accent); font-size: 13px; font-weight: 500;
+    transform: translateY(100px); opacity: 0;
+    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    z-index: 1000; max-width: 360px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  }
+  .toast.show { transform: translateY(0); opacity: 1; }
+
+  /* ── Loading ── */
+  .spinner {
+    width: 16px; height: 16px; border: 2px solid rgba(74,222,128,0.2);
+    border-top-color: var(--accent); border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .empty-state {
+    text-align: center; padding: 48px 24px; color: var(--text-dim);
+  }
+  .empty-state .icon { font-size: 48px; margin-bottom: 16px; }
+  .empty-state p { font-size: 14px; }
+
+  /* ── Search results ── */
+  .search-result {
+    padding: 16px; border-bottom: 1px solid var(--border);
+    cursor: pointer; transition: background 0.1s;
+  }
+  .search-result:hover { background: var(--surface2); }
+  .search-score {
+    font-family: var(--mono); font-size: 11px;
+    color: var(--accent); float: right;
+  }
+
+  /* ── Responsive ── */
+  @media (max-width: 768px) {
+    .stats-bar { grid-template-columns: 1fr 1fr; }
+    .two-col, .result-grid { grid-template-columns: 1fr; }
+    .translation-row { grid-template-columns: 1fr 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="container">
+    <div class="header-inner">
+      <div class="logo">
+        <div class="logo-mark">🔍</div>
+        <div>
+          <div>PROVENANCE</div>
+          <div style="font-size:10px;color:var(--text-dim);font-weight:400;">AI Translation Tracking System</div>
+        </div>
+      </div>
+      <div class="header-badges">
+        <span class="badge badge-green">W3C PROV-DM</span>
+        <span class="badge badge-blue">XLIFF 2.0</span>
+        <span class="badge badge-purple">Haystack</span>
+      </div>
+    </div>
+    <div class="tabs">
+      <button class="tab active" onclick="switchTab('translate')">▶ Translate</button>
+      <button class="tab" onclick="switchTab('history')">📋 History</button>
+      <button class="tab" onclick="switchTab('provenance')">🔗 Provenance</button>
+      <button class="tab" onclick="switchTab('search')">🔎 Search</button>
+      <button class="tab" onclick="switchTab('xliff')">📄 XLIFF</button>
+    </div>
+  </div>
+</header>
+
+<div class="container">
+
+  <!-- ── Stats Bar ── -->
+  <div style="padding-top:24px">
+    <div class="stats-bar" id="stats-bar">
+      <div class="stat-card">
+        <div class="stat-label">Total Translations</div>
+        <div class="stat-value green" id="stat-total">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">AI Translated</div>
+        <div class="stat-value blue" id="stat-ai">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Human Translated</div>
+        <div class="stat-value purple" id="stat-human">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Deployments</div>
+        <div class="stat-value orange" id="stat-deploys">0</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════
+       TAB: TRANSLATE
+  ══════════════════════════════════════ -->
+  <div class="tab-panel active" id="panel-translate">
+    <div class="two-col">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">New Translation</span>
+          <span class="badge badge-green">POST /api/v1/translations</span>
+        </div>
+        <div class="card-body">
+          <div class="form-group">
+            <label>Source Text</label>
+            <textarea id="source-text" placeholder="Enter text to translate...">Welcome to our platform. We're committed to delivering exceptional service and innovative solutions for your business needs.</textarea>
+          </div>
+          <div class="two-col">
+            <div class="form-group">
+              <label>Source Language</label>
+              <select id="source-lang">
+                <option value="en-US">English (US)</option>
+                <option value="en-GB">English (UK)</option>
+                <option value="fr-FR">French</option>
+                <option value="de-DE">German</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Target Language</label>
+              <select id="target-lang">
+                <option value="fr-FR">French</option>
+                <option value="de-DE">German</option>
+                <option value="es-ES">Spanish</option>
+                <option value="ja-JP">Japanese</option>
+                <option value="zh-CN">Chinese (Simplified)</option>
+              </select>
+            </div>
+          </div>
+          <div class="two-col">
+            <div class="form-group">
+              <label>Translation Method</label>
+              <select id="method">
+                <option value="ai">AI (Machine Translation)</option>
+                <option value="human">Human Translator</option>
+                <option value="hybrid">Hybrid (AI + Human PE)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Deployment Context</label>
+              <select id="context">
+                <option value="website">Website</option>
+                <option value="banner_ad">Banner Ad</option>
+                <option value="marketing_campaign">Marketing Campaign</option>
+                <option value="email">Email</option>
+                <option value="mobile_app">Mobile App</option>
+                <option value="social_media">Social Media</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Deployment URL / Location (optional)</label>
+            <input type="text" id="deploy-location" placeholder="https://example.com/page or campaign-id-2024-q1">
+          </div>
+          <div class="form-group">
+            <label>Domain / Subject Area (optional)</label>
+            <input type="text" id="domain" placeholder="marketing, legal, technical, medical...">
+          </div>
+          <button class="btn btn-primary" onclick="submitTranslation()" id="translate-btn">
+            <span>▶ Translate & Track Provenance</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Result panel -->
+      <div>
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Translation Result</span>
+          </div>
+          <div class="card-body" id="result-panel">
+            <div class="empty-state">
+              <div class="icon">🌐</div>
+              <p>Your translation with full provenance will appear here.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:16px">
+          <div class="card-header">
+            <span class="card-title">Provenance Chain</span>
+            <span style="font-size:11px;color:var(--text-dim)">W3C PROV-DM</span>
+          </div>
+          <div class="card-body" id="prov-chain-panel">
+            <div style="font-size:12px;color:var(--text-dim)">Provenance chain will appear after translation.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════
+       TAB: HISTORY
+  ══════════════════════════════════════ -->
+  <div class="tab-panel" id="panel-history">
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Translation History</span>
+        <button class="btn btn-sm btn-secondary" onclick="loadHistory()">↻ Refresh</button>
+      </div>
+      <div class="card-body">
+        <div class="translation-row" style="font-size:11px;color:var(--text-dim);font-weight:700;letter-spacing:0.08em;text-transform:uppercase;border-bottom:1px solid var(--border)">
+          <div>Source → Target Text</div>
+          <div>Languages</div>
+          <div>Method</div>
+          <div>Context</div>
+          <div>Actions</div>
+        </div>
+        <div id="history-list">
+          <div class="empty-state"><div class="icon">📋</div><p>No translations yet. Create one in the Translate tab.</p></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════
+       TAB: PROVENANCE
+  ══════════════════════════════════════ -->
+  <div class="tab-panel" id="panel-provenance">
+    <div class="two-col" style="margin-bottom:24px">
+      <div class="card">
+        <div class="card-header"><span class="card-title">Lookup Provenance</span></div>
+        <div class="card-body">
+          <div class="form-group">
+            <label>Translation Unit ID</label>
+            <input type="text" id="prov-lookup-id" placeholder="Paste a translation unit ID...">
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="lookupProvenance()">Fetch Provenance</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">Quick Links</span></div>
+        <div class="card-body">
+          <div style="font-size:12px;color:var(--text-dim);margin-bottom:12px">Click on any translation in History to auto-fill the ID above.</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap" id="quick-prov-links">
+            <span style="font-size:12px;color:var(--text-dim)">No translations yet.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="prov-detail" style="display:none">
+      <div class="card" style="margin-bottom:16px">
+        <div class="card-header">
+          <span class="card-title">Provenance Graph</span>
+          <span class="badge badge-green" id="prov-bundle-id"></span>
+        </div>
+        <div class="card-body">
+          <div id="prov-graph-nodes"></div>
+          <div class="prov-chain" id="prov-chain-display" style="margin-top:16px"></div>
+        </div>
+      </div>
+
+      <div class="two-col">
+        <div class="card">
+          <div class="card-header"><span class="card-title">PROV-N Notation</span></div>
+          <div class="card-body">
+            <div class="code-block" id="prov-n-display"></div>
+            <button class="btn btn-secondary btn-sm" style="margin-top:12px" onclick="downloadProvN()">↓ Download PROV-N</button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><span class="card-title">PROV-JSON</span></div>
+          <div class="card-body">
+            <div class="code-block" id="prov-json-display"></div>
+            <button class="btn btn-secondary btn-sm" style="margin-top:12px" onclick="downloadProvJson()">↓ Download PROV-JSON</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:16px">
+        <div class="card-header"><span class="card-title">Deployment Records</span></div>
+        <div class="card-body" id="deployments-display"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════
+       TAB: SEARCH
+  ══════════════════════════════════════ -->
+  <div class="tab-panel" id="panel-search">
+    <div class="card" style="margin-bottom:24px">
+      <div class="card-header"><span class="card-title">Semantic Search (Haystack)</span></div>
+      <div class="card-body">
+        <div style="display:flex;gap:12px;align-items:flex-end">
+          <div class="form-group" style="flex:1;margin:0">
+            <label>Search Query</label>
+            <input type="text" id="search-query" placeholder="Search translations by content, language, context..." onkeydown="if(event.key==='Enter')doSearch()">
+          </div>
+          <button class="btn btn-primary" onclick="doSearch()">Search</button>
+        </div>
+        <div style="display:flex;gap:12px;margin-top:12px;flex-wrap:wrap">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;text-transform:none;color:var(--text)">
+            <input type="checkbox" id="semantic-toggle" checked style="width:auto"> Semantic Search
+          </label>
+          <select id="filter-method" style="width:auto;font-size:12px;padding:6px 10px">
+            <option value="">All Methods</option>
+            <option value="ai">AI Only</option>
+            <option value="human">Human Only</option>
+            <option value="hybrid">Hybrid Only</option>
+          </select>
+          <select id="filter-context" style="width:auto;font-size:12px;padding:6px 10px">
+            <option value="">All Contexts</option>
+            <option value="website">Website</option>
+            <option value="banner_ad">Banner Ad</option>
+            <option value="marketing_campaign">Marketing</option>
+            <option value="email">Email</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div id="search-results">
+      <div class="empty-state"><div class="icon">🔎</div><p>Enter a query to search across all indexed translations.</p></div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════
+       TAB: XLIFF
+  ══════════════════════════════════════ -->
+  <div class="tab-panel" id="panel-xliff">
+    <div class="two-col">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Export XLIFF 2.0</span>
+          <span class="badge badge-blue">ISO 21720:2017</span>
+        </div>
+        <div class="card-body">
+          <div class="form-group">
+            <label>Translation Unit ID</label>
+            <input type="text" id="xliff-unit-id" placeholder="Enter translation unit ID...">
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-primary btn-sm" onclick="previewXliff()">Preview</button>
+            <button class="btn btn-secondary btn-sm" onclick="downloadXliff()">↓ Download .xliff</button>
+          </div>
+          <div style="margin-top:12px;font-size:12px;color:var(--text-dim)">
+            XLIFF 2.0 documents include embedded W3C PROV metadata, deployment context, translation method, agent information, and quality scores.
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">XLIFF Standards</span></div>
+        <div class="card-body">
+          <div style="font-size:13px;line-height:1.8;color:var(--text-dim)">
+            <div>✓ <strong style="color:var(--text)">XLIFF 2.0</strong> — ISO 21720:2017 core structure</div>
+            <div>✓ <strong style="color:var(--text)">W3C PROV</strong> — Embedded provenance metadata</div>
+            <div>✓ <strong style="color:var(--text)">Dublin Core</strong> — dc:created, dc:language</div>
+            <div>✓ <strong style="color:var(--text)">Custom namespace</strong> — provx: extension attributes</div>
+            <div>✓ <strong style="color:var(--text)">BCP-47</strong> — Language tag compliance</div>
+            <div>✓ <strong style="color:var(--text)">MQM quality</strong> — Multidimensional Quality Metrics</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:24px">
+      <div class="card-header"><span class="card-title">XLIFF Preview</span></div>
+      <div class="card-body">
+        <div class="code-block" id="xliff-preview"><span style="color:var(--text-dim)">// Select a translation unit and click Preview</span></div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /container -->
+
+<div class="toast" id="toast"></div>
+
+<script>
+const API = '';  // same origin
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let translationIds = [];
+let currentProvId = null;
+let currentProvN = '';
+let currentProvJson = {};
+
+// ── Tabs ──────────────────────────────────────────────────────────────────────
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  event.target.classList.add('active');
+  document.getElementById('panel-' + name).classList.add('active');
+  if (name === 'history') loadHistory();
+  if (name === 'provenance') updateQuickLinks();
+}
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+function toast(msg, duration = 3000) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), duration);
+}
+
+// ── Stats ─────────────────────────────────────────────────────────────────────
+async function loadStats() {
+  try {
+    const r = await fetch(`${API}/api/v1/translations/stats`);
+    const d = await r.json();
+    document.getElementById('stat-total').textContent = d.total_translations;
+    document.getElementById('stat-ai').textContent = d.by_method?.ai || 0;
+    document.getElementById('stat-human').textContent = (d.by_method?.human || 0) + (d.by_method?.hybrid || 0);
+    document.getElementById('stat-deploys').textContent = d.total_deployments;
+  } catch(e) {}
+}
+loadStats();
+
+// ── Submit Translation ─────────────────────────────────────────────────────────
+async function submitTranslation() {
+  const btn = document.getElementById('translate-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner"></div> Translating...';
+
+  const body = {
+    source_text: document.getElementById('source-text').value,
+    source_language: document.getElementById('source-lang').value,
+    target_language: document.getElementById('target-lang').value,
+    method: document.getElementById('method').value,
+    context: document.getElementById('context').value,
+    deployment_location: document.getElementById('deploy-location').value || null,
+    domain: document.getElementById('domain').value || null,
+  };
+
+  try {
+    const r = await fetch(`${API}/api/v1/translations/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const d = await r.json();
+
+    if (!r.ok) throw new Error(d.detail || 'Translation failed');
+
+    translationIds.unshift(d.translation_unit_id);
+    displayResult(d, body);
+    displayProvChain(d, body);
+    loadStats();
+    toast('✓ Translation completed and provenance recorded');
+  } catch(e) {
+    toast('✗ Error: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '▶ Translate & Track Provenance';
+  }
+}
+
+function displayResult(d, req) {
+  const methodBadge = {ai:'🤖 AI', human:'👤 Human', hybrid:'⚡ Hybrid'}[d.method] || d.method;
+  const conf = d.confidence_score ? `${(d.confidence_score*100).toFixed(0)}%` : 'N/A';
+
+  document.getElementById('result-panel').innerHTML = `
+    <div class="result-grid">
+      <div class="result-lang">
+        <div class="result-lang-label">SOURCE (${d.source_language})</div>
+        <div class="result-lang-text">${esc(d.source_text)}</div>
+      </div>
+      <div class="result-lang">
+        <div class="result-lang-label">TRANSLATION (${d.target_language})</div>
+        <div class="result-lang-text" style="color:var(--accent)">${esc(d.translated_text)}</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+      <span class="method-pill method-${d.method}">${methodBadge}</span>
+      <span class="context-tag">${req.context}</span>
+      <span class="badge badge-green">Confidence: ${conf}</span>
+      <span class="badge badge-blue">${d.status}</span>
+    </div>
+    <div style="font-size:11px;color:var(--text-dim);font-family:var(--mono)">
+      <div>ID: ${d.translation_unit_id}</div>
+      <div>PROV Bundle: ${d.provenance_record_id}</div>
+      <div>XLIFF Doc: ${d.xliff_document_id}</div>
+    </div>
+    <div style="margin-top:12px;display:flex;gap:8px">
+      <button class="btn btn-secondary btn-sm" onclick="setProvLookup('${d.translation_unit_id}')">View Provenance</button>
+      <button class="btn btn-secondary btn-sm" onclick="setXliffPreview('${d.translation_unit_id}')">View XLIFF</button>
+    </div>
+  `;
+}
+
+function displayProvChain(d, req) {
+  const methodLabel = {ai:'Claude AI', human:'Human Translator', hybrid:'AI + Human'}[d.method];
+  const html = `
+    <div class="prov-chain">
+      <div class="prov-node entity"><div class="prov-node-type">Entity</div><div class="prov-node-label">Source Text</div><div style="font-size:10px;color:var(--text-dim);margin-top:4px">${req.source_language}</div></div>
+      <div class="prov-arrow">→</div>
+      <div class="prov-node activity"><div class="prov-node-type">Activity</div><div class="prov-node-label">Translation</div><div style="font-size:10px;color:var(--text-dim);margin-top:4px">${new Date(d.translated_at).toLocaleTimeString()}</div></div>
+      <div class="prov-arrow">→</div>
+      <div class="prov-node agent"><div class="prov-node-type">Agent</div><div class="prov-node-label">${methodLabel}</div></div>
+      <div class="prov-arrow">→</div>
+      <div class="prov-node entity"><div class="prov-node-type">Entity</div><div class="prov-node-label">Translation</div><div style="font-size:10px;color:var(--text-dim);margin-top:4px">${req.target_language}</div></div>
+      ${req.deployment_location ? `
+      <div class="prov-arrow">→</div>
+      <div class="prov-node deployment"><div class="prov-node-type">Deployment</div><div class="prov-node-label">${req.context}</div><div style="font-size:10px;color:var(--text-dim);margin-top:4px">${req.deployment_location.substring(0,20)}…</div></div>
+      ` : ''}
+    </div>
+    <div style="font-size:11px;color:var(--text-dim)">↑ W3C PROV-DM entities (green), activities (blue), agents (purple), deployments (orange)</div>
+  `;
+  document.getElementById('prov-chain-panel').innerHTML = html;
+}
+
+// ── History ───────────────────────────────────────────────────────────────────
+async function loadHistory() {
+  try {
+    const r = await fetch(`${API}/api/v1/translations/?limit=50`);
+    const units = await r.json();
+    const el = document.getElementById('history-list');
+    if (!units.length) {
+      el.innerHTML = '<div class="empty-state"><div class="icon">📋</div><p>No translations yet.</p></div>';
+      return;
+    }
+    translationIds = units.map(u => u.id);
+    el.innerHTML = units.map(u => `
+      <div class="translation-row">
+        <div>
+          <div class="translation-text">${esc(u.source_text.substring(0,60))}…</div>
+          <div style="font-size:11px;color:var(--text-dim);margin-top:2px">${esc((u.target_text||'').substring(0,60))}</div>
+        </div>
+        <div style="font-size:12px;color:var(--text-dim)">${u.source_language} → ${u.target_language}</div>
+        <div><span class="method-pill method-${u.translation_method}">${{ai:'🤖 AI',human:'👤 Human',hybrid:'⚡ Hybrid'}[u.translation_method]}</span></div>
+        <div><span class="context-tag">${u.metadata?.context || '—'}</span></div>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-sm btn-secondary" onclick="setProvLookup('${u.id}')">PROV</button>
+          <button class="btn btn-sm btn-secondary" onclick="setXliffPreview('${u.id}')">XLIFF</button>
+        </div>
+      </div>
+    `).join('');
+    updateQuickLinks();
+  } catch(e) { console.error(e); }
+}
+
+function updateQuickLinks() {
+  const el = document.getElementById('quick-prov-links');
+  if (!translationIds.length) return;
+  el.innerHTML = translationIds.slice(0,5).map(id =>
+    `<button class="btn btn-sm btn-secondary" onclick="setProvLookup('${id}')">${id.substring(0,8)}…</button>`
+  ).join('');
+}
+
+// ── Provenance Lookup ─────────────────────────────────────────────────────────
+function setProvLookup(id) {
+  document.getElementById('prov-lookup-id').value = id;
+  document.querySelectorAll('.tab').forEach((t,i) => {
+    if(t.textContent.includes('Provenance')) { t.click(); }
+  });
+  setTimeout(() => lookupProvenance(), 100);
+}
+
+async function lookupProvenance() {
+  const id = document.getElementById('prov-lookup-id').value.trim();
+  if (!id) return toast('Enter a translation unit ID');
+  currentProvId = id;
+
+  try {
+    const [provR, provNR, provJR] = await Promise.all([
+      fetch(`${API}/api/v1/provenance/${id}`),
+      fetch(`${API}/api/v1/provenance/${id}/prov-n`),
+      fetch(`${API}/api/v1/provenance/${id}/prov-json`),
+    ]);
+
+    if (!provR.ok) throw new Error('Translation not found');
+
+    const prov = await provR.json();
+    currentProvN = await provNR.text();
+    currentProvJson = await provJR.json();
+
+    document.getElementById('prov-detail').style.display = 'block';
+    document.getElementById('prov-bundle-id').textContent = prov.provenance?.bundle_id?.substring(0,16) + '…';
+    
+    // Render provenance chain
+    renderProvChain(prov);
+    
+    // Code blocks
+    document.getElementById('prov-n-display').textContent = currentProvN;
+    document.getElementById('prov-json-display').textContent = JSON.stringify(currentProvJson, null, 2);
+    
+    // Deployments
+    renderDeployments(prov.deployments);
+    
+  } catch(e) {
+    toast('✗ ' + e.message);
+    document.getElementById('prov-detail').style.display = 'none';
+  }
+}
+
+function renderProvChain(prov) {
+  const entities = prov.provenance?.entities || [];
+  const activities = prov.provenance?.activities || [];
+  const agents = prov.provenance?.agents || [];
+  const deployments = prov.deployments || [];
+
+  // Build a visual summary
+  let html = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">';
+  
+  const summaryItems = [
+    { type:'entity', label:`Source (${prov.source_language})`, sublabel: prov.source_text?.substring(0,30)+'…' },
+    { type:'activity', label:'Translation Activity', sublabel: prov.translation_method },
+    { type:'agent', label: agents[0]?.name || 'Agent', sublabel: agents[0]?.agent_type },
+    { type:'entity', label:`Translation (${prov.target_language})`, sublabel: prov.target_text?.substring(0,30)+'…' },
+  ];
+  
+  if (deployments.length) {
+    summaryItems.push({ type:'deployment', label:'Deployed', sublabel: `${deployments.length} location(s)` });
+  }
+  
+  const chain = document.getElementById('prov-chain-display');
+  chain.innerHTML = summaryItems.map((item, i) => `
+    ${i > 0 ? '<div class="prov-arrow">→</div>' : ''}
+    <div class="prov-node ${item.type}">
+      <div class="prov-node-type">${item.type}</div>
+      <div class="prov-node-label">${item.label}</div>
+      <div style="font-size:10px;color:var(--text-dim);margin-top:4px">${item.sublabel||''}</div>
+    </div>
+  `).join('');
+
+  // Stats grid
+  document.getElementById('prov-graph-nodes').innerHTML = `
+    <div class="three-col" style="margin-bottom:16px">
+      <div style="background:rgba(74,222,128,0.05);border:1px solid rgba(74,222,128,0.2);border-radius:8px;padding:12px;text-align:center">
+        <div style="font-size:24px;color:var(--accent);font-family:var(--mono)">${entities.length}</div>
+        <div style="font-size:11px;color:var(--text-dim)">PROV Entities</div>
+      </div>
+      <div style="background:rgba(56,189,248,0.05);border:1px solid rgba(56,189,248,0.2);border-radius:8px;padding:12px;text-align:center">
+        <div style="font-size:24px;color:var(--accent4);font-family:var(--mono)">${activities.length}</div>
+        <div style="font-size:11px;color:var(--text-dim)">PROV Activities</div>
+      </div>
+      <div style="background:rgba(129,140,248,0.05);border:1px solid rgba(129,140,248,0.2);border-radius:8px;padding:12px;text-align:center">
+        <div style="font-size:24px;color:var(--accent2);font-family:var(--mono)">${agents.length}</div>
+        <div style="font-size:11px;color:var(--text-dim)">PROV Agents</div>
+      </div>
+    </div>
+    <div style="margin-bottom:8px;font-size:12px;color:var(--text-dim)">
+      <strong style="color:var(--text)">Summary:</strong> ${prov.provenance?.summary || '—'}
+    </div>
+  `;
+}
+
+function renderDeployments(deployments) {
+  const el = document.getElementById('deployments-display');
+  if (!deployments?.length) {
+    el.innerHTML = '<div style="color:var(--text-dim);font-size:13px">No deployments recorded for this translation unit.</div>';
+    return;
+  }
+  el.innerHTML = deployments.map(d => `
+    <div style="padding:12px;border:1px solid var(--border);border-radius:8px;margin-bottom:8px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <span class="context-tag">${d.context}</span>
+        <span class="badge ${d.is_active ? 'badge-green' : ''}" style="${!d.is_active?'border-color:var(--border);color:var(--text-dim)':''}">
+          ${d.is_active ? '● Active' : '○ Inactive'}
+        </span>
+      </div>
+      <div style="font-size:13px;color:var(--text)">${esc(d.location)}</div>
+      <div style="font-size:11px;color:var(--text-dim);margin-top:4px">
+        Deployed: ${new Date(d.deployed_at).toLocaleString()} · ID: ${d.id.substring(0,8)}…
+      </div>
+    </div>
+  `).join('');
+}
+
+// ── Search ────────────────────────────────────────────────────────────────────
+async function doSearch() {
+  const q = document.getElementById('search-query').value.trim();
+  if (!q) return;
+  const semantic = document.getElementById('semantic-toggle').checked;
+  const method = document.getElementById('filter-method').value;
+  const context = document.getElementById('filter-context').value;
+  
+  let url = `${API}/api/v1/search/?q=${encodeURIComponent(q)}&semantic=${semantic}&top_k=20`;
+  if (method) url += `&method=${method}`;
+  if (context) url += `&context=${context}`;
+  
+  try {
+    const r = await fetch(url);
+    const d = await r.json();
+    const el = document.getElementById('search-results');
+    
+    if (!d.results?.length) {
+      el.innerHTML = '<div class="empty-state"><div class="icon">🔎</div><p>No results found. Try a different query.</p></div>';
+      return;
+    }
+    
+    el.innerHTML = `
+      <div style="margin-bottom:16px;font-size:13px;color:var(--text-dim)">
+        Found <strong style="color:var(--text)">${d.total}</strong> results 
+        · <span class="badge badge-${semantic?'green':'blue'}">${d.search_type}</span>
+        · ${d.indexed_documents} docs indexed
+      </div>
+      <div class="card">
+        ${d.results.map(r => `
+          <div class="search-result" onclick="setProvLookup('${r.translation_unit_id}')">
+            <span class="search-score">${(r.score*100).toFixed(0)}% match</span>
+            <div style="display:flex;gap:6px;margin-bottom:6px">
+              <span class="method-pill method-${r.translation_method}">${{ai:'🤖 AI',human:'👤 Human',hybrid:'⚡ Hybrid'}[r.translation_method]}</span>
+              <span style="font-size:11px;color:var(--text-dim)">${r.source_language} → ${r.target_language}</span>
+              ${(r.deployment_contexts||[]).map(c=>`<span class="context-tag">${c}</span>`).join('')}
+            </div>
+            <div style="font-size:13px;color:var(--text)">${esc((r.source_text||'').substring(0,80))}…</div>
+            <div style="font-size:12px;color:var(--accent);margin-top:4px">${esc((r.target_text||'').substring(0,80))}</div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  } catch(e) {
+    toast('✗ Search error: ' + e.message);
+  }
+}
+
+// ── XLIFF ─────────────────────────────────────────────────────────────────────
+function setXliffPreview(id) {
+  document.getElementById('xliff-unit-id').value = id;
+  document.querySelectorAll('.tab').forEach(t => { if(t.textContent.includes('XLIFF')) t.click(); });
+  setTimeout(() => previewXliff(), 100);
+}
+
+async function previewXliff() {
+  const id = document.getElementById('xliff-unit-id').value.trim();
+  if (!id) return toast('Enter a translation unit ID');
+  try {
+    const r = await fetch(`${API}/api/v1/xliff/${id}/preview`);
+    const d = await r.json();
+    document.getElementById('xliff-preview').textContent = d.xliff || 'No content';
+    toast('✓ XLIFF loaded');
+  } catch(e) { toast('✗ ' + e.message); }
+}
+
+async function downloadXliff() {
+  const id = document.getElementById('xliff-unit-id').value.trim();
+  if (!id) return toast('Enter a translation unit ID');
+  window.open(`${API}/api/v1/xliff/${id}`, '_blank');
+}
+
+// ── Download Helpers ──────────────────────────────────────────────────────────
+function downloadProvN() {
+  download(currentProvN, `provenance-${currentProvId?.substring(0,8)}.provn`, 'text/plain');
+}
+function downloadProvJson() {
+  download(JSON.stringify(currentProvJson, null, 2), `provenance-${currentProvId?.substring(0,8)}.json`, 'application/json');
+}
+function download(content, filename, type) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([content], {type}));
+  a.download = filename; a.click();
+}
+
+// ── Utilities ─────────────────────────────────────────────────────────────────
+function esc(s) {
+  return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,87 @@
+[build-system]
+requires      = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name        = "ai-translation-provenance"
+version     = "1.0.0"
+description = "Provenance tracking system for AI-translated content (W3C PROV-DM + XLIFF 2.0 + Haystack)"
+readme      = "README.md"
+license     = { file = "LICENSE" }
+requires-python = ">=3.11"
+
+keywords = [
+  "translation", "provenance", "xliff", "w3c-prov",
+  "haystack", "fastapi", "localization", "ai"
+]
+
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Localization",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.30.0",
+  "pydantic>=2.7.0",
+  "python-multipart>=0.0.9",
+  "haystack-ai>=2.3.0",
+  "sentence-transformers>=3.0.0",
+  "anthropic>=0.30.0",
+  "httpx>=0.27.0",
+  "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+  "pytest-asyncio>=0.23.0",
+  "anyio>=4.0.0",
+  "ruff>=0.4.0",
+]
+deepl   = ["deepl>=1.18.0"]
+google  = ["google-cloud-translate>=3.15.0"]
+postgres = [
+  "asyncpg>=0.29.0",
+  "sqlalchemy[asyncio]>=2.0.0",
+  "pgvector>=0.2.0",
+]
+qdrant  = ["qdrant-client>=1.9.0"]
+
+[project.urls]
+Homepage   = "https://github.com/YOUR_USERNAME/ai-translation-provenance"
+Repository = "https://github.com/YOUR_USERNAME/ai-translation-provenance"
+Issues     = "https://github.com/YOUR_USERNAME/ai-translation-provenance/issues"
+
+# ── pytest ────────────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+asyncio_mode    = "auto"
+testpaths       = ["tests"]
+python_files    = ["test_*.py"]
+python_classes  = ["Test*"]
+python_functions= ["test_*"]
+# Suppress noisy haystack/transformers warnings in test output
+filterwarnings  = [
+  "ignore::DeprecationWarning",
+  "ignore::UserWarning",
+]
+
+# ── ruff (linting) ────────────────────────────────────────────────────────────
+[tool.ruff]
+line-length    = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select  = ["E", "F", "I", "UP", "B"]
+ignore  = ["E501"]    # line length handled by formatter
+
+# ── setuptools ────────────────────────────────────────────────────────────────
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]

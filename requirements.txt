@@ -1,0 +1,41 @@
+# ── AI Translation Provenance System — Python Dependencies ────────────────────
+
+# ── Core Framework ────────────────────────────────────────────────────────────
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+pydantic>=2.7.0
+python-multipart>=0.0.9
+
+# ── Haystack (semantic search) ────────────────────────────────────────────────
+haystack-ai>=2.3.0
+sentence-transformers>=3.0.0
+
+# ── Translation Backends (install what you need) ──────────────────────────────
+# Anthropic Claude
+anthropic>=0.30.0
+
+# DeepL (optional)
+# deepl>=1.18.0
+
+# Google Cloud Translation (optional)
+# google-cloud-translate>=3.15.0
+
+# ── HTTP Client (for tests and async calls) ───────────────────────────────────
+httpx>=0.27.0
+
+# ── Testing ───────────────────────────────────────────────────────────────────
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+anyio>=4.0.0
+
+# ── Production Database (optional — default is in-memory) ─────────────────────
+# asyncpg>=0.29.0               # PostgreSQL async driver
+# sqlalchemy[asyncio]>=2.0.0    # ORM layer
+# pgvector>=0.2.0               # pgvector extension for SQLAlchemy
+
+# ── Vector Stores (optional alternatives to in-memory) ────────────────────────
+# qdrant-client>=1.9.0          # Qdrant
+# elasticsearch>=8.0.0          # Elasticsearch
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+python-dotenv>=1.0.0

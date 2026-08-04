@@ -87,7 +87,7 @@ Status legend: ✅ Built · 🔧 Partial · 📋 Planned · 💡 Suggested
 | **Non-cooperative page review — fetch + rewrite loader (any URL)** | ✅ | `app/core/page_fetch.py`, `GET /api/v1/pages/render` — headless-browser (Playwright) fetch, harvests/matches/tags translatable text server-side, no SDK tagging or app changes required. Verified live against peripateticware (169 real segments harvested/translated/reviewed) |
 | Live-session bridge (browser extension) for pages needing real cookies/session state | 📋 | Follow-on to the fetch+rewrite loader, not a classical reverse proxy — see Phase 10 in the plan |
 | Adopt the SDK in a real target app (peripateticware) instead of the demo fixture | — | Superseded by the fetch+rewrite loader above — peripateticware is now reviewable without any source changes, so cooperative-tagging adoption is no longer the only path |
-| Page history / time-travel — browse, diff, and revert a page's past versions | 📋 | Scoped (Phase 9 in the plan) but not yet built — reconstructs "page as of time T" from existing `TranslationUnitVersion` history + a structural template, no new snapshot-storage system needed |
+| **Page history / time-travel — browse, diff, and revert a page's past versions** | ✅ | `app/core/page_history.py`, `PageHistory.tsx` — reconstructs "page as of time T" from existing `TranslationUnitVersion` history + a `PageSnapshot` template, no new snapshot-storage system. `GET /api/v1/pages/render?as_of=`, `/history`, `/diff`; revert via `POST /translations/{id}/versions/{id}/revert` |
 | **Document formats in-context review — text/Markdown** | ✅ | `app/api/documents.py`, `DocumentViewer.tsx`, `DocumentsPage.tsx` — each paragraph/block becomes a `TranslationUnit`, reviewed through the same overlay SDK as any page |
 | **Document formats in-context review — PDF/PowerPoint/DOCX** | 📋 | Requested but not yet designed — needs its own investigation into text-layer/coordinate extraction per format and how much of the overlay contract carries over |
 
@@ -163,6 +163,7 @@ Environment" above for the full breakdown. Vite + React + TypeScript.
 | Image asset API tests | ✅ | `tests/test_images.py` |
 | Document import/segments API tests | ✅ | `tests/test_documents.py` |
 | Page fetch/harvest/render API tests (against a local static fixture server) | ✅ | `tests/test_pages.py` |
+| Page history — timeline/as_of/diff tests, revert tests | ✅ | `tests/test_pages.py`, `tests/test_revert.py` |
 | Postgres-backed test fixtures (schema reset per session) | ✅ | `tests/conftest.py` |
 | pytest-asyncio, session-scoped event loop | ✅ | `pyproject.toml` |
 | Frontend test suite | 📋 | Currently covered by manual browser verification only |
@@ -228,6 +229,45 @@ redesign, creating a near-duplicate unit rather than updating the old one.
 **Next**: a live-session bridge (Phase 10, tracked not planned) — a browser
 extension reusing this same harvest/match engine against a real logged-in
 tab instead of an anonymous fetch, for pages that need real session state.
+
+### Page History / Time Travel (Phase 9) — browse, diff, and revert
+
+Motivated by "a git tree for the website content" — browsing what a page
+looked like at different points in the project, like the Wayback Machine,
+to compare or revert to an earlier version. The key design insight: this
+needed almost no new storage. `TranslationUnitVersion` (Phase 2) is already
+an append-only, timestamped commit log — one row per change to each
+segment. What was missing was the "checkout a whole tree as of commit X"
+operation, which `app/core/page_history.py` implements as a reconstruction
+*query*, not a new snapshot system: the latest `PageSnapshot` template
+(Phase 8) at or before a given time, with each `data-tu-id`'s text
+substituted for whichever `TranslationUnitVersion` was current at that
+moment (a leaf-only-elements regex swap — safe because Phase 8's harvest
+guarantees no nested elements inside a tagged node).
+
+- `GET /api/v1/pages/render?as_of=<timestamp>` — point-in-time
+  reconstruction; omitted `as_of` falls back to Phase 8's normal behavior.
+- `GET /api/v1/pages/history` — the distinct timestamps at which something
+  on the page's harvested units changed (the "commit list").
+- `GET /api/v1/pages/diff?from_ts=&to_ts=` — which segments differ between
+  two points, with before/after text.
+- `POST /api/v1/translations/{id}/versions/{id}/revert` — restores an old
+  version's text as a *new* version (`source_event="revert"`), reusing
+  `save_translation_unit`'s existing diff-on-target_text write path so the
+  `wasRevisionOf` PROV chain (built from version history) picks it up with
+  no special-casing — never rewrites history, consistent with this
+  system's append-only provenance model throughout.
+- Review Shell: a "History" panel (`PageHistory.tsx`, fetch mode only) with
+  a timeline dropdown to load a past version and a from/to diff view;
+  `VersionHistory.tsx` gets a "Revert to this version" button per row.
+
+Known limitation: structural drift isn't auto-caught — reconstruction can
+only substitute *text* into the *most recent* template at or before the
+requested time, so a redesign that changed the page's actual structure
+between two fetches isn't reflected in an as_of render from before that
+redesign. Re-fetching (Phase 8's "Force refresh") captures a fresh
+template; periodic/scheduled re-crawling to catch drift automatically is
+explicitly out of scope, a deliberate deferral rather than an oversight.
 
 ### Document Formats In-Context Review (PDF, PowerPoint, DOCX)
 

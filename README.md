@@ -267,7 +267,8 @@ which `app/main.py` serves directly — no separate frontend server needed.
 | `GET`  | `/api/v1/translations/` | List all translation units (filter by language, method, status) |
 | `GET`  | `/api/v1/translations/batch?ids=a,b,c` | Bulk lookup with latest quality score — what the review overlay uses to score a whole page in one call |
 | `GET`  | `/api/v1/translations/{id}` | Get a specific translation unit |
-| `GET`  | `/api/v1/translations/{id}/versions` | Full edit history (initial / human_edit / import / redrive) |
+| `GET`  | `/api/v1/translations/{id}/versions` | Full edit history (initial / human_edit / import / redrive / revert) |
+| `POST` | `/api/v1/translations/{id}/versions/{version_id}/revert` | Phase 9: restore an earlier version's text as a new version (never rewrites history) |
 | `POST` | `/api/v1/translations/{id}/deploy` | Record a new deployment location |
 | `PUT`  | `/api/v1/translations/{id}/review` | Mark as human-reviewed |
 | `GET`  | `/api/v1/translations/stats` | Aggregated statistics |
@@ -388,11 +389,16 @@ with no changes. PDF/PowerPoint/DOCX are tracked but not yet designed — see
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/v1/pages/render` | Fetch (or re-serve a cached fetch of) a URL, harvested/tagged/rewritten and ready to review |
+| `GET` | `/api/v1/pages/render` | Fetch (or re-serve/reconstruct) a URL, harvested/tagged/rewritten and ready to review |
+| `GET` | `/api/v1/pages/history` | Timeline of points where something on the page changed |
+| `GET` | `/api/v1/pages/diff` | Which segments differ between two points in time |
 
-Query params: `url` (required), `target_language` (required),
+`render` query params: `url` (required), `target_language` (required),
 `source_language` (default `en-US`), `method` (default `ai`), `refresh`
-(force a live re-fetch instead of reusing the latest cached snapshot).
+(force a live re-fetch instead of reusing the latest cached snapshot),
+`as_of` (Phase 9 — reconstruct the page as it looked at this timestamp
+instead of the current live version). `history`/`diff` take `url` +
+`target_language` (`diff` also takes `from_ts`/`to_ts`).
 
 This is the non-cooperative counterpart to the SDK-tagging model above —
 `app/core/page_fetch.py` renders the URL with a headless browser
@@ -406,6 +412,16 @@ all. See `ROADMAP.md`'s "Non-Cooperative Page Review" section for the full
 design and known limitations (anonymous fetches, no SSRF hardening since
 reviewing your own localhost apps is the point, `dom_path` drift across
 redesigns).
+
+Phase 9 adds time-travel on top, with no new snapshot-storage system —
+`app/core/page_history.py` reconstructs "page as of time T" from the
+existing `TranslationUnitVersion` history plus a `PageSnapshot` structural
+template. The Review Shell's "History" panel (fetch mode only) lets you
+load a past version or diff two points; reverting a segment (in
+`SegmentDrawer`'s History tab) is `POST /api/v1/translations/{id}/versions/
+{version_id}/revert` — restores old text as a *new* version, never rewrites
+history. See `ROADMAP.md`'s "Page History / Time Travel" section for the
+full design.
 
 ---
 
@@ -519,6 +535,7 @@ content-provenance/
 │   │   │   └── ledger.py           # DB-backed per-provider usage budget
 │   │   ├── prov_builder.py         # W3C PROV-DM graph builder (text + image), PROV-JSON
 │   │   ├── page_fetch.py           # Phase 8: Playwright fetch, harvest/match/tag/rewrite an arbitrary URL
+│   │   ├── page_history.py         # Phase 9: point-in-time reconstruction, diff, timeline — no new snapshot storage
 │   │   ├── haystack_pipeline.py    # Haystack 2.x indexing and search
 │   │   └── translation_backends.py # Pluggable: Mock / Anthropic / DeepL / Google
 │   ├── models/
@@ -529,7 +546,7 @@ content-provenance/
 ├── frontend/                       # Review Shell — Vite + React + TypeScript (replaces the old static dashboard)
 │   ├── src/
 │   │   ├── api/client.ts           # Typed fetch wrapper for the whole API
-│   │   ├── components/             # ReviewFrame, SegmentDrawer, PageFlaggedList, ProvenancePanel, QualityBadge, VersionHistory, NotesThread
+│   │   ├── components/             # ReviewFrame, SegmentDrawer, PageFlaggedList, PageHistory, ProvenancePanel, QualityBadge, VersionHistory, NotesThread
 │   │   └── pages/                  # ReviewPage, RedriveConsole, ImageReview, DocumentsPage, DocumentViewer, SearchPage, Dashboard
 │   ├── review-sdk/                 # The in-context overlay injected into a cooperative target app
 │   │   ├── overlay.ts              # Highlight boxes, score coloring, postMessage protocol
@@ -548,7 +565,8 @@ content-provenance/
 │   ├── test_redrive.py             # Redrive engine tests incl. human-in-the-loop
 │   ├── test_images.py              # Image asset API tests
 │   ├── test_documents.py           # Document import/segments API tests
-│   └── test_pages.py               # Page fetch/harvest/render API tests (real headless-browser render)
+│   ├── test_pages.py               # Page fetch/harvest/render + history/diff/as_of tests (real headless-browser render)
+│   └── test_revert.py              # Version revert API tests
 ├── .gitignore
 ├── CONTRIBUTING.md
 ├── Dockerfile

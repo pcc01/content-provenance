@@ -20,6 +20,7 @@ import hashlib
 import re
 import urllib.robotparser
 from datetime import datetime
+from pathlib import Path
 from typing import List
 from urllib.parse import urlparse
 
@@ -32,72 +33,20 @@ from app.models.schemas import PageSnapshot, TranslationMethod, TranslationStatu
 
 _WHITESPACE_RE = re.compile(r"\s+")
 
-_HARVEST_JS = r"""
-() => {
-  function isHarvestable(el) {
-    if (!(el instanceof HTMLElement)) return false;
-    const skip = ['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'IFRAME', 'SVG'];
-    if (skip.includes(el.tagName)) return false;
-    if (el.children.length > 0) return false;
-    const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
-    if (text.length < 2) return false;
-    const style = window.getComputedStyle(el);
-    if (style.display === 'none' || style.visibility === 'hidden') return false;
-    const rect = el.getBoundingClientRect();
-    if (rect.width === 0 && rect.height === 0) return false;
-    return true;
-  }
-  function domPath(el) {
-    const path = [];
-    let node = el;
-    while (node && node.nodeType === 1 && node.tagName !== 'HTML') {
-      let selector = node.tagName;
-      if (node.parentElement) {
-        const siblings = Array.from(node.parentElement.children).filter((s) => s.tagName === node.tagName);
-        if (siblings.length > 1) selector += ':nth-of-type(' + (siblings.indexOf(node) + 1) + ')';
-      }
-      path.unshift(selector);
-      node = node.parentElement;
-    }
-    return path.join('>');
-  }
-  const results = [];
-  let idx = 0;
-  document.querySelectorAll('*').forEach((el) => {
-    if (!isHarvestable(el)) return;
-    const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
-    el.setAttribute('data-tu-harvest-idx', String(idx));
-    results.push({ idx, domPath: domPath(el), text });
-    idx += 1;
-  });
-  return results;
-}
-"""
+# The harvest/rewrite DOM logic itself lives in review-sdk/harvest.ts —
+# compiled to this file (`npm run build:sdk` in frontend/) and shared with
+# Phase 10's browser extension, rather than kept as a second hand-written
+# copy here that could silently drift out of sync with the extension's.
+_HARVEST_JS_PATH = Path("frontend/review-sdk/dist/harvest.js")
 
-# srcset is dropped rather than rewritten — its multi-URL/descriptor syntax
-# isn't worth the parsing complexity for a v1; the plain src still resolves.
-_REWRITE_JS = r"""
-(mapping) => {
-  for (const [idx, entry] of Object.entries(mapping)) {
-    const el = document.querySelector('[data-tu-harvest-idx="' + idx + '"]');
-    if (!el) continue;
-    el.setAttribute('data-tu-id', entry.tuId);
-    el.textContent = entry.targetText;
-  }
-  document.querySelectorAll('[data-tu-harvest-idx]').forEach((el) => el.removeAttribute('data-tu-harvest-idx'));
 
-  const urlAttrs = [
-    ['img', 'src'], ['img', 'srcset'], ['source', 'src'], ['video', 'src'],
-    ['audio', 'src'], ['script', 'src'], ['link', 'href'], ['a', 'href'],
-  ];
-  for (const [tag, attr] of urlAttrs) {
-    document.querySelectorAll(tag + '[' + attr + ']').forEach((el) => {
-      if (attr === 'srcset') { el.removeAttribute('srcset'); return; }
-      try { el.setAttribute(attr, el[attr]); } catch (e) { /* ignore unresolvable */ }
-    });
-  }
-}
-"""
+def _load_harvest_js() -> str:
+    if not _HARVEST_JS_PATH.exists():
+        raise RuntimeError(
+            f"{_HARVEST_JS_PATH} not found — run `npm run build:sdk` in frontend/ to compile "
+            "review-sdk/harvest.ts before using the fetch+rewrite page loader."
+        )
+    return _HARVEST_JS_PATH.read_text(encoding="utf-8")
 
 
 class PageFetchError(Exception):
@@ -227,13 +176,18 @@ async def fetch_and_render(
                 except Exception:
                     pass  # some pages never go idle (polling/websockets) — proceed with what's loaded
 
-                harvested = await page.evaluate(_HARVEST_JS)
+                await page.add_script_tag(content=_load_harvest_js())
+                harvested = await page.evaluate("() => window.ReviewHarvest.harvest()")
                 now = datetime.utcnow()
                 mapping, unit_ids = await match_or_create_units(
                     url, source_language, target_language, method, harvested, now=now,
                 )
 
-                await page.evaluate(_REWRITE_JS, mapping)
+                # swapText=true: Phase 8's rendered pages are served from a
+                # different origin than the original, so both the visible
+                # text and asset URLs need rewriting (unlike Phase 10's
+                # live-tab mode, which only tags elements — see harvest.ts).
+                await page.evaluate("(mapping) => window.ReviewHarvest.rewrite(mapping, true)", mapping)
                 html = await page.content()
             finally:
                 await browser.close()

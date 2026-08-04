@@ -13,5 +13,5 @@
     "strict": true
   },
   "include": ["src", "../review-sdk"],
-  "exclude": ["../review-sdk/vite.sdk.config.ts"]
+  "exclude": ["../review-sdk/vite.sdk.config.ts", "../review-sdk/vite.harvest.config.ts"]
 }

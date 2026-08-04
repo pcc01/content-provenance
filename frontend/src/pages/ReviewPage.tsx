@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { api, type TranslationUnit } from "../api/client";
 import { PageFlaggedList } from "../components/PageFlaggedList";
+import { PageHistory } from "../components/PageHistory";
 import { ReviewFrame, type ReviewFrameHandle } from "../components/ReviewFrame";
 import { SegmentDrawer } from "../components/SegmentDrawer";
 
@@ -33,6 +34,9 @@ export function ReviewPage() {
   const [forceRefresh, setForceRefresh] = useState(false);
 
   const [loadedUrl, setLoadedUrl] = useState<string | null>(null);
+  const [loadedFetchTarget, setLoadedFetchTarget] = useState<{ url: string; locale: string } | null>(null);
+  const [activeAsOf, setActiveAsOf] = useState<string | null>(null);
+  const [pageReady, setPageReady] = useState(false);
   const [segments, setSegments] = useState<Segment[]>([]);
   const [segmentsError, setSegmentsError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -42,14 +46,18 @@ export function ReviewPage() {
     setSegments([]);
     setSegmentsError(null);
     setSelectedId(null);
+    setActiveAsOf(null);
+    setPageReady(false);
     // Cache-bust with a timestamp so clicking "Load page" with unchanged
     // fields still forces the iframe to re-navigate — an unchanged src
     // string is a DOM no-op (no reload) in React, which made it easy to
     // mistake a stale iframe for a broken one while iterating on this page.
     const cacheBust = Date.now();
     if (mode === "cooperative") {
+      setLoadedFetchTarget(null);
       setLoadedUrl(`${targetBase}${route}?locale=${encodeURIComponent(locale)}&__review=1&_t=${cacheBust}`);
     } else {
+      setLoadedFetchTarget({ url: fetchUrl, locale });
       const params = new URLSearchParams({
         url: fetchUrl,
         target_language: locale,
@@ -63,9 +71,31 @@ export function ReviewPage() {
     }
   }
 
+  // Phase 9: reload the same fetched page, optionally pinned to a past
+  // point in time. Doesn't re-run loadPage()'s field-reading logic — the
+  // target url/locale are whatever was loaded, not necessarily what's
+  // still typed into the fields.
+  function loadAsOf(asOf: string | null) {
+    if (!loadedFetchTarget) return;
+    setSegments([]);
+    setSegmentsError(null);
+    setSelectedId(null);
+    setActiveAsOf(asOf);
+    setPageReady(false);
+    const params = new URLSearchParams({
+      url: loadedFetchTarget.url,
+      target_language: loadedFetchTarget.locale,
+      __review: "1",
+      _t: String(Date.now()),
+    });
+    if (asOf) params.set("as_of", asOf);
+    setLoadedUrl(`/api/v1/pages/render?${params.toString()}`);
+  }
+
   async function handleReady(segmentIds: string[]) {
     console.log("[ReviewPage] tu:ready received", segmentIds);
     if (segmentIds.length === 0) return;
+    setPageReady(true);
     try {
       const results = await api.getTranslationsBatch(segmentIds);
       console.log("[ReviewPage] batch lookup resolved", results.length, "segment(s)");
@@ -188,6 +218,16 @@ export function ReviewPage() {
           </div>
         )}
         <PageFlaggedList segments={segments} selectedId={selectedId} onSelect={handleListSelect} />
+
+        {loadedFetchTarget && (
+          <PageHistory
+            url={loadedFetchTarget.url}
+            targetLanguage={loadedFetchTarget.locale}
+            activeAsOf={activeAsOf}
+            onLoadAsOf={loadAsOf}
+            ready={pageReady}
+          />
+        )}
       </div>
 
       <div style={{ flex: 1, position: "relative", background: "#f3f4f6" }}>

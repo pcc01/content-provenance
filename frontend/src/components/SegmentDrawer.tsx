@@ -48,13 +48,17 @@ export function SegmentDrawer({ unitId, onClose, onPreview }: Props) {
   const [tab, setTab] = useState<Tab>("details");
   const [draft, setDraft] = useState("");
 
+  function reload() {
+    api.getTranslation(unitId).then((u) => { setUnit(u); setDraft(u.target_text ?? ""); });
+    api.getVersions(unitId).then(setVersions);
+    api.getProvenance(unitId).then((r) => setProvenance(r.provenance));
+  }
+
   useEffect(() => {
     setUnit(null);
     setProvenance(null);
     setTab("details");
-    api.getTranslation(unitId).then((u) => { setUnit(u); setDraft(u.target_text ?? ""); });
-    api.getVersions(unitId).then(setVersions);
-    api.getProvenance(unitId).then((r) => setProvenance(r.provenance));
+    reload();
   }, [unitId]);
 
   return (
@@ -113,7 +117,7 @@ export function SegmentDrawer({ unitId, onClose, onPreview }: Props) {
           </div>
         )}
 
-        {tab === "history" && <VersionHistory versions={versions} />}
+        {tab === "history" && <VersionHistory unitId={unitId} versions={versions} onReverted={reload} />}
         {tab === "provenance" && provenance && <ProvenancePanel provenance={provenance} />}
         {tab === "notes" && <NotesThread unitId={unitId} />}
       </div>

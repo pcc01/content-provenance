@@ -204,6 +204,25 @@ export interface DocumentSegments {
   segments: TranslationUnit[];
 }
 
+export interface PageHistory {
+  url: string;
+  target_language: string;
+  timestamps: string[];
+}
+
+export interface PageDiffChange {
+  unit_id: string;
+  source_text: string | null;
+  before_text: string | null;
+  after_text: string | null;
+}
+
+export interface PageDiff {
+  url: string;
+  target_language: string;
+  changes: PageDiffChange[];
+}
+
 export const api = {
   getTranslation: (id: string) => request<TranslationUnit>(`/translations/${id}`),
   getTranslationsBatch: (ids: string[]) =>
@@ -294,5 +313,20 @@ export const api = {
   getDocumentSegments: (documentId: string, targetLanguage: string) =>
     request<DocumentSegments>(
       `/documents/${documentId}/segments?target_language=${encodeURIComponent(targetLanguage)}`,
+    ),
+
+  revertVersion: (unitId: string, versionId: string, revertedBy?: string) =>
+    request<TranslationUnit>(
+      `/translations/${unitId}/versions/${versionId}/revert${revertedBy ? `?reverted_by=${encodeURIComponent(revertedBy)}` : ""}`,
+      { method: "POST" },
+    ),
+
+  getPageHistory: (url: string, targetLanguage: string) =>
+    request<PageHistory>(
+      `/pages/history?${new URLSearchParams({ url, target_language: targetLanguage })}`,
+    ),
+  getPageDiff: (url: string, targetLanguage: string, fromTs: string, toTs: string) =>
+    request<PageDiff>(
+      `/pages/diff?${new URLSearchParams({ url, target_language: targetLanguage, from_ts: fromTs, to_ts: toTs })}`,
     ),
 };

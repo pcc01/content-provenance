@@ -84,8 +84,10 @@ Status legend: ✅ Built · 🔧 Partial · 📋 Planned · 💡 Suggested
 | Search UI | ✅ | `SearchPage.tsx` |
 | Review notes thread (threaded, resolvable) | ✅ | `app/api/notes.py`, `NotesThread.tsx` |
 | Demo target fixture for self-contained verification | ✅ | `frontend/demo-target/` |
-| Non-cooperative loader (browser extension / proxy) for pages that block framing or that we don't control | 📋 | `PageLoader` interface designed for this (`ReviewFrame`'s `send`/`onSelect`/`onReady` contract); not built |
-| Adopt the SDK in a real target app (peripateticware) instead of the demo fixture | 📋 | Deliberately deferred — see Phase 7 below |
+| **Non-cooperative page review — fetch + rewrite loader (any URL)** | ✅ | `app/core/page_fetch.py`, `GET /api/v1/pages/render` — headless-browser (Playwright) fetch, harvests/matches/tags translatable text server-side, no SDK tagging or app changes required. Verified live against peripateticware (169 real segments harvested/translated/reviewed) |
+| Live-session bridge (browser extension) for pages needing real cookies/session state | 📋 | Follow-on to the fetch+rewrite loader, not a classical reverse proxy — see Phase 10 in the plan |
+| Adopt the SDK in a real target app (peripateticware) instead of the demo fixture | — | Superseded by the fetch+rewrite loader above — peripateticware is now reviewable without any source changes, so cooperative-tagging adoption is no longer the only path |
+| Page history / time-travel — browse, diff, and revert a page's past versions | 📋 | Scoped (Phase 9 in the plan) but not yet built — reconstructs "page as of time T" from existing `TranslationUnitVersion` history + a structural template, no new snapshot-storage system needed |
 | **Document formats in-context review — text/Markdown** | ✅ | `app/api/documents.py`, `DocumentViewer.tsx`, `DocumentsPage.tsx` — each paragraph/block becomes a `TranslationUnit`, reviewed through the same overlay SDK as any page |
 | **Document formats in-context review — PDF/PowerPoint/DOCX** | 📋 | Requested but not yet designed — needs its own investigation into text-layer/coordinate extraction per format and how much of the overlay contract carries over |
 
@@ -160,6 +162,7 @@ Environment" above for the full breakdown. Vite + React + TypeScript.
 | Redrive engine tests, incl. human-in-the-loop approve/reject | ✅ | `tests/test_redrive.py` |
 | Image asset API tests | ✅ | `tests/test_images.py` |
 | Document import/segments API tests | ✅ | `tests/test_documents.py` |
+| Page fetch/harvest/render API tests (against a local static fixture server) | ✅ | `tests/test_pages.py` |
 | Postgres-backed test fixtures (schema reset per session) | ✅ | `tests/conftest.py` |
 | pytest-asyncio, session-scoped event loop | ✅ | `pyproject.toml` |
 | Frontend test suite | 📋 | Currently covered by manual browser verification only |
@@ -183,6 +186,48 @@ Environment" above for the full breakdown. Vite + React + TypeScript.
 |---------|--------|-------|
 | Review assignment queue (route specific units to specific reviewers) | 🔧 | The worst-first redrive queue exists; per-reviewer assignment doesn't |
 | OCR-driven overlay text extraction for translatable images | 📋 | See Image Assets above |
+
+### Non-Cooperative Page Review (Phase 8) — review any URL, no app changes
+
+The cooperative model (Phase 5) requires a target app to embed the SDK
+(`data-tu-id` tags). That's a real adoption wall for pages you don't
+control the source of — confirmed live against peripateticware, which
+loaded fine in the iframe but showed zero segments because it was never
+instrumented.
+
+The fix isn't a classical reverse proxy (Weglot/Crowdin-style) — that
+reimplements request-proxying, cookie/session handling, and sub-resource
+rewriting the browser already does for free. Instead: `app/core/page_fetch.py`
+renders the URL with a headless browser (Playwright, needed since most real
+apps — peripateticware included — are client-rendered SPAs), walks the DOM
+for translatable text, matches/creates a `TranslationUnit` for each element
+keyed by `sha256(url + dom_path + text)` (stored in `source_id`, so
+re-fetching the same page reuses history instead of duplicating/
+re-translating), tags each with `data-tu-id`, swaps its text to the target
+locale, resolves all asset URLs to absolute, injects the review-sdk script
+(compiled to a standalone bundle — `frontend/review-sdk/dist/overlay.js`,
+since this response never goes through Vite's dev-transform), and serves it
+same-origin at `GET /api/v1/pages/render?url=...`. A `PageSnapshot` table
+caches fetches so repeat loads are instant; `refresh=true` forces a live
+re-fetch. The Review tab's "Any URL" mode just points the existing
+`ReviewFrame` iframe at this endpoint instead of an SDK-tagged app's own
+URL — no new loader abstraction needed.
+
+Verified live against `localhost:3000` (peripateticware): 169 real segments
+harvested, translated, and reviewable through the full segment drawer
+(source/target/model/provenance), with zero changes to peripateticware's
+own code.
+
+Known limitations, by design: fetches are always anonymous (no login
+session) — an app that shows different content to logged-out visitors will
+be reviewed as a logged-out visitor sees it; not SSRF-hardened against
+private IP ranges, since the point is reviewing your own infrastructure
+including localhost; `dom_path`-based matching can drift across a real
+redesign, creating a near-duplicate unit rather than updating the old one.
+
+**Next**: a live-session bridge (Phase 10, tracked not planned) — a browser
+extension reusing this same harvest/match engine against a real logged-in
+tab instead of an anonymous fetch, for pages that need real session state.
 
 ### Document Formats In-Context Review (PDF, PowerPoint, DOCX)
 

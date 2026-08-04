@@ -16,6 +16,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Pre-download the embedding model so startup is fast
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')" || true
 
+# Chromium + its system deps for Phase 8's fetch+rewrite page review
+# (playwright the pip package is already in requirements.txt — this installs
+# the actual browser binary and OS libraries it needs to run headless)
+RUN playwright install --with-deps chromium
+
 # Copy application code
 COPY app/ ./app/
 COPY frontend/ ./frontend/

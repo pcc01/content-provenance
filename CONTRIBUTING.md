@@ -9,6 +9,7 @@ git clone https://github.com/YOUR_USERNAME/ai-translation-provenance.git
 cd ai-translation-provenance
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
+playwright install chromium        # only needed for Phase 8's "review any URL" fetch mode
 cp .env.example .env               # edit as needed
 docker-compose up -d postgres      # or point .env at your own Postgres
 alembic upgrade head

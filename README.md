@@ -134,6 +134,7 @@ This is the core design decision: **every XLIFF `<unit>` is a self-contained pro
 - `pip` or a virtual environment manager
 - PostgreSQL, reachable (or Docker, to run it via `docker-compose up postgres`) — the system of record, not optional
 - Node.js 18+ / npm — only needed for the Review Shell (`frontend/`) and its demo fixture, not the API server itself
+- A Playwright-managed Chromium install — only needed for Phase 8's "review any URL" fetch mode (`playwright install chromium`, see below)
 
 ### Installation
 
@@ -147,6 +148,11 @@ source .venv/bin/activate          # Windows: .venv\Scripts\activate
 
 # Install dependencies
 pip install -r requirements.txt
+
+# One-time: install the headless browser Phase 8's fetch+rewrite mode uses
+# to render arbitrary URLs (skip this if you'll only use the cooperative
+# SDK-tagging model, or Documents/text-Markdown review)
+playwright install chromium
 
 # Copy environment config
 cp .env.example .env
@@ -213,6 +219,14 @@ the API server. In development, run it alongside the backend:
 cd frontend && npm install && npm run dev       # Review Shell — http://localhost:5173
 ```
 
+Once (or after changing `review-sdk/overlay.ts`), build the standalone SDK
+bundle Phase 8's fetch+rewrite pages inject — `npm run dev`/`npm run build`
+don't do this for you automatically:
+
+```bash
+cd frontend && npm run build:sdk                # frontend/review-sdk/dist/overlay.js
+```
+
 To exercise the in-context overlay end-to-end, also run the demo fixture it
 iframes (a minimal page tagged with the review SDK — see
 [`frontend/review-sdk/`](frontend/review-sdk)):
@@ -224,12 +238,21 @@ cd frontend/demo-target && npm install && npm run dev   # http://localhost:5174
 Open the Review Shell, enter the demo target's URL (defaults to
 `http://localhost:5174`), and click "Load page" — translated elements get
 highlighted directly on the rendered page; click one to open the review
-drawer (source/target, version history, provenance, notes). Adopting the SDK
-in a real app instead of the demo fixture just means wrapping translated
+drawer (source/target, version history, provenance, notes).
+
+Alternatively, switch the Review tab to **"Any URL"** mode and paste any
+URL — no demo fixture, no SDK tagging, no app changes at all. This routes
+through Phase 8's fetch+rewrite loader (`GET /api/v1/pages/render`), which
+renders the page with a headless browser, harvests its text server-side,
+and serves back a tagged copy the same overlay reviews identically. This is
+the path to use against a real app you don't want to (or can't) modify.
+
+Adopting the SDK in a real app instead of the demo fixture just means wrapping translated
 strings with `data-tu-id` tag props — see `frontend/review-sdk/reviewTagProps.ts`
 and `useReviewT.ts`.
 
-For production, `npm run build` in `frontend/` produces `frontend/dist/`,
+For production, `npm run build` in `frontend/` produces `frontend/dist/`
+(and, as part of the same script, `frontend/review-sdk/dist/overlay.js`),
 which `app/main.py` serves directly — no separate frontend server needed.
 
 ---
@@ -361,6 +384,29 @@ from the Review Shell's own origin, so the existing overlay SDK reviews it
 with no changes. PDF/PowerPoint/DOCX are tracked but not yet designed — see
 `ROADMAP.md`.
 
+### Pages (review any URL, no app changes required)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/v1/pages/render` | Fetch (or re-serve a cached fetch of) a URL, harvested/tagged/rewritten and ready to review |
+
+Query params: `url` (required), `target_language` (required),
+`source_language` (default `en-US`), `method` (default `ai`), `refresh`
+(force a live re-fetch instead of reusing the latest cached snapshot).
+
+This is the non-cooperative counterpart to the SDK-tagging model above —
+`app/core/page_fetch.py` renders the URL with a headless browser
+(Playwright), harvests its visible text into `TranslationUnit`s keyed by a
+stable content hash (so re-fetches reuse history rather than duplicating
+it), tags and rewrites a copy of the DOM (absolute asset URLs, target-locale
+text, the review-sdk script injected), and serves it same-origin. The
+Review tab's "Any URL" mode points `ReviewFrame` at this endpoint instead of
+an SDK-tagged app — paste any URL, no source changes needed on that end at
+all. See `ROADMAP.md`'s "Non-Cooperative Page Review" section for the full
+design and known limitations (anonymous fetches, no SSRF hardening since
+reviewing your own localhost apps is the point, `dom_path` drift across
+redesigns).
+
 ---
 
 ## Standards Compliance
@@ -442,7 +488,7 @@ cd frontend/demo-target && npx tsc -b
 ```
 content-provenance/
 ├── alembic/                        # Schema migrations (source of truth for the DB schema)
-│   └── versions/                   # 0001_initial … 0008_documents
+│   └── versions/                   # 0001_initial … 0009_page_snapshots
 ├── app/
 │   ├── main.py                     # FastAPI app, lifespan, router registration, serves frontend/dist/
 │   ├── api/
@@ -454,7 +500,8 @@ content-provenance/
 │   │   ├── xliff_import.py         # XLIFF 2.0 ingestion + the entering/leaving ledger ("entering")
 │   │   ├── redrive.py              # Threshold-quality redrive runs, preview, queue, human-in-the-loop approve/reject
 │   │   ├── images.py               # Image asset upload, context-linking, localization
-│   │   └── documents.py            # Phase 7a: text/Markdown document import + segments
+│   │   ├── documents.py            # Phase 7a: text/Markdown document import + segments
+│   │   └── pages.py                # Phase 8: fetch + rewrite review for arbitrary URLs
 │   ├── core/
 │   │   ├── config.py               # Environment-based settings
 │   │   ├── database.py             # Thin public interface (get_db/init_db) over db/repository.py
@@ -471,6 +518,7 @@ content-provenance/
 │   │   │   ├── engine.py           # RedriveEngine — score, threshold, redrive, human-in-the-loop
 │   │   │   └── ledger.py           # DB-backed per-provider usage budget
 │   │   ├── prov_builder.py         # W3C PROV-DM graph builder (text + image), PROV-JSON
+│   │   ├── page_fetch.py           # Phase 8: Playwright fetch, harvest/match/tag/rewrite an arbitrary URL
 │   │   ├── haystack_pipeline.py    # Haystack 2.x indexing and search
 │   │   └── translation_backends.py # Pluggable: Mock / Anthropic / DeepL / Google
 │   ├── models/
@@ -486,7 +534,10 @@ content-provenance/
 │   ├── review-sdk/                 # The in-context overlay injected into a cooperative target app
 │   │   ├── overlay.ts              # Highlight boxes, score coloring, postMessage protocol
 │   │   ├── reviewTagProps.ts       # data-tu-id tagging primitive
-│   │   └── useReviewT.ts           # react-i18next binding shape for real-app adoption
+│   │   ├── useReviewT.ts           # react-i18next binding shape for real-app adoption
+│   │   ├── vite.sdk.config.ts      # Bundles overlay.ts to dist/overlay.js — served at /sdk-dist by
+│   │   │                           # FastAPI for Phase 8's fetch+rewrite pages (never go through Vite's dev-transform)
+│   │   └── dist/                   # Build output — `npm run build:sdk` (gitignored)
 │   └── demo-target/                # Minimal fixture app the Review Shell iframes for local verification
 ├── docs/
 │   └── architecture.svg            # System architecture diagram
@@ -496,7 +547,8 @@ content-provenance/
 │   ├── test_api.py                 # API integration tests — translations, provenance, XLIFF, redrive, notes, search
 │   ├── test_redrive.py             # Redrive engine tests incl. human-in-the-loop
 │   ├── test_images.py              # Image asset API tests
-│   └── test_documents.py           # Document import/segments API tests
+│   ├── test_documents.py           # Document import/segments API tests
+│   └── test_pages.py               # Page fetch/harvest/render API tests (real headless-browser render)
 ├── .gitignore
 ├── CONTRIBUTING.md
 ├── Dockerfile

@@ -19,9 +19,13 @@ RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTr
 # Copy application code
 COPY app/ ./app/
 COPY frontend/ ./frontend/
+COPY alembic/ ./alembic/
+COPY alembic.ini .
 
 # Expose port
 EXPOSE 8000
 
-# Start the server
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Apply migrations, then start the server. (app/core/database.py also has a
+# create_all dev-fallback for when Alembic hasn't been run, but a container
+# should always run migrations properly rather than rely on that.)
+CMD alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000

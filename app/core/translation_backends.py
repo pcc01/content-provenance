@@ -5,7 +5,6 @@ Supports mock, Anthropic Claude, DeepL, and Google Translate.
 Switch providers via the TRANSLATION_PROVIDER environment variable.
 """
 
-import os
 from typing import Tuple
 from app.core.config import settings
 

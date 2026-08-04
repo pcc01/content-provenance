@@ -24,17 +24,17 @@ async def get_provenance(unit_id: str) -> Dict[str, Any]:
     Includes W3C PROV entities, activities, agents, and their relations.
     """
     db = get_db()
-    unit = db.get_translation_unit(unit_id)
+    unit = await db.get_translation_unit(unit_id)
     if not unit:
         raise HTTPException(status_code=404, detail=f"Translation unit {unit_id} not found")
     
-    prov_record = db.get_provenance_by_unit(unit_id)
+    prov_record = await db.get_provenance_by_unit(unit_id)
     if not prov_record:
         # Rebuild on the fly
-        deps = db.get_deployments_for_unit(unit_id)
-        prov_record = build_provenance_record(unit, deps)
-    
-    deployments = db.get_deployments_for_unit(unit_id)
+        deps = await db.get_deployments_for_unit(unit_id)
+        prov_record = await build_provenance_record(unit, deps)
+
+    deployments = await db.get_deployments_for_unit(unit_id)
     
     return {
         "translation_unit_id": unit_id,
@@ -65,22 +65,22 @@ async def get_prov_json(unit_id: str) -> Dict[str, Any]:
     Compliant with https://www.w3.org/Submission/prov-json/
     """
     db = get_db()
-    unit = db.get_translation_unit(unit_id)
+    unit = await db.get_translation_unit(unit_id)
     if not unit:
         raise HTTPException(status_code=404, detail=f"Translation unit {unit_id} not found")
     
-    prov_record = db.get_provenance_by_unit(unit_id)
+    prov_record = await db.get_provenance_by_unit(unit_id)
     if not prov_record:
-        deps = db.get_deployments_for_unit(unit_id)
-        prov_record = build_provenance_record(unit, deps)
+        deps = await db.get_deployments_for_unit(unit_id)
+        prov_record = await build_provenance_record(unit, deps)
     
     # Check cache
-    cached = db.get_prov_json(prov_record.bundle_id)
+    cached = await db.get_prov_json(prov_record.bundle_id)
     if cached:
         return cached
-    
+
     prov_json = to_prov_json(prov_record)
-    db.save_prov_json(prov_record.bundle_id, prov_json)
+    await db.save_prov_json(prov_record.bundle_id, prov_json)
     return prov_json
 
 
@@ -91,14 +91,14 @@ async def get_prov_n(unit_id: str) -> str:
     Spec: https://www.w3.org/TR/prov-n/
     """
     db = get_db()
-    unit = db.get_translation_unit(unit_id)
+    unit = await db.get_translation_unit(unit_id)
     if not unit:
         raise HTTPException(status_code=404, detail=f"Translation unit {unit_id} not found")
     
-    prov_record = db.get_provenance_by_unit(unit_id)
+    prov_record = await db.get_provenance_by_unit(unit_id)
     if not prov_record:
-        deps = db.get_deployments_for_unit(unit_id)
-        prov_record = build_provenance_record(unit, deps)
+        deps = await db.get_deployments_for_unit(unit_id)
+        prov_record = await build_provenance_record(unit, deps)
     
     lines = [
         "// W3C PROV-N Notation",
@@ -162,7 +162,9 @@ async def get_prov_n(unit_id: str) -> str:
             lines.append(f'  wasAssociatedWith("{rel["activity"]}", "{rel["agent"]}", "{role}")')
         elif rtype == "wasInformedBy":
             lines.append(f'  wasInformedBy("{rel["informed"]}", "{rel["informant"]}")')
-    
+        elif rtype == "wasRevisionOf":
+            lines.append(f'  wasRevisionOf("{rel["newerEntity"]}", "{rel["olderEntity"]}")')
+
     lines.extend(["", "endDocument"])
     return "\n".join(lines)
 
@@ -174,14 +176,14 @@ async def get_lineage(unit_id: str) -> Dict[str, Any]:
     Nodes = entities + agents, Edges = relations.
     """
     db = get_db()
-    unit = db.get_translation_unit(unit_id)
+    unit = await db.get_translation_unit(unit_id)
     if not unit:
         raise HTTPException(status_code=404, detail=f"Translation unit {unit_id} not found")
     
-    prov_record = db.get_provenance_by_unit(unit_id)
+    prov_record = await db.get_provenance_by_unit(unit_id)
     if not prov_record:
-        deps = db.get_deployments_for_unit(unit_id)
-        prov_record = build_provenance_record(unit, deps)
+        deps = await db.get_deployments_for_unit(unit_id)
+        prov_record = await build_provenance_record(unit, deps)
     
     nodes = []
     edges = []
@@ -225,7 +227,9 @@ async def get_lineage(unit_id: str) -> Dict[str, Any]:
             edges.append({"from": rel["activity"], "to": rel["agent"], "label": "wasAssociatedWith"})
         elif rtype == "wasInformedBy":
             edges.append({"from": rel["informed"], "to": rel["informant"], "label": "wasInformedBy"})
-    
+        elif rtype == "wasRevisionOf":
+            edges.append({"from": rel["newerEntity"], "to": rel["olderEntity"], "label": "wasRevisionOf"})
+
     return {
         "translation_unit_id": unit_id,
         "nodes": nodes,
@@ -238,7 +242,7 @@ async def get_lineage(unit_id: str) -> Dict[str, Any]:
 async def get_deployments(unit_id: str):
     """List all deployment records for a translation unit."""
     db = get_db()
-    if not db.get_translation_unit(unit_id):
+    if not await db.get_translation_unit(unit_id):
         raise HTTPException(status_code=404, detail=f"Translation unit {unit_id} not found")
-    deployments = db.get_deployments_for_unit(unit_id)
+    deployments = await db.get_deployments_for_unit(unit_id)
     return [d.model_dump() for d in deployments]

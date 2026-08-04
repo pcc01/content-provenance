@@ -23,6 +23,17 @@ This system answers the key provenance questions for every piece of translated c
 | **Where is it used?** | `DeploymentRecord` — Website, Banner Ad, Marketing Campaign, Email, Mobile App, Social Media, Print, API |
 | **What standard proves it?** | XLIFF 2.0 file with embedded W3C PROV bundle + PROV-JSON / PROV-N exports |
 
+Beyond tracking provenance, the system runs a **threshold-quality redrive
+loop**: score every translation (deterministic checks, falling back to a
+pluggable Claude/Ollama scorer), automatically resend anything below a
+threshold for retranslation, and record the whole thing — new version, new
+provenance, `wasRevisionOf` link back to what it replaced — with an optional
+human-in-the-loop gate before any redrive actually goes live. Reviewing that
+content happens in-context: the **Review Shell** overlays the real rendered
+page with clickable highlight boxes instead of a segment-grid TMS view (see
+[Run the review environment](#run-the-review-environment-review-shell)
+below).
+
 ---
 
 ## Architecture
@@ -121,6 +132,8 @@ This is the core design decision: **every XLIFF `<unit>` is a self-contained pro
 
 - Python 3.11+
 - `pip` or a virtual environment manager
+- PostgreSQL, reachable (or Docker, to run it via `docker-compose up postgres`) — the system of record, not optional
+- Node.js 18+ / npm — only needed for the Review Shell (`frontend/`) and its demo fixture, not the API server itself
 
 ### Installation
 
@@ -137,15 +150,29 @@ pip install -r requirements.txt
 
 # Copy environment config
 cp .env.example .env
+
+# Start Postgres (or point .env at your own — see .env.example)
+docker-compose up -d postgres
+
+# Apply migrations
+alembic upgrade head
 ```
 
-### Run (development — mock translation, in-memory store)
+### Run (development — mock translation)
 
 ```bash
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload --port 8001
 ```
 
-Open http://localhost:8000 for the dashboard, or http://localhost:8000/docs for the interactive API explorer.
+> Port 8001, not the default 8000 — chosen to avoid colliding with another
+> project's stack that may already be using 8000/5432/6379/3000/9090 on the
+> same machine. Use whatever port is free on yours; just keep it consistent
+> with `frontend/vite.config.ts`'s proxy target and `frontend/demo-target`'s
+> `VITE_API_BASE` if you change it.
+
+Open http://localhost:8001/docs for the interactive API explorer. The review
+UI now lives in `frontend/` (a Vite+React app, see its own dev instructions)
+rather than being served as a static dashboard from this server.
 
 ### Run with Anthropic Claude translation
 
@@ -154,21 +181,56 @@ Open http://localhost:8000 for the dashboard, or http://localhost:8000/docs for 
 ANTHROPIC_API_KEY=sk-ant-...
 TRANSLATION_PROVIDER=anthropic
 
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload --port 8001
 ```
+
+> PostgreSQL is the system of record for everything (translations, provenance,
+> XLIFF documents, quality scores, redrive runs, image assets). Re-run
+> `alembic upgrade head` after pulling any change that touches
+> `alembic/versions/`.
 
 ### Run with Docker
 
 ```bash
-# Default stack (in-memory, mock translation)
+# App + PostgreSQL (mock translation) — host ports 8001 (app) / 5433 (postgres),
+# deliberately offset from 8000/5432 in case another project's stack is
+# already using those on the same machine
 docker-compose up
 
 # With persistent Qdrant vector store
 docker-compose --profile search up
 
-# Full production stack (Qdrant + PostgreSQL + Elasticsearch)
+# Full stack (Qdrant + Elasticsearch too)
 docker-compose --profile full up
 ```
+
+### Run the review environment (Review Shell)
+
+The review UI is a separate Vite+React app, not served as a static file from
+the API server. In development, run it alongside the backend:
+
+```bash
+cd frontend && npm install && npm run dev       # Review Shell — http://localhost:5173
+```
+
+To exercise the in-context overlay end-to-end, also run the demo fixture it
+iframes (a minimal page tagged with the review SDK — see
+[`frontend/review-sdk/`](frontend/review-sdk)):
+
+```bash
+cd frontend/demo-target && npm install && npm run dev   # http://localhost:5174
+```
+
+Open the Review Shell, enter the demo target's URL (defaults to
+`http://localhost:5174`), and click "Load page" — translated elements get
+highlighted directly on the rendered page; click one to open the review
+drawer (source/target, version history, provenance, notes). Adopting the SDK
+in a real app instead of the demo fixture just means wrapping translated
+strings with `data-tu-id` tag props — see `frontend/review-sdk/reviewTagProps.ts`
+and `useReviewT.ts`.
+
+For production, `npm run build` in `frontend/` produces `frontend/dist/`,
+which `app/main.py` serves directly — no separate frontend server needed.
 
 ---
 
@@ -180,10 +242,14 @@ docker-compose --profile full up
 |--------|----------|-------------|
 | `POST` | `/api/v1/translations/` | Submit content for translation — returns translation + provenance IDs |
 | `GET`  | `/api/v1/translations/` | List all translation units (filter by language, method, status) |
+| `GET`  | `/api/v1/translations/batch?ids=a,b,c` | Bulk lookup with latest quality score — what the review overlay uses to score a whole page in one call |
 | `GET`  | `/api/v1/translations/{id}` | Get a specific translation unit |
+| `GET`  | `/api/v1/translations/{id}/versions` | Full edit history (initial / human_edit / import / redrive) |
 | `POST` | `/api/v1/translations/{id}/deploy` | Record a new deployment location |
 | `PUT`  | `/api/v1/translations/{id}/review` | Mark as human-reviewed |
 | `GET`  | `/api/v1/translations/stats` | Aggregated statistics |
+| `GET`/`POST` | `/api/v1/translations/{id}/notes` | Review notes thread (threaded via `parent_id`) |
+| `PUT`  | `/api/v1/translations/{id}/notes/{note_id}/resolve` | Mark a note resolved/unresolved |
 
 **POST /api/v1/translations/ — request body**
 
@@ -222,13 +288,78 @@ docker-compose --profile full up
 
 Query params: `semantic` (bool), `method`, `context`, `top_k`
 
-### XLIFF Export
+### XLIFF Export & Import
+
+Every XLIFF document entering (import) or leaving (export) the system is
+logged in an ingest ledger — the literal "track everything entering and
+leaving the system" record.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET`  | `/api/v1/xliff/{id}` | Download XLIFF 2.0 file with embedded PROV metadata |
+| `GET`  | `/api/v1/xliff/{id}` | Download XLIFF 2.0 file with embedded PROV metadata (incl. per-version history notes) |
 | `GET`  | `/api/v1/xliff/{id}/preview` | Preview XLIFF as text |
 | `GET`  | `/api/v1/xliff/project/{id}` | Export full project as a single XLIFF document |
+| `POST` | `/api/v1/xliff/import` | Ingest an external XLIFF 2.0 document (multipart `file` + `source_system`) — creates/updates units and their version history; synthesizes minimal provenance if the file carries none |
+| `GET`  | `/api/v1/xliff/ingest-log` | The entering/leaving ledger |
+
+### Threshold-Quality Redrive
+
+Score everything in scope, then redrive (retranslate) whatever falls below a
+threshold — the core loop this system is built around, modeled on an offline
+QE-scorer → threshold → MT-fallback-chain pipeline.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/v1/redrive/runs` | Create + run a redrive pass (`threshold`, `scope`, `require_human_approval`, `scoring_provider`) |
+| `GET`  | `/api/v1/redrive/runs/{id}` | Status/results of a run |
+| `POST` | `/api/v1/redrive/runs/{id}/items/{item_id}/approve` | Human-in-the-loop: apply a proposed redrive |
+| `POST` | `/api/v1/redrive/runs/{id}/items/{item_id}/reject` | Human-in-the-loop: decline a proposed redrive |
+| `GET`  | `/api/v1/redrive/preview` | Dry-run forecast — how many units a threshold would catch, no writes/spend |
+| `GET`  | `/api/v1/redrive/queue` | Units currently below a threshold, worst-first |
+
+Scoring runs deterministic free checks first (untranslated/garbage/placeholder
+issues, wrong script, HTML tag/number mismatches — ported from
+peripateticware's `qa_review_llamacpp.py`), falling through to a configured
+model scorer (`SCORING_PROVIDER=claude` or `ollama`) only for pairs those
+don't resolve. Set `require_human_approval: true` on a run to have redrives
+proposed but not applied until a reviewer calls the approve/reject endpoints
+— useful for organizations that want AI-driven changes gated by a human even
+when the score/threshold decision itself is automated.
+
+### Image Assets
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/v1/images/` | Upload an image (`kind=context\|translatable`) |
+| `GET`  | `/api/v1/images/{id}` / `/{id}/file` | Metadata / raw file bytes |
+| `POST` | `/api/v1/images/{id}/context-link` | Attach a context screenshot to a translation unit |
+| `GET`  | `/api/v1/images/context-links/{unit_id}` | Context images linked to a unit |
+| `POST` | `/api/v1/images/{id}/localize` | Start localizing a source image (optionally with the target file immediately) |
+| `PUT`  | `/api/v1/images/localize/{itu_id}/target` | Attach/replace the localized target image |
+| `GET`  | `/api/v1/images/localize/{itu_id}` | An image translation unit's status + linkage |
+
+Context images (screenshots showing a text segment in its real layout) render
+inline in the review overlay like any other segment. Translatable images
+(banners, graphics) get their own provenance chain reusing the same PROV-DM
+builder as text (`SourceImage`/`TranslatedImage` entities).
+
+### Documents (plain text / Markdown)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/v1/documents/import` | Upload a `.txt`/`.md` file — split into paragraph/block segments, translated immediately |
+| `GET`  | `/api/v1/documents/{id}` | Document metadata |
+| `GET`  | `/api/v1/documents/{id}/segments` | Ordered segments for a target language |
+
+Each paragraph/block of an imported document becomes an ordinary
+`TranslationUnit` (tagged `{document_id, position}` in its metadata), so it
+gets the same translation/scoring/redrive/provenance treatment as any other
+unit. The Review Shell's "Documents" tab uploads a file and hands back a
+ready-made target URL/route/locale for the "Review" tab — the document
+renders as its own `data-tu-id`-tagged page at `/documents/{id}`, served
+from the Review Shell's own origin, so the existing overlay SDK reviews it
+with no changes. PDF/PowerPoint/DOCX are tracked but not yet designed — see
+`ROADMAP.md`.
 
 ---
 
@@ -285,16 +416,23 @@ Configure via `TRANSLATION_PROVIDER` in `.env`:
 ## Development
 
 ```bash
-# Run tests
-make test                       # unit tests (no server)
-PYTHONPATH=. pytest tests/ -v   # all tests with pytest
+# Run tests (needs Postgres reachable — docker-compose up postgres, or point
+# POSTGRES_*/DATABASE_URL at your own; the schema is dropped and recreated
+# once per test session so runs are deterministic)
+PYTHONPATH=. pytest tests/ -v
+
+# New migration after changing app/core/db/models.py
+alembic revision -m "describe the change"
+alembic upgrade head
 
 # Lint
 pip install ruff
 ruff check app/ tests/
 
-# See all make targets
-make help
+# Frontend type-checking (no separate test suite yet — covered by manual
+# browser verification of the review flow)
+cd frontend && npx tsc -b
+cd frontend/demo-target && npx tsc -b
 ```
 
 ---
@@ -302,37 +440,67 @@ make help
 ## Project Structure
 
 ```
-ai-translation-provenance/
+content-provenance/
+├── alembic/                        # Schema migrations (source of truth for the DB schema)
+│   └── versions/                   # 0001_initial … 0008_documents
 ├── app/
-│   ├── main.py                     # FastAPI app, lifespan, router registration
+│   ├── main.py                     # FastAPI app, lifespan, router registration, serves frontend/dist/
 │   ├── api/
-│   │   ├── translations.py         # Translation CRUD + deploy + review endpoints
+│   │   ├── translations.py         # CRUD + deploy + review + batch + versions
+│   │   ├── notes.py                # Review notes thread
 │   │   ├── provenance.py           # PROV record, PROV-JSON, PROV-N, lineage
 │   │   ├── search.py               # Haystack semantic/BM25 search
-│   │   └── xliff_export.py         # XLIFF 2.0 download and preview
+│   │   ├── xliff_export.py         # XLIFF 2.0 download and preview ("leaving" the system)
+│   │   ├── xliff_import.py         # XLIFF 2.0 ingestion + the entering/leaving ledger ("entering")
+│   │   ├── redrive.py              # Threshold-quality redrive runs, preview, queue, human-in-the-loop approve/reject
+│   │   ├── images.py               # Image asset upload, context-linking, localization
+│   │   └── documents.py            # Phase 7a: text/Markdown document import + segments
 │   ├── core/
 │   │   ├── config.py               # Environment-based settings
-│   │   ├── database.py             # In-memory store (swap for PostgreSQL)
-│   │   ├── prov_builder.py         # W3C PROV-DM graph builder + PROV-JSON
+│   │   ├── database.py             # Thin public interface (get_db/init_db) over db/repository.py
+│   │   ├── db/                     # Postgres persistence layer
+│   │   │   ├── models.py           # SQLAlchemy ORM models
+│   │   │   ├── session.py          # Async engine/session factory
+│   │   │   └── repository.py       # PostgresRepository — all persistence logic
+│   │   ├── scoring/                # Quality scoring — deterministic + pluggable model scorers
+│   │   │   ├── deterministic.py    # Free floor-checks (ported from peripateticware's QE scorer)
+│   │   │   ├── claude_scorer.py    # Claude-as-judge (MQM-style)
+│   │   │   ├── ollama_scorer.py    # Local Ollama QE model
+│   │   │   └── factory.py          # CompositeScorer selection
+│   │   ├── redrive/                # Threshold-quality redrive engine
+│   │   │   ├── engine.py           # RedriveEngine — score, threshold, redrive, human-in-the-loop
+│   │   │   └── ledger.py           # DB-backed per-provider usage budget
+│   │   ├── prov_builder.py         # W3C PROV-DM graph builder (text + image), PROV-JSON
 │   │   ├── haystack_pipeline.py    # Haystack 2.x indexing and search
 │   │   └── translation_backends.py # Pluggable: Mock / Anthropic / DeepL / Google
 │   ├── models/
-│   │   └── schemas.py              # Pydantic models (PROV, XLIFF, Translation, Deployment)
+│   │   └── schemas.py              # Pydantic models — PROV, XLIFF, Translation, Deployment, QualityScore, RedriveRun, ImageAsset, ReviewNote…
 │   └── xliff/
-│       └── xliff_service.py        # XLIFF 2.0 generation with full embedded PROV
+│       ├── xliff_service.py        # XLIFF 2.0 generation/parsing with full embedded PROV + version history
+│       └── xliff_import.py         # Import logic (create/update units from a parsed XLIFF doc)
+├── frontend/                       # Review Shell — Vite + React + TypeScript (replaces the old static dashboard)
+│   ├── src/
+│   │   ├── api/client.ts           # Typed fetch wrapper for the whole API
+│   │   ├── components/             # ReviewFrame, SegmentDrawer, PageFlaggedList, ProvenancePanel, QualityBadge, VersionHistory, NotesThread
+│   │   └── pages/                  # ReviewPage, RedriveConsole, ImageReview, DocumentsPage, DocumentViewer, SearchPage, Dashboard
+│   ├── review-sdk/                 # The in-context overlay injected into a cooperative target app
+│   │   ├── overlay.ts              # Highlight boxes, score coloring, postMessage protocol
+│   │   ├── reviewTagProps.ts       # data-tu-id tagging primitive
+│   │   └── useReviewT.ts           # react-i18next binding shape for real-app adoption
+│   └── demo-target/                # Minimal fixture app the Review Shell iframes for local verification
 ├── docs/
 │   └── architecture.svg            # System architecture diagram
-├── frontend/
-│   └── index.html                  # Single-file dashboard (Translate/Provenance/Search/XLIFF)
 ├── tests/
-│   ├── conftest.py                 # pytest fixtures, async client
+│   ├── conftest.py                 # pytest fixtures, async client, per-session schema reset
 │   ├── test_provenance.py          # Unit tests (models, XLIFF, PROV builder, DB)
-│   └── test_api.py                 # API integration tests (all endpoints)
-├── .env.example                    # Environment variable reference
+│   ├── test_api.py                 # API integration tests — translations, provenance, XLIFF, redrive, notes, search
+│   ├── test_redrive.py             # Redrive engine tests incl. human-in-the-loop
+│   ├── test_images.py              # Image asset API tests
+│   └── test_documents.py           # Document import/segments API tests
 ├── .gitignore
 ├── CONTRIBUTING.md
 ├── Dockerfile
-├── docker-compose.yml              # dev / search / full profiles
+├── docker-compose.yml              # dev / search / full profiles — host ports offset (8001/5433) to avoid collisions
 ├── LICENSE                         # MIT
 ├── Makefile
 ├── pyproject.toml                  # packaging + pytest + ruff config

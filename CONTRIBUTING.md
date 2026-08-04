@@ -9,22 +9,31 @@ git clone https://github.com/YOUR_USERNAME/ai-translation-provenance.git
 cd ai-translation-provenance
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-cp .env.example .env          # edit as needed
-uvicorn app.main:app --reload # http://localhost:8000
+cp .env.example .env               # edit as needed
+docker-compose up -d postgres      # or point .env at your own Postgres
+alembic upgrade head
+uvicorn app.main:app --reload --port 8001
 ```
+
+For the review UI, see the "Run the review environment" section of the
+[README](README.md#run-the-review-environment-review-shell) — it's a
+separate Vite+React app under `frontend/`.
 
 ## Running Tests
 
+Every test needs Postgres reachable — `docker-compose up -d postgres` first
+(the schema is dropped and recreated once per test session, so this can be
+the same instance you use for development):
+
 ```bash
-# Unit tests only (no server needed)
-PYTHONPATH=. pytest tests/test_provenance.py -v
-
-# Full API integration tests
-PYTHONPATH=. pytest tests/test_api.py -v
-
-# All tests
-PYTHONPATH=. pytest -v
+PYTHONPATH=. pytest -v                        # everything
+PYTHONPATH=. pytest tests/test_api.py -v      # one file
 ```
+
+Frontend changes: `cd frontend && npx tsc -b` (and `frontend/demo-target`)
+for type-checking — there's no automated frontend test suite yet, so verify
+UI changes by actually running the dev servers and using the feature in a
+browser.
 
 ## Code Style
 

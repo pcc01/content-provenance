@@ -3,9 +3,9 @@ version: "3.9"
 # ── AI Translation Provenance System — Docker Compose ─────────────────────────
 #
 # Profiles:
-#   default  — app only (in-memory store, mock translation)
-#   search   — app + Qdrant vector store
-#   full     — app + Qdrant + Elasticsearch + PostgreSQL
+#   default  — app + PostgreSQL (mock translation)
+#   search   — + Qdrant vector store
+#   full     — + Qdrant + Elasticsearch
 #
 # Quick start (development):
 #   docker-compose up
@@ -13,8 +13,14 @@ version: "3.9"
 # With persistent vector search:
 #   docker-compose --profile search up
 #
-# Full production stack:
+# Full stack (adds Elasticsearch too):
 #   docker-compose --profile full up
+#
+# Host ports are deliberately offset from the obvious defaults (app 8001 not
+# 8000, postgres 5433 not 5432) so this stack can run alongside another
+# project's docker-compose stack using the standard ports on the same
+# machine without colliding. Only the HOST side is offset — inside the
+# Docker network the app still talks to postgres:5432 as normal.
 
 services:
 
@@ -24,7 +30,7 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "8000:8000"
+      - "8001:8000"
     environment:
       - APP_ENV=${APP_ENV:-development}
       - APP_HOST=0.0.0.0
@@ -32,13 +38,23 @@ services:
       - TRANSLATION_PROVIDER=${TRANSLATION_PROVIDER:-mock}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - HAYSTACK_DOCUMENT_STORE=${HAYSTACK_DOCUMENT_STORE:-memory}
-      - DATABASE_BACKEND=${DATABASE_BACKEND:-memory}
+      - DATABASE_BACKEND=${DATABASE_BACKEND:-postgres}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-provenance}
+      - POSTGRES_USER=${POSTGRES_USER:-provenance_user}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-changeme}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
       - CORS_ORIGINS=${CORS_ORIGINS:-*}
+      - IMAGE_STORAGE_DIR=${IMAGE_STORAGE_DIR:-/app/data/images}
     volumes:
       - ./app:/app/app
       - ./frontend:/app/frontend
       - model_cache:/root/.cache/huggingface
+      - image_storage:/app/data/images
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -57,21 +73,20 @@ services:
       - qdrant_data:/qdrant/storage
     restart: unless-stopped
 
-  # ── PostgreSQL (profile: full) ────────────────────────────────────────────────
+  # ── PostgreSQL (default — the system of record for translations/provenance/XLIFF) ──
   postgres:
     image: pgvector/pgvector:pg16
-    profiles: ["full"]
     ports:
-      - "5432:5432"
+      - "5433:5432"
     environment:
-      POSTGRES_DB: provenance
-      POSTGRES_USER: provenance_user
-      POSTGRES_PASSWORD: changeme
+      POSTGRES_DB: ${POSTGRES_DB:-provenance}
+      POSTGRES_USER: ${POSTGRES_USER:-provenance_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U provenance_user -d provenance"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-provenance_user} -d ${POSTGRES_DB:-provenance}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -100,3 +115,4 @@ volumes:
   postgres_data:
   es_data:
   model_cache:
+  image_storage:

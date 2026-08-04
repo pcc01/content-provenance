@@ -35,7 +35,7 @@ class Settings:
     qdrant_port: int = int(os.getenv("QDRANT_PORT", "6333"))
 
     # ── Database ──────────────────────────────────────────────────────────────
-    database_backend: str = os.getenv("DATABASE_BACKEND", "memory")
+    database_backend: str = os.getenv("DATABASE_BACKEND", "postgres")
     database_url: str = os.getenv(
         "DATABASE_URL",
         f"postgresql://{os.getenv('POSTGRES_USER','provenance_user')}"
@@ -44,6 +44,18 @@ class Settings:
         f":{os.getenv('POSTGRES_PORT','5432')}"
         f"/{os.getenv('POSTGRES_DB','provenance')}",
     )
+
+    # ── Quality Scoring / Redrive ────────────────────────────────────────────
+    scoring_provider: str = os.getenv("SCORING_PROVIDER", "claude")  # claude | ollama
+    redrive_provider: str = os.getenv("REDRIVE_PROVIDER", "")  # blank = reuse TRANSLATION_PROVIDER
+    ollama_url: str = os.getenv("OLLAMA_URL", "http://localhost:11434")
+    ollama_qe_model: str = os.getenv(
+        "OLLAMA_QE_MODEL", "hf.co/s3nh/Unbabel-TowerInstruct-7B-v0.1-GGUF:Q4_K_M"
+    )
+    quality_threshold_default: float = float(os.getenv("QUALITY_THRESHOLD_DEFAULT", "80"))
+
+    # ── Image Assets ──────────────────────────────────────────────────────────
+    image_storage_dir: str = os.getenv("IMAGE_STORAGE_DIR", "data/images")
 
     # ── XLIFF ─────────────────────────────────────────────────────────────────
     xliff_version: str = os.getenv("XLIFF_VERSION", "2.0")

@@ -9,7 +9,6 @@ Enables semantic search over:
 """
 
 from typing import List, Optional, Dict, Any
-from datetime import datetime
 
 # Haystack 2.x imports
 try:
@@ -21,7 +20,7 @@ try:
 except ImportError:
     HAYSTACK_AVAILABLE = False
 
-from app.models.schemas import TranslationUnit, DeploymentRecord, TranslationMethod, DeploymentContext
+from app.models.schemas import TranslationUnit, DeploymentRecord
 
 # Global Haystack components
 _document_store: Optional[Any] = None

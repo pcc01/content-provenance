@@ -21,12 +21,11 @@ Relations:
 
 from datetime import datetime
 from typing import Dict, List, Optional, Any
-import uuid
 
 from app.models.schemas import (
     TranslationUnit, ProvenanceRecord, ProvenanceAgent,
     ProvenanceActivity, ProvenanceEntity, DeploymentRecord,
-    TranslationMethod, DeploymentContext
+    TranslationMethod, ImageAsset, ImageTranslationUnit,
 )
 from app.core.database import get_db
 
@@ -36,7 +35,7 @@ PROVX_PREFIX = "urn:ai-provenance-system:"
 XSD_PREFIX = "http://www.w3.org/2001/XMLSchema#"
 
 
-def build_provenance_record(
+async def build_provenance_record(
     unit: TranslationUnit,
     deployments: Optional[List[DeploymentRecord]] = None,
 ) -> ProvenanceRecord:
@@ -82,7 +81,7 @@ def build_provenance_record(
     entities.append(source_entity)
     
     # ── 2. Translator Agent ───────────────────────────────────────────────────
-    translator_agent = db.agents.get(unit.translated_by_agent_id)
+    translator_agent = await db.get_agent(unit.translated_by_agent_id)
     if not translator_agent:
         translator_agent = ProvenanceAgent(
             id=unit.translated_by_agent_id,
@@ -164,10 +163,92 @@ def build_provenance_record(
         "entity": translation_entity.id,
         "agent": translator_agent.id,
     })
-    
+
+    # ── 4b. Version history (wasRevisionOf chain) ─────────────────────────────
+    # translation_entity above always represents the CURRENT/latest version —
+    # its id is deterministic per unit, not per version, so it doesn't need
+    # its own place in the chain. Prior versions each get their own entity id
+    # and a wasRevisionOf edge to the version before them, ending with an edge
+    # from the current entity back to the last prior version. Units with only
+    # one version (the common case until Phase 3's redrive engine or a human
+    # edit produces a second one) add nothing here.
+    versions = await db.list_translation_unit_versions(unit.id)
+    if len(versions) > 1:
+        prior_versions = versions[:-1]  # excludes the current/latest version
+        prev_entity_id: Optional[str] = None
+        for v in prior_versions:
+            hist_entity = ProvenanceEntity(
+                id=f"entity:translation:{unit.id}:v{v.version_number}",
+                entity_type="Translation",
+                was_derived_from=prev_entity_id or source_entity.id,
+                was_attributed_to=v.translated_by_agent_id,
+                generated_at=v.created_at,
+                attributes={
+                    "prov:type": "provx:TranslationEntity",
+                    "provx:version": str(v.version_number),
+                    "provx:sourceEvent": v.source_event,
+                    "provx:qualityScore": str(v.quality_score) if v.quality_score is not None else None,
+                    "provx:textSnippet": (v.target_text or "")[:100],
+                },
+            )
+            entities.append(hist_entity)
+            if prev_entity_id:
+                relations.append({
+                    "type": "wasRevisionOf",
+                    "newerEntity": hist_entity.id,
+                    "olderEntity": prev_entity_id,
+                })
+            prev_entity_id = hist_entity.id
+        relations.append({
+            "type": "wasRevisionOf",
+            "newerEntity": translation_entity.id,
+            "olderEntity": prev_entity_id,
+        })
+
+    # ── 4c. Quality Assessment (Phase 3 — threshold-quality redrive) ─────────
+    # The most recent QualityScore, if any, gets its own Activity — separate
+    # from the Translation activity so it's clear WHO/WHAT judged the
+    # quality (a scorer agent) vs WHO/WHAT produced the translation. When the
+    # current version was itself produced by a redrive (source_event ==
+    # "redrive"), the Translation activity is additionally marked
+    # wasInformedBy that assessment — the formal PROV link for "this
+    # translation exists BECAUSE that assessment flagged the prior one."
+    latest_score = await db.get_latest_quality_score(unit.id)
+    if latest_score is not None:
+        scorer_agent = await db.get_or_create_agent(
+            name=f"scorer:{latest_score.scorer}", agent_type="SoftwareAgent",
+            metadata={"role": "quality_scorer"},
+        )
+        if scorer_agent not in agents:
+            agents.append(scorer_agent)
+
+        qa_activity = ProvenanceActivity(
+            id=f"activity:qa:{latest_score.id}",
+            activity_type="QualityAssessment",
+            started_at=latest_score.scored_at,
+            ended_at=latest_score.scored_at,
+            agent_id=scorer_agent.id,
+            used_entity_ids=[translation_entity.id],
+            metadata={
+                "prov:type": "provx:QualityAssessmentActivity",
+                "provx:score": str(latest_score.score) if latest_score.score is not None else None,
+                "provx:reasons": ",".join(latest_score.reasons) if latest_score.reasons else None,
+            },
+        )
+        activities.append(qa_activity)
+        relations.append({"type": "used", "activity": qa_activity.id, "entity": translation_entity.id})
+        relations.append({"type": "wasAssociatedWith", "activity": qa_activity.id, "agent": scorer_agent.id})
+
+        if versions and versions[-1].source_event == "redrive":
+            relations.append({
+                "type": "wasInformedBy",
+                "informed": translation_activity.id,
+                "informant": qa_activity.id,
+            })
+
     # ── 5. Review (if applicable) ─────────────────────────────────────────────
     if unit.reviewed_by_agent_id:
-        reviewer_agent = db.agents.get(unit.reviewed_by_agent_id)
+        reviewer_agent = await db.get_agent(unit.reviewed_by_agent_id)
         if not reviewer_agent:
             reviewer_agent = ProvenanceAgent(
                 id=unit.reviewed_by_agent_id,
@@ -207,7 +288,7 @@ def build_provenance_record(
     
     # ── 6. Deployments ────────────────────────────────────────────────────────
     for dep in (deployments or []):
-        system_agent = db.get_or_create_agent("System", "SoftwareAgent")
+        system_agent = await db.get_or_create_agent("System", "SoftwareAgent")
         if system_agent not in agents:
             agents.append(system_agent)
         
@@ -265,6 +346,121 @@ def build_provenance_record(
     return record
 
 
+async def build_image_provenance_record(
+    itu: ImageTranslationUnit,
+    source_asset: ImageAsset,
+    target_asset: Optional[ImageAsset] = None,
+) -> ProvenanceRecord:
+    """
+    Same PROV-DM pattern as build_provenance_record, for image assets:
+
+    source_entity(SourceImage) --[used]-- translation_activity
+    translation_activity --[wasAssociatedWith]-- translator_agent
+    [if localized]:
+      translated_entity(TranslatedImage) --[wasGeneratedBy]-- translation_activity
+      translated_entity --[wasDerivedFrom]-- source_entity
+      translated_entity --[wasAttributedTo]-- translator_agent
+
+    Deliberately minimal compared to the text version — no review/deployment/
+    version-history sections yet; images get those treatments if/when this
+    phase's usage shows they're needed.
+    """
+    db = get_db()
+
+    entities: List[ProvenanceEntity] = []
+    activities: List[ProvenanceActivity] = []
+    agents: List[ProvenanceAgent] = []
+    relations: List[Dict[str, str]] = []
+
+    source_entity = ProvenanceEntity(
+        id=f"entity:source-image:{source_asset.id}",
+        entity_type="SourceImage",
+        generated_at=source_asset.uploaded_at,
+        attributes={
+            "prov:type": "prov:Entity",
+            "provx:contentType": source_asset.content_type,
+            "provx:checksum": source_asset.checksum,
+            "provx:language": itu.source_language,
+        },
+    )
+    entities.append(source_entity)
+
+    translator_agent = await db.get_agent(itu.translated_by_agent_id)
+    if not translator_agent:
+        translator_agent = ProvenanceAgent(
+            id=itu.translated_by_agent_id, name="Unknown Agent", agent_type="SoftwareAgent",
+        )
+    agents.append(translator_agent)
+
+    translation_activity = ProvenanceActivity(
+        id=f"activity:translate-image:{itu.id}",
+        activity_type="ImageTranslation",
+        started_at=itu.translated_at or datetime.utcnow(),
+        ended_at=itu.translated_at,
+        agent_id=translator_agent.id,
+        used_entity_ids=[source_entity.id],
+        metadata={
+            "prov:type": "provx:ImageTranslationActivity",
+            "provx:method": itu.translation_method.value,
+            "provx:sourceLanguage": itu.source_language,
+            "provx:targetLanguage": itu.target_language,
+        },
+    )
+    activities.append(translation_activity)
+
+    relations.append({
+        "type": "used", "activity": translation_activity.id, "entity": source_entity.id,
+        "time": (itu.translated_at or datetime.utcnow()).isoformat(),
+    })
+    relations.append({
+        "type": "wasAssociatedWith", "activity": translation_activity.id,
+        "agent": translator_agent.id, "role": _agent_role(itu.translation_method),
+    })
+
+    translated_entity: Optional[ProvenanceEntity] = None
+    if target_asset is not None:
+        translated_entity = ProvenanceEntity(
+            id=f"entity:translated-image:{itu.id}",
+            entity_type="TranslatedImage",
+            was_generated_by=translation_activity.id,
+            was_derived_from=source_entity.id,
+            was_attributed_to=translator_agent.id,
+            generated_at=target_asset.uploaded_at,
+            attributes={
+                "prov:type": "provx:TranslatedImageEntity",
+                "provx:contentType": target_asset.content_type,
+                "provx:checksum": target_asset.checksum,
+                "provx:targetLanguage": itu.target_language,
+                "provx:status": itu.status.value,
+                "provx:qualityScore": str(itu.quality_score) if itu.quality_score is not None else None,
+            },
+        )
+        entities.append(translated_entity)
+        relations.append({
+            "type": "wasGeneratedBy", "entity": translated_entity.id,
+            "activity": translation_activity.id, "time": target_asset.uploaded_at.isoformat(),
+        })
+        relations.append({
+            "type": "wasDerivedFrom", "generatedEntity": translated_entity.id,
+            "usedEntity": source_entity.id, "activity": translation_activity.id,
+        })
+        relations.append({
+            "type": "wasAttributedTo", "entity": translated_entity.id, "agent": translator_agent.id,
+        })
+
+    summary = (
+        f"Image {source_asset.id[:8]} translated from {itu.source_language} to "
+        f"{itu.target_language} by {translator_agent.name} "
+        f"({'localized' if translated_entity else 'pending localization'})."
+    )
+
+    return ProvenanceRecord(
+        translation_unit_id=itu.id,
+        entities=entities, activities=activities, agents=agents, relations=relations,
+        summary=summary,
+    )
+
+
 def to_prov_json(record: ProvenanceRecord) -> Dict[str, Any]:
     """
     Serialize a ProvenanceRecord to W3C PROV-JSON format.
@@ -291,6 +487,7 @@ def to_prov_json(record: ProvenanceRecord) -> Dict[str, Any]:
                 "used": {},
                 "wasAssociatedWith": {},
                 "wasInformedBy": {},
+                "wasRevisionOf": {},
             }
         }
     }
@@ -360,7 +557,12 @@ def to_prov_json(record: ProvenanceRecord) -> Dict[str, Any]:
                 "prov:informed": rel.get("informed"),
                 "prov:informant": rel.get("informant"),
             }
-    
+        elif rel_type == "wasRevisionOf":
+            bundle["wasRevisionOf"][rel_id] = {
+                "prov:newerEntity": rel.get("newerEntity"),
+                "prov:olderEntity": rel.get("olderEntity"),
+            }
+
     return doc
 
 

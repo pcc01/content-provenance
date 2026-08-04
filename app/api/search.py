@@ -1,7 +1,7 @@
 """Search API - Haystack-powered semantic search over translations."""
 
 from fastapi import APIRouter, Query
-from typing import Optional, List
+from typing import Optional
 from app.models.schemas import TranslationMethod, DeploymentContext
 from app.core.haystack_pipeline import search_translations, get_document_count
 

@@ -28,10 +28,11 @@ pytest>=8.0.0
 pytest-asyncio>=0.23.0
 anyio>=4.0.0
 
-# ── Production Database (optional — default is in-memory) ─────────────────────
-# asyncpg>=0.29.0               # PostgreSQL async driver
-# sqlalchemy[asyncio]>=2.0.0    # ORM layer
-# pgvector>=0.2.0               # pgvector extension for SQLAlchemy
+# ── Database (PostgreSQL, async) ───────────────────────────────────────────────
+asyncpg>=0.29.0                 # PostgreSQL async driver
+sqlalchemy[asyncio]>=2.0.0      # ORM layer
+alembic>=1.13.0                 # Schema migrations
+# pgvector>=0.2.0                # pgvector extension for SQLAlchemy (optional, embeddings)
 
 # ── Vector Stores (optional alternatives to in-memory) ────────────────────────
 # qdrant-client>=1.9.0          # Qdrant

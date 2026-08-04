@@ -46,6 +46,38 @@ class ProvenanceRelation(str, Enum):
     USED = "used"                            # W3C PROV
     WAS_ASSOCIATED_WITH = "wasAssociatedWith"# W3C PROV
     WAS_INFORMED_BY = "wasInformedBy"        # W3C PROV
+    WAS_REVISION_OF = "wasRevisionOf"        # W3C PROV — links successive versions of a translation
+
+
+class IngestDirection(str, Enum):
+    IN = "in"
+    OUT = "out"
+
+
+class RedriveRunStatus(str, Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class RedriveOutcome(str, Enum):
+    REDRIVEN = "redriven"
+    SKIPPED_ABOVE_THRESHOLD = "skipped_above_threshold"
+    FAILED = "failed"
+    NO_BUDGET = "no_budget"
+    PENDING_APPROVAL = "pending_approval"  # human-in-the-loop: redriven text proposed, not yet applied
+    REJECTED = "rejected"                  # a human reviewer declined the proposed redrive
+
+
+class ImageAssetKind(str, Enum):
+    CONTEXT = "context"            # a reference screenshot shown alongside a text segment for reviewer context
+    TRANSLATABLE = "translatable"  # a source or target image asset with its own provenance chain (e.g. a banner)
+
+
+class DocumentFormat(str, Enum):
+    TEXT = "text"
+    MARKDOWN = "markdown"
 
 
 # ─── W3C PROV-DM Core Concepts ───────────────────────────────────────────────
@@ -128,6 +160,111 @@ class TranslationUnit(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
+class TranslationUnitVersion(BaseModel):
+    """Full edit history for a TranslationUnit's target_text — one row per
+    version. source_event distinguishes how the version came to be, which
+    matters for provenance (an "import" or "redrive" version is attributed
+    differently than a plain "human_edit")."""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    unit_id: str
+    version_number: int
+    target_text: str
+    translated_by_agent_id: str
+    method: TranslationMethod
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    source_event: str = "initial"  # initial | human_edit | import | redrive
+    quality_score: Optional[float] = None
+    note: Optional[str] = None
+
+
+class ScoreError(BaseModel):
+    severity: str  # critical | major | minor
+    count: int = 1
+
+
+class QualityScore(BaseModel):
+    """One quality assessment of a unit's CURRENT version (see
+    TranslationUnitVersion). score is 0-100, lower = worse — the same
+    convention peripateticware's QE scorer uses. score=None means the
+    evaluator couldn't render a verdict (needs_review=True)."""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    unit_id: str
+    version_id: Optional[str] = None
+    score: Optional[float] = Field(None, ge=0.0, le=100.0)
+    scorer: str  # "deterministic" | "claude" | "ollama"
+    reasons: List[str] = Field(default_factory=list)
+    errors: List[ScoreError] = Field(default_factory=list)
+    raw_response: Optional[str] = None
+    needs_review: bool = False
+    scored_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class RedriveRunItem(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    run_id: str
+    unit_id: str
+    before_score: Optional[float] = None
+    after_score: Optional[float] = None
+    outcome: RedriveOutcome
+    detail: Optional[str] = None
+    # Human-in-the-loop (only populated when the run's require_human_approval
+    # is set and this item's outcome is/was PENDING_APPROVAL): the candidate
+    # text a human must approve before it becomes the unit's live translation.
+    proposed_text: Optional[str] = None
+    approved_by: Optional[str] = None
+    approved_at: Optional[datetime] = None
+
+
+class RedriveRun(BaseModel):
+    """A single threshold-quality redrive pass: score everything in scope
+    (skipping units already scored against their current version), redrive
+    whatever scores below `threshold`.
+
+    require_human_approval: when True, a below-threshold unit's redrive is
+    generated but NOT applied — the item sits as PENDING_APPROVAL with its
+    proposed_text until a human calls the approve/reject endpoint. Some
+    organizations require a human in the loop before AI-driven changes go
+    live even when the automated score/threshold decision itself is trusted;
+    this makes that an opt-in step rather than the only mode."""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    status: RedriveRunStatus = RedriveRunStatus.PENDING
+    threshold: float
+    scope: Dict[str, Any] = Field(default_factory=dict)  # e.g. {"target_language": "fr-FR"} or {"unit_ids": [...]}
+    scoring_provider: str
+    redrive_provider: str
+    require_human_approval: bool = False
+    triggered_by: Optional[str] = None
+    started_at: datetime = Field(default_factory=datetime.utcnow)
+    finished_at: Optional[datetime] = None
+    summary: Dict[str, Any] = Field(default_factory=dict)
+    items: List[RedriveRunItem] = Field(default_factory=list)
+
+
+class ReviewNote(BaseModel):
+    """A reviewer comment on a translation unit — the notes thread in the
+    review UI's segment drawer. parent_id makes a flat list threadable
+    without needing a recursive tree structure."""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    unit_id: str
+    author: str
+    body: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    resolved: bool = False
+    parent_id: Optional[str] = None
+
+
+class IngestEvent(BaseModel):
+    """One row per XLIFF document entering (import) or leaving (export) the
+    system — the literal 'track everything entering and leaving' ledger."""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    direction: IngestDirection
+    format: str = "xliff"
+    source_system: Optional[str] = None
+    xliff_document_id: Optional[str] = None
+    unit_count: int = 0
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class DeploymentRecord(BaseModel):
     """Tracks where translated content is deployed/used."""
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -154,6 +291,85 @@ class TranslationProject(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     created_by: Optional[str] = None
     translation_units: List[str] = Field(default_factory=list)  # IDs
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+# ─── Image Assets ──────────────────────────────────────────────────────────
+
+class ImageAsset(BaseModel):
+    """An uploaded image file — either a `context` screenshot shown next to
+    a text segment for reviewer context, or a `translatable` image (source
+    or target) that carries its own provenance chain (e.g. a localized
+    banner)."""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    kind: ImageAssetKind
+    storage_path: str            # relative path under settings.image_storage_dir
+    content_type: str
+    checksum: str                # sha256 of the file contents
+    original_filename: Optional[str] = None
+    alt_text: Optional[str] = None
+    uploaded_at: datetime = Field(default_factory=datetime.utcnow)
+    uploaded_by: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ImageTranslationUnit(BaseModel):
+    """The image-asset analogue of TranslationUnit — 'this source image,
+    localized into this target language.' target_image_id is None until a
+    localized image is attached (a human/tool upload, or a future
+    image-generation backend). overlay_text_unit_ids optionally links to
+    ordinary TranslationUnits for text embedded IN the image (e.g. a
+    banner's headline), so that text gets the full text-provenance/scoring/
+    redrive treatment while still being understood as part of this image."""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    source_image_id: str
+    target_image_id: Optional[str] = None
+    source_language: str
+    target_language: str
+
+    translation_method: TranslationMethod
+    translated_by_agent_id: str
+    translated_at: Optional[datetime] = None
+    reviewed_by_agent_id: Optional[str] = None
+    reviewed_at: Optional[datetime] = None
+
+    confidence_score: Optional[float] = Field(None, ge=0.0, le=1.0)
+    quality_score: Optional[float] = Field(None, ge=0.0, le=100.0)
+    status: TranslationStatus = TranslationStatus.PENDING
+
+    overlay_text_unit_ids: List[str] = Field(default_factory=list)
+    prov_entity_id: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ImageContextLink(BaseModel):
+    """Attaches a `context`-kind ImageAsset to a TranslationUnit — 'this
+    screenshot shows this text segment in context,' for the review UI."""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    image_id: str
+    translation_unit_id: str
+    note: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ─── Documents (Phase 7a: plain text / Markdown in-context review) ─────────
+
+class Document(BaseModel):
+    """A plain-text or Markdown file imported for in-context review. Its
+    content lives as ordinary TranslationUnits (one per paragraph/block),
+    each tagged in `metadata` with {"document_id": ..., "position": N} —
+    reusing TranslationUnit's existing free-form metadata field rather than
+    a join table, since ordering is the only extra structure a document
+    needs. The Review Shell's DocumentViewer page fetches those units back
+    in order and renders them as the "target page" the overlay SDK tags,
+    the same way any other in-context-reviewed page works."""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    title: str
+    original_filename: Optional[str] = None
+    format: DocumentFormat
+    source_language: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    uploaded_by: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 

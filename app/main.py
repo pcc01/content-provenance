@@ -3,14 +3,26 @@ AI Translation Provenance System
 FastAPI application with Haystack integration, XLIFF support, and W3C PROV-DM compliance.
 """
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+import sys
+
+# Several startup log lines use non-ASCII characters (checkmarks); Windows'
+# default console codepage (cp1252) can't encode them and would otherwise
+# crash the app before it ever binds a port. Docker/Linux consoles are UTF-8
+# already, so this is a no-op there.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8")
+
+from pathlib import Path
+
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse
 from contextlib import asynccontextmanager
 import uvicorn
 
-from app.api import translations, provenance, search, xliff_export
+from app.api import translations, provenance, search, xliff_export, xliff_import, redrive, images, notes, documents
 from app.core.database import init_db
 from app.core.haystack_pipeline import init_haystack
 
@@ -51,19 +63,64 @@ app.add_middleware(
 
 # Register routers
 app.include_router(translations.router, prefix="/api/v1/translations", tags=["Translations"])
+app.include_router(notes.router, prefix="/api/v1/translations", tags=["Notes"])
 app.include_router(provenance.router, prefix="/api/v1/provenance", tags=["Provenance"])
 app.include_router(search.router, prefix="/api/v1/search", tags=["Search"])
+# xliff_import mounted BEFORE xliff_export under the same prefix: its literal
+# routes (/import, /ingest-log) must be matched before xliff_export's
+# catch-all /{unit_id} route, which would otherwise treat "import" as a
+# unit_id — route registration order is what decides this, not specificity.
+app.include_router(xliff_import.router, prefix="/api/v1/xliff", tags=["XLIFF"])
 app.include_router(xliff_export.router, prefix="/api/v1/xliff", tags=["XLIFF"])
+app.include_router(redrive.router, prefix="/api/v1/redrive", tags=["Redrive"])
+app.include_router(images.router, prefix="/api/v1/images", tags=["Images"])
+app.include_router(documents.router, prefix="/api/v1/documents", tags=["Documents"])
+
+
+# The Review Shell (frontend/) is a Vite+React app now, not a static HTML
+# file — it has to be built (`npm run build` in frontend/) before FastAPI can
+# serve it directly. In development, run `npm run dev` in frontend/ (port
+# 5173, proxies /api to this server) and frontend/demo-target/ (port 5174,
+# the page the Review Shell iframes) instead of hitting this route.
+FRONTEND_DIST = Path("frontend/dist")
+
+if (FRONTEND_DIST / "assets").exists():
+    app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="frontend-assets")
 
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
-    return FileResponse("frontend/index.html")
+    dist_index = FRONTEND_DIST / "index.html"
+    if dist_index.exists():
+        return FileResponse(dist_index)
+    return HTMLResponse(
+        "<h1>Review Shell not built</h1>"
+        "<p>Run <code>npm run build</code> in <code>frontend/</code> to serve it from here, "
+        "or for development run <code>npm run dev</code> in <code>frontend/</code> (port 5173) "
+        "and <code>frontend/demo-target/</code> (port 5174) alongside this server.</p>"
+        '<p><a href="/docs">API docs</a></p>'
+    )
 
 
 @app.get("/health")
 async def health_check():
     return {"status": "healthy", "service": "AI Translation Provenance System"}
+
+
+@app.get("/{full_path:path}", response_class=HTMLResponse)
+async def spa_fallback(full_path: str):
+    """Serves the Review Shell's index.html for client-side routes (e.g.
+    /documents/{id}, the DocumentViewer's iframe target — see
+    frontend/src/main.tsx's path-based routing) that aren't a real file or
+    API route. Registered last: Starlette matches routes in registration
+    order, so every router and the /assets mount above are tried first —
+    this only catches what nothing else matched. In dev, Vite's own SPA
+    fallback (port 5173) serves these paths instead; this route only matters
+    once frontend/dist/ is built and served from here."""
+    dist_index = FRONTEND_DIST / "index.html"
+    if dist_index.exists():
+        return FileResponse(dist_index)
+    return HTMLResponse("<h1>Review Shell not built</h1>", status_code=404)
 
 
 if __name__ == "__main__":

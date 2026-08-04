@@ -34,8 +34,7 @@ from xml.dom import minidom
 import xml.etree.ElementTree as ET
 
 from app.models.schemas import (
-    TranslationUnit, ProvenanceRecord, ProvenanceEntity,
-    ProvenanceActivity, ProvenanceAgent, DeploymentRecord,
+    TranslationUnit, ProvenanceRecord, DeploymentRecord, TranslationUnitVersion,
 )
 
 
@@ -63,6 +62,7 @@ def build_xliff_document(
     deployments: Dict[str, List[DeploymentRecord]],
     project_name: str = "Translation Project",
     doc_id: Optional[str] = None,
+    versions: Optional[Dict[str, List[TranslationUnitVersion]]] = None,
 ) -> str:
     """
     Generate a fully-annotated XLIFF 2.0 document.
@@ -82,8 +82,14 @@ def build_xliff_document(
     root.set("srcLang",   units[0].source_language if units else "en")
     root.set("trgLang",   units[0].target_language if units else "")
     root.set(f"{{{PROV_NS}}}bundleId", f"bundle:{doc_id}")
-    root.set("xmlns:prov",  PROV_NS)
-    root.set("xmlns:dc",    DC_NS)
+    # xmlns:prov and xmlns:dc are NOT set manually here — ElementTree already
+    # auto-declares them (register_namespace + the Clark-notation bundleId/
+    # language attributes used below are enough to trigger it), and adding
+    # them again as plain string attributes produces a duplicate xmlns:prov
+    # attribute that expat then refuses to parse. xsd/provx have no real
+    # Clark-notation usage anywhere in this tree (they only ever appear as
+    # informal prefixes inside note *values*), so those two still need to be
+    # declared by hand for the namespace to show up on the document at all.
     root.set("xmlns:xsd",   XSD_NS)
     root.set("xmlns:provx", PROVX_NS)
 
@@ -103,7 +109,8 @@ def build_xliff_document(
     for unit in units:
         prov = provenance_records.get(unit.id)
         deps = deployments.get(unit.id, [])
-        _build_unit(file_el, unit, prov, deps)
+        unit_versions = (versions or {}).get(unit.id, [])
+        _build_unit(file_el, unit, prov, deps, unit_versions)
 
     return _pretty_xml(root)
 
@@ -152,6 +159,7 @@ def parse_xliff_document(xml_content: str) -> List[Dict[str, Any]]:
                 "prov_agents":     [],
                 "prov_relations":  [],
                 "deployments":     [],
+                "version_history": [],
                 "raw_notes":       {},
             }
 
@@ -174,6 +182,8 @@ def parse_xliff_document(xml_content: str) -> List[Dict[str, Any]]:
                     )
                 elif cat == f"{PROVX_NS}:deployment":
                     rec["deployments"].append(_parse_kv(value))
+                elif cat == f"{PROVX_NS}:version":
+                    rec["version_history"].append(_parse_kv(value))
 
             for seg in unit_el.findall("x:segment", ns):
                 rec["state"] = seg.get("state", "initial")
@@ -198,6 +208,7 @@ def _build_unit(
     unit: TranslationUnit,
     prov: Optional[ProvenanceRecord],
     deps: List[DeploymentRecord],
+    versions: Optional[List[TranslationUnitVersion]] = None,
 ) -> None:
     """Build a <unit> element with complete embedded PROV metadata."""
 
@@ -290,6 +301,21 @@ def _build_unit(
         )
         _note(notes, f"dep:{dep.id}", dep_val, f"{PROVX_NS}:deployment")
 
+    # ── Version history ───────────────────────────────────────────────────────
+    # Human-readable companion to the formal wasRevisionOf chain embedded above
+    # via the generic PROV-Relation notes (see prov_builder.py) — this section
+    # answers "who translated this, who overwrote it, and when" without having
+    # to reconstruct it from the entity/relation graph.
+    for v in (versions or []):
+        version_detail = (
+            f"version={v.version_number}; sourceEvent={v.source_event}; "
+            f"translatedBy={v.translated_by_agent_id}; method={v.method.value}; "
+            f"createdAt={_iso(v.created_at)}"
+            + (f"; qualityScore={v.quality_score}" if v.quality_score is not None else "")
+            + (f"; note={v.note}" if v.note else "")
+        )
+        _note(notes, f"version:{v.id}", version_detail, f"{PROVX_NS}:version")
+
     # ── <segment> ─────────────────────────────────────────────────────────────
     seg = ET.SubElement(unit_el, f"{{{XLIFF_NS}}}segment")
     seg.set("id",    f"seg-{unit.id}")
@@ -302,6 +328,11 @@ def _build_unit(
     tgt_el = ET.SubElement(seg, f"{{{XLIFF_NS}}}target")
     tgt_el.set(f"{{{DC_NS}}}language", unit.target_language)
     tgt_el.text = unit.target_text or ""
+
+
+def _pretty_xml(root: ET.Element) -> str:
+    rough = ET.tostring(root, encoding="unicode")
+    return minidom.parseString(rough).toprettyxml(indent="  ")
 
 
 def _note(parent: ET.Element, note_id: str, text: str, category: str) -> ET.Element:

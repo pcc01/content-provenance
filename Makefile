@@ -1,22 +1,30 @@
 # ── AI Translation Provenance System — Makefile ───────────────────────────────
 
-.PHONY: install run test lint docker-build docker-up docker-down clean
+.PHONY: install run migrate test lint docker-build docker-up docker-down clean frontend-dev demo-dev
 
 ## Install Python dependencies
 install:
 	pip install -r requirements.txt
 
-## Run the development server (hot reload)
+## Apply database migrations (run once before first `make run`, and after any schema change)
+migrate:
+	alembic upgrade head
+
+## Run the development server (hot reload) — port 8001, not 8000: see docker-compose.yml's port comment
 run:
-	uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+	uvicorn app.main:app --reload --host 0.0.0.0 --port 8001
 
-## Run the test suite
+## Run the full test suite (needs Postgres reachable — `make docker-up` first, or point POSTGRES_*/DATABASE_URL at your own)
 test:
-	PYTHONPATH=. python tests/test_provenance.py
-
-## Run with pytest (if installed)
-pytest:
 	PYTHONPATH=. pytest tests/ -v
+
+## Run the Review Shell dev server (frontend/) — proxies /api to :8001
+frontend-dev:
+	cd frontend && npm run dev
+
+## Run the demo target fixture (frontend/demo-target/) the Review Shell iframes
+demo-dev:
+	cd frontend/demo-target && npm run dev
 
 ## Lint with ruff (install separately: pip install ruff)
 lint:
@@ -26,7 +34,7 @@ lint:
 docker-build:
 	docker build -t ai-provenance-system .
 
-## Start default stack (in-memory, mock translation)
+## Start default stack (app + PostgreSQL, mock translation)
 docker-up:
 	docker-compose up
 
@@ -48,7 +56,7 @@ docker-clean:
 
 ## Open the API docs in browser
 docs:
-	open http://localhost:8000/docs
+	open http://localhost:8001/docs
 
 ## Show project structure
 tree:

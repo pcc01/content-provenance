@@ -32,11 +32,18 @@ class RedriveEngine:
         scorer: Optional[QualityScorer] = None,
         scorer_label: str = "unknown",
         redrive_backend: Optional[TranslationBackend] = None,
+        redrive_label: Optional[str] = None,
     ):
         self.scorer = scorer or get_scorer()
         self.scorer_label = scorer_label
         self.redrive_backend = redrive_backend or get_translation_backend()
-        self.redrive_label = _provider_label(self.redrive_backend)
+        # An explicit label always wins over one derived from the backend —
+        # approving/rejecting an item belonging to an existing RedriveRun
+        # should use THAT run's own recorded redrive_provider, not whatever
+        # TRANSLATION_PROVIDER happens to be configured right now (which may
+        # have changed since the run was created, and is never "human" for
+        # a human-authored proposal — see app/core/redrive/propose.py).
+        self.redrive_label = redrive_label or _provider_label(self.redrive_backend)
         self.ledger = UsageLedger()
 
     async def _score_unit(self, unit: TranslationUnit) -> QualityScore:

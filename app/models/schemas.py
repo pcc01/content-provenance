@@ -241,11 +241,19 @@ class RedriveRun(BaseModel):
 
 
 class ReviewNote(BaseModel):
-    """A reviewer comment on a translation unit — the notes thread in the
-    review UI's segment drawer. parent_id makes a flat list threadable
-    without needing a recursive tree structure."""
+    """A reviewer comment — either on one translation unit (the notes
+    thread in the review UI's segment drawer) or, for Phase 10's live
+    review workflow, on a whole page (`page_url`+`target_language`) for
+    observations that don't map to a single segment ("use formal register
+    throughout this page"). Exactly one of `unit_id` or
+    (`page_url`+`target_language`) is set, never both — same polymorphic-id
+    pattern already used for `provenance_bundles.translation_unit_id`.
+    parent_id makes a flat list threadable without a recursive tree
+    structure."""
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    unit_id: str
+    unit_id: Optional[str] = None
+    page_url: Optional[str] = None
+    target_language: Optional[str] = None
     author: str
     body: str
     created_at: datetime = Field(default_factory=datetime.utcnow)

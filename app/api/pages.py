@@ -1,27 +1,78 @@
 """
-Pages API — Phase 8 non-cooperative page review, Phase 9 page history.
-Fetches an arbitrary URL with a headless browser, harvests/tags its
-translatable text, and serves a rewritten same-origin copy the existing
-review overlay can highlight — no changes required to the target site's
-own source. Phase 9 adds time-travel: browse, diff, and (via the
-translations API's revert endpoint) restore a page's past versions.
+Pages API — Phase 8 non-cooperative page review, Phase 9 page history,
+Phase 10 page-level notes. Fetches an arbitrary URL with a headless
+browser, harvests/tags its translatable text, and serves a rewritten
+same-origin copy the existing review overlay can highlight — no changes
+required to the target site's own source. Phase 9 adds time-travel:
+browse, diff, and (via the translations API's revert endpoint) restore a
+page's past versions. Phase 10 adds a way for a browser extension's content
+script to reuse the SAME harvest/match engine against a real live tab
+instead of an anonymous Playwright fetch (see app/core/page_fetch.py's
+match_or_create_units — no headless browser involved here, the real tab
+already IS the browser), plus notes that attach to a whole page
+(url+target_language) instead of one segment — for observations from a
+live review session that don't map to a single unit.
 
-GET /api/v1/pages/render  - fetch (or re-serve/reconstruct) a URL
-GET /api/v1/pages/history - timeline of points where something on the page changed
-GET /api/v1/pages/diff    - which segments differ between two points in time
+POST /api/v1/pages/harvest         - Phase 10: match/create units for an already-harvested item list
+GET  /api/v1/pages/render          - fetch (or re-serve/reconstruct) a URL
+GET  /api/v1/pages/history         - timeline of points where something on the page changed
+GET  /api/v1/pages/diff            - which segments differ between two points in time
+GET  /api/v1/pages/notes           - page-level notes thread
+POST /api/v1/pages/notes           - add a page-level note
+PUT  /api/v1/pages/notes/{id}/resolve - mark a page-level note resolved/unresolved
 """
 
 from datetime import datetime
+from typing import List, Optional
 
 from fastapi.responses import HTMLResponse
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 
 from app.core.database import get_db
-from app.core.page_fetch import PageFetchError, fetch_and_render
+from app.core.page_fetch import PageFetchError, fetch_and_render, match_or_create_units
 from app.core.page_history import diff_page, get_page_timeline, reconstruct_page_as_of
-from app.models.schemas import TranslationMethod
+from app.models.schemas import ReviewNote, TranslationMethod
 
 router = APIRouter()
+
+
+class PageNoteCreateRequest(BaseModel):
+    url: str
+    target_language: str
+    author: str
+    body: str
+    parent_id: Optional[str] = None
+
+
+class HarvestItem(BaseModel):
+    idx: int
+    domPath: str
+    text: str
+
+
+class HarvestRequest(BaseModel):
+    url: str
+    target_language: str
+    source_language: str = "en-US"
+    method: TranslationMethod = TranslationMethod.AI
+    items: List[HarvestItem]
+
+
+@router.post("/harvest")
+async def harvest_page(request: HarvestRequest):
+    """Phase 10: the caller (an extension content script running in a real
+    live tab) already walked the DOM itself and has the {idx, domPath,
+    text} list — this only does the matching/translation step, identical
+    to what fetch_and_render does internally for Phase 8's Playwright path.
+    No text-swap response needed: the extension tags elements directly with
+    the returned tuId and leaves the live page's text alone (see Phase 10
+    in the plan for why)."""
+    items = [item.model_dump() for item in request.items]
+    mapping, _ = await match_or_create_units(
+        request.url, request.source_language, request.target_language, request.method, items,
+    )
+    return {"mapping": mapping}
 
 
 @router.get("/render", response_class=HTMLResponse)
@@ -76,3 +127,30 @@ async def page_diff(
     if changes is None:
         raise HTTPException(status_code=404, detail=f"No snapshot found for {url} ({target_language})")
     return {"url": url, "target_language": target_language, "changes": changes}
+
+
+@router.get("/notes")
+async def list_page_notes(url: str = Query(...), target_language: str = Query(...)):
+    db = get_db()
+    notes = await db.list_page_notes(url, target_language)
+    return [n.model_dump() for n in notes]
+
+
+@router.post("/notes", response_model=ReviewNote, status_code=201)
+async def create_page_note(request: PageNoteCreateRequest):
+    db = get_db()
+    note = ReviewNote(
+        page_url=request.url, target_language=request.target_language,
+        author=request.author, body=request.body, parent_id=request.parent_id,
+    )
+    await db.save_review_note(note)
+    return note
+
+
+@router.put("/notes/{note_id}/resolve", response_model=ReviewNote)
+async def resolve_page_note(note_id: str, resolved: bool = True):
+    db = get_db()
+    note = await db.resolve_review_note(note_id, resolved=resolved)
+    if not note:
+        raise HTTPException(status_code=404, detail=f"Note {note_id} not found")
+    return note

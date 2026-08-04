@@ -182,3 +182,72 @@ async def test_page_history_404s_for_unknown_page(client):
         params={"url": "http://example.invalid/never-fetched", "target_language": "fr-FR"},
     )
     assert r.status_code == 404
+
+
+# ── Phase 10 ──────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_harvest_endpoint_matches_units_without_playwright(client):
+    """The extension's content script already walked the DOM itself (a
+    real live tab, not a headless-browser fetch) — /pages/harvest only
+    does the matching/translation step. No fixture_server needed here,
+    just a hand-built items list."""
+    url = "https://example.org/extension-test-page"
+    body = {
+        "url": url,
+        "target_language": "fr-FR",
+        "source_language": "en-US",
+        "method": "ai",
+        "items": [
+            {"idx": 0, "domPath": "BODY>H1", "text": "Live Heading"},
+            {"idx": 1, "domPath": "BODY>P", "text": "Live paragraph text."},
+        ],
+    }
+    r = await client.post("/api/v1/pages/harvest", json=body)
+    assert r.status_code == 200
+    mapping = r.json()["mapping"]
+    assert len(mapping) == 2
+    assert mapping["0"]["targetText"] == "[FR] Live Heading"
+    assert mapping["1"]["targetText"] == "[FR] Live paragraph text."
+
+    # Re-harvesting the same page (a second "visit" to the live tab) reuses
+    # the same units — no duplicates, matching Phase 8's fetch behavior.
+    r2 = await client.post("/api/v1/pages/harvest", json=body)
+    mapping2 = r2.json()["mapping"]
+    assert mapping["0"]["tuId"] == mapping2["0"]["tuId"]
+    assert mapping["1"]["tuId"] == mapping2["1"]["tuId"]
+
+
+@pytest.mark.asyncio
+async def test_page_notes_crud(client):
+    url = "https://example.org/notes-test-page"
+    create_r = await client.post(
+        "/api/v1/pages/notes",
+        json={"url": url, "target_language": "fr-FR", "author": "reviewer@example.com", "body": "Use formal register throughout."},
+    )
+    assert create_r.status_code == 201
+    note = create_r.json()
+    assert note["page_url"] == url
+    assert note["unit_id"] is None
+
+    list_r = await client.get("/api/v1/pages/notes", params={"url": url, "target_language": "fr-FR"})
+    assert list_r.status_code == 200
+    notes = list_r.json()
+    assert len(notes) == 1
+    assert notes[0]["body"] == "Use formal register throughout."
+
+    resolve_r = await client.put(f"/api/v1/pages/notes/{note['id']}/resolve", params={"resolved": "true"})
+    assert resolve_r.status_code == 200
+    assert resolve_r.json()["resolved"] is True
+
+
+@pytest.mark.asyncio
+async def test_page_notes_do_not_leak_into_unrelated_pages(client):
+    await client.post(
+        "/api/v1/pages/notes",
+        json={"url": "https://a.example.org/", "target_language": "fr-FR", "author": "x", "body": "note on A"},
+    )
+    list_r = await client.get(
+        "/api/v1/pages/notes", params={"url": "https://b.example.org/", "target_language": "fr-FR"},
+    )
+    assert list_r.json() == []

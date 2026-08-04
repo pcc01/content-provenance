@@ -119,7 +119,11 @@ class PostgresRepository:
                 stmt = stmt.where(TranslationUnitRow.translation_method == method.value)
             if status:
                 stmt = stmt.where(TranslationUnitRow.status == status.value)
-            stmt = stmt.limit(limit)
+            # Without an ORDER BY, which rows a LIMIT keeps is undefined —
+            # harmless until a table has more rows than the limit, at which
+            # point results become nondeterministic (surfaced by test
+            # flakiness once enough units accumulated in a shared test DB).
+            stmt = stmt.order_by(TranslationUnitRow.translated_at.desc()).limit(limit)
             rows = (await session.execute(stmt)).scalars().all()
             return [_row_to_unit(r) for r in rows]
 
@@ -558,7 +562,8 @@ class PostgresRepository:
     async def save_review_note(self, note: ReviewNote) -> ReviewNote:
         async with self._session_factory() as session:
             session.add(ReviewNoteRow(
-                id=note.id, unit_id=note.unit_id, author=note.author, body=note.body,
+                id=note.id, unit_id=note.unit_id, page_url=note.page_url,
+                target_language=note.target_language, author=note.author, body=note.body,
                 created_at=note.created_at, resolved=note.resolved, parent_id=note.parent_id,
             ))
             await session.commit()
@@ -572,13 +577,21 @@ class PostgresRepository:
                     .order_by(ReviewNoteRow.created_at.asc())
                 )
             ).scalars().all()
-            return [
-                ReviewNote(
-                    id=r.id, unit_id=r.unit_id, author=r.author, body=r.body,
-                    created_at=r.created_at, resolved=r.resolved, parent_id=r.parent_id,
+            return [_row_to_review_note(r) for r in rows]
+
+    async def list_page_notes(self, page_url: str, target_language: str) -> List[ReviewNote]:
+        async with self._session_factory() as session:
+            rows = (
+                await session.execute(
+                    select(ReviewNoteRow)
+                    .where(
+                        ReviewNoteRow.page_url == page_url,
+                        ReviewNoteRow.target_language == target_language,
+                    )
+                    .order_by(ReviewNoteRow.created_at.asc())
                 )
-                for r in rows
-            ]
+            ).scalars().all()
+            return [_row_to_review_note(r) for r in rows]
 
     async def resolve_review_note(self, note_id: str, resolved: bool = True) -> Optional[ReviewNote]:
         async with self._session_factory() as session:
@@ -587,10 +600,7 @@ class PostgresRepository:
                 return None
             row.resolved = resolved
             await session.commit()
-            return ReviewNote(
-                id=row.id, unit_id=row.unit_id, author=row.author, body=row.body,
-                created_at=row.created_at, resolved=row.resolved, parent_id=row.parent_id,
-            )
+            return _row_to_review_note(row)
 
     # ── Ingest Events (everything entering/leaving the system) ─────────────
 
@@ -987,6 +997,14 @@ def _row_to_quality_score(row: QualityScoreRow) -> QualityScore:
         scorer=row.scorer, reasons=row.reasons,
         errors=[ScoreError(**e) for e in row.errors],
         raw_response=row.raw_response, needs_review=row.needs_review, scored_at=row.scored_at,
+    )
+
+
+def _row_to_review_note(row: ReviewNoteRow) -> ReviewNote:
+    return ReviewNote(
+        id=row.id, unit_id=row.unit_id, page_url=row.page_url, target_language=row.target_language,
+        author=row.author, body=row.body, created_at=row.created_at, resolved=row.resolved,
+        parent_id=row.parent_id,
     )
 
 

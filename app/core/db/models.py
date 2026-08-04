@@ -338,10 +338,15 @@ class ImageContextLinkRow(Base):
 
 
 class ReviewNoteRow(Base):
+    """unit_id is nullable — a note attaches to EITHER a unit OR a
+    (page_url, target_language) pair (Phase 10's page-level notes), never
+    both. See ReviewNote's docstring in app/models/schemas.py."""
     __tablename__ = "review_notes"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
-    unit_id: Mapped[str] = mapped_column(String, index=True)
+    unit_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    page_url: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    target_language: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     author: Mapped[str] = mapped_column(String)
     body: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

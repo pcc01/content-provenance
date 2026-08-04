@@ -103,7 +103,9 @@ export interface ProvenanceResponse {
 
 export interface ReviewNote {
   id: string;
-  unit_id: string;
+  unit_id: string | null;
+  page_url: string | null;
+  target_language: string | null;
   author: string;
   body: string;
   created_at: string;
@@ -329,4 +331,20 @@ export const api = {
     request<PageDiff>(
       `/pages/diff?${new URLSearchParams({ url, target_language: targetLanguage, from_ts: fromTs, to_ts: toTs })}`,
     ),
+
+  proposeTranslation: (unitId: string, proposedText: string, proposedBy: string) =>
+    request<RedriveRunItem>("/redrive/propose", {
+      method: "POST",
+      body: JSON.stringify({ unit_id: unitId, proposed_text: proposedText, proposed_by: proposedBy }),
+    }),
+
+  getPageNotes: (url: string, targetLanguage: string) =>
+    request<ReviewNote[]>(`/pages/notes?${new URLSearchParams({ url, target_language: targetLanguage })}`),
+  addPageNote: (url: string, targetLanguage: string, author: string, body: string, parentId?: string) =>
+    request<ReviewNote>("/pages/notes", {
+      method: "POST",
+      body: JSON.stringify({ url, target_language: targetLanguage, author, body, parent_id: parentId ?? null }),
+    }),
+  resolvePageNote: (noteId: string, resolved: boolean) =>
+    request<ReviewNote>(`/pages/notes/${noteId}/resolve?resolved=${resolved}`, { method: "PUT" }),
 };

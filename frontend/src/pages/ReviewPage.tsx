@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { api, type TranslationUnit } from "../api/client";
 import { PageFlaggedList } from "../components/PageFlaggedList";
 import { PageHistory } from "../components/PageHistory";
+import { PageNotes } from "../components/PageNotes";
 import { ReviewFrame, type ReviewFrameHandle } from "../components/ReviewFrame";
 import { SegmentDrawer } from "../components/SegmentDrawer";
 
@@ -227,6 +228,9 @@ export function ReviewPage() {
             onLoadAsOf={loadAsOf}
             ready={pageReady}
           />
+        )}
+        {loadedFetchTarget && (
+          <PageNotes url={loadedFetchTarget.url} targetLanguage={loadedFetchTarget.locale} />
         )}
       </div>
 

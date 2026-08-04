@@ -47,6 +47,9 @@ export function SegmentDrawer({ unitId, onClose, onPreview }: Props) {
   const [provenance, setProvenance] = useState<ProvenanceResponse["provenance"] | null>(null);
   const [tab, setTab] = useState<Tab>("details");
   const [draft, setDraft] = useState("");
+  const [proposedBy, setProposedBy] = useState("reviewer@example.com");
+  const [proposeStatus, setProposeStatus] = useState<"idle" | "busy" | "done" | "error">("idle");
+  const [proposeError, setProposeError] = useState<string | null>(null);
 
   function reload() {
     api.getTranslation(unitId).then((u) => { setUnit(u); setDraft(u.target_text ?? ""); });
@@ -58,8 +61,23 @@ export function SegmentDrawer({ unitId, onClose, onPreview }: Props) {
     setUnit(null);
     setProvenance(null);
     setTab("details");
+    setProposeStatus("idle");
+    setProposeError(null);
     reload();
   }, [unitId]);
+
+  async function handlePropose() {
+    if (!unit || !draft.trim()) return;
+    setProposeStatus("busy");
+    setProposeError(null);
+    try {
+      await api.proposeTranslation(unit.id, draft, proposedBy);
+      setProposeStatus("done");
+    } catch (e) {
+      setProposeError(e instanceof Error ? e.message : String(e));
+      setProposeStatus("error");
+    }
+  }
 
   return (
     <aside style={{
@@ -108,10 +126,30 @@ export function SegmentDrawer({ unitId, onClose, onPreview }: Props) {
                 rows={4}
                 style={{ width: "100%", fontSize: 14, padding: 8, borderRadius: 6, border: "1px solid #e5e7eb", resize: "vertical" }}
               />
-              <p style={{ fontSize: 11, color: "#9ca3af", marginTop: 4 }}>
-                Live-previews on the page as you type — this does not save. Use Redrive to
-                actually produce and apply a new translation.
+              <p style={{ fontSize: 11, color: "#9ca3af", marginTop: 4, marginBottom: 8 }}>
+                Live-previews on the page as you type — this does not save on its own. Use Redrive
+                for a machine retranslation, or propose your own text below (goes through the same
+                human-in-the-loop approval as a redrive).
               </p>
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <input
+                  value={proposedBy} onChange={(e) => setProposedBy(e.target.value)}
+                  placeholder="Your name/email" style={{ width: 150, fontSize: 12, padding: 4 }}
+                />
+                <button
+                  onClick={handlePropose}
+                  disabled={proposeStatus === "busy" || !draft.trim() || draft === (unit.target_text ?? "")}
+                  style={{ fontSize: 12, padding: "4px 10px", cursor: "pointer" }}
+                >
+                  {proposeStatus === "busy" ? "Proposing…" : "Propose translation"}
+                </button>
+              </div>
+              {proposeStatus === "done" && (
+                <p style={{ fontSize: 11, color: "#15803d", marginTop: 4 }}>
+                  Proposed — awaiting approval in the Redrive Console.
+                </p>
+              )}
+              {proposeError && <p style={{ fontSize: 11, color: "#b91c1c", marginTop: 4 }}>{proposeError}</p>}
             </div>
             <TranslatedByLine unit={unit} provenance={provenance} />
           </div>

@@ -22,7 +22,7 @@ from fastapi.responses import HTMLResponse, FileResponse
 from contextlib import asynccontextmanager
 import uvicorn
 
-from app.api import translations, provenance, search, xliff_export, xliff_import, redrive, images, notes, documents, pages
+from app.api import translations, provenance, search, xliff_export, xliff_import, redrive, images, notes, documents, pages, audit
 from app.core.database import init_db
 from app.core.haystack_pipeline import init_haystack
 
@@ -76,6 +76,7 @@ app.include_router(redrive.router, prefix="/api/v1/redrive", tags=["Redrive"])
 app.include_router(images.router, prefix="/api/v1/images", tags=["Images"])
 app.include_router(documents.router, prefix="/api/v1/documents", tags=["Documents"])
 app.include_router(pages.router, prefix="/api/v1/pages", tags=["Pages"])
+app.include_router(audit.router, prefix="/api/v1/audit", tags=["Audit"])
 
 
 # The Review Shell (frontend/) is a Vite+React app now, not a static HTML

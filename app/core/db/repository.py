@@ -33,7 +33,8 @@ from app.core.db.models import (
     ImageTranslationUnitRow, IngestEventRow, PageSnapshotRow, ProviderUsageLedgerRow,
     ProvenanceActivityRow, ProvenanceBundleRow, ProvenanceEntityRow,
     ProvenanceRelationRow, QualityScoreRow, RedriveRunItemRow, RedriveRunRow,
-    ReviewNoteRow, TranslationProjectRow, TranslationUnitRow,
+    ReviewNoteRow, SiteAuditFindingRow, SiteAuditPageRow, SiteAuditRow,
+    TranslationProjectRow, TranslationUnitRow,
     TranslationUnitVersionRow, XliffDocumentRow,
 )
 from app.models.schemas import (
@@ -41,8 +42,10 @@ from app.models.schemas import (
     ImageAssetKind, ImageContextLink, ImageTranslationUnit, IngestDirection,
     IngestEvent, PageSnapshot, ProvenanceActivity, ProvenanceAgent, ProvenanceEntity,
     ProvenanceRecord, QualityScore, RedriveOutcome, RedriveRun, RedriveRunItem,
-    RedriveRunStatus, ReviewNote, ScoreError, TranslationMethod,
-    TranslationProject, TranslationStatus, TranslationUnit, TranslationUnitVersion,
+    RedriveRunStatus, ReviewNote, ScoreError, SiteAudit, SiteAuditCheck,
+    SiteAuditFinding, SiteAuditPage, SiteAuditSeverity, SiteAuditStatus,
+    TranslationMethod, TranslationProject, TranslationStatus, TranslationUnit,
+    TranslationUnitVersion,
 )
 
 
@@ -723,6 +726,102 @@ class PostgresRepository:
             ).scalars().all()
             return [_row_to_page_snapshot(r) for r in rows]
 
+    # ── Site Audits (Phase 11) ──────────────────────────────────────────
+
+    async def create_site_audit(self, audit: SiteAudit) -> SiteAudit:
+        async with self._session_factory() as session:
+            session.add(SiteAuditRow(
+                id=audit.id, root_url=audit.root_url, primary_language=audit.primary_language,
+                max_pages=audit.max_pages, checks=[c.value for c in audit.checks],
+                status=audit.status.value, triggered_by=audit.triggered_by,
+                started_at=audit.started_at, finished_at=audit.finished_at,
+                pages_crawled=audit.pages_crawled, error=audit.error,
+            ))
+            await session.commit()
+        return audit
+
+    async def update_site_audit(
+        self, audit_id: str, status: Optional[SiteAuditStatus] = None,
+        finished_at: Optional[datetime] = None, pages_crawled: Optional[int] = None,
+        error: Optional[str] = None,
+    ) -> None:
+        async with self._session_factory() as session:
+            row = await session.get(SiteAuditRow, audit_id)
+            if not row:
+                return
+            if status is not None:
+                row.status = status.value
+            if finished_at is not None:
+                row.finished_at = finished_at
+            if pages_crawled is not None:
+                row.pages_crawled = pages_crawled
+            if error is not None:
+                row.error = error
+            await session.commit()
+
+    async def get_site_audit(self, audit_id: str) -> Optional[SiteAudit]:
+        async with self._session_factory() as session:
+            row = await session.get(SiteAuditRow, audit_id)
+            return _row_to_site_audit(row) if row else None
+
+    async def list_site_audits(self, limit: int = 50) -> List[SiteAudit]:
+        async with self._session_factory() as session:
+            rows = (
+                await session.execute(
+                    select(SiteAuditRow).order_by(SiteAuditRow.started_at.desc()).limit(limit)
+                )
+            ).scalars().all()
+            return [_row_to_site_audit(r) for r in rows]
+
+    async def add_site_audit_page(self, page: SiteAuditPage) -> SiteAuditPage:
+        async with self._session_factory() as session:
+            session.add(SiteAuditPageRow(
+                id=page.id, audit_id=page.audit_id, url=page.url,
+                html_lang_attr=page.html_lang_attr, expected_locale=page.expected_locale,
+                detected_language=page.detected_language, status_code=page.status_code,
+                fetched_at=page.fetched_at,
+            ))
+            await session.commit()
+        return page
+
+    async def list_site_audit_pages(self, audit_id: str) -> List[SiteAuditPage]:
+        async with self._session_factory() as session:
+            rows = (
+                await session.execute(
+                    select(SiteAuditPageRow)
+                    .where(SiteAuditPageRow.audit_id == audit_id)
+                    .order_by(SiteAuditPageRow.fetched_at.asc())
+                )
+            ).scalars().all()
+            return [_row_to_site_audit_page(r) for r in rows]
+
+    async def add_site_audit_finding(self, finding: SiteAuditFinding) -> SiteAuditFinding:
+        async with self._session_factory() as session:
+            session.add(SiteAuditFindingRow(
+                id=finding.id, audit_id=finding.audit_id, page_id=finding.page_id,
+                check=finding.check.value, finding_type=finding.finding_type,
+                severity=finding.severity.value, summary=finding.summary,
+                detail=finding.detail, created_at=finding.created_at,
+            ))
+            await session.commit()
+        return finding
+
+    async def list_site_audit_findings(
+        self, audit_id: str, check: Optional[SiteAuditCheck] = None,
+        severity: Optional[SiteAuditSeverity] = None, page_id: Optional[str] = None,
+    ) -> List[SiteAuditFinding]:
+        async with self._session_factory() as session:
+            stmt = select(SiteAuditFindingRow).where(SiteAuditFindingRow.audit_id == audit_id)
+            if check is not None:
+                stmt = stmt.where(SiteAuditFindingRow.check == check.value)
+            if severity is not None:
+                stmt = stmt.where(SiteAuditFindingRow.severity == severity.value)
+            if page_id is not None:
+                stmt = stmt.where(SiteAuditFindingRow.page_id == page_id)
+            stmt = stmt.order_by(SiteAuditFindingRow.created_at.asc())
+            rows = (await session.execute(stmt)).scalars().all()
+            return [_row_to_site_audit_finding(r) for r in rows]
+
     # ── PROV-JSON ────────────────────────────────────────────────────────
     # Not persisted separately — it's a pure function of a ProvenanceRecord
     # (see app.core.prov_builder.to_prov_json), so recomputing on a cache
@@ -1041,6 +1140,32 @@ def _row_to_page_snapshot(row: PageSnapshotRow) -> PageSnapshot:
     return PageSnapshot(
         id=row.id, url=row.url, target_language=row.target_language, html=row.html,
         harvested_unit_ids=row.harvested_unit_ids, fetched_at=row.fetched_at,
+    )
+
+
+def _row_to_site_audit(row: SiteAuditRow) -> SiteAudit:
+    return SiteAudit(
+        id=row.id, root_url=row.root_url, primary_language=row.primary_language,
+        max_pages=row.max_pages, checks=[SiteAuditCheck(c) for c in row.checks],
+        status=SiteAuditStatus(row.status), triggered_by=row.triggered_by,
+        started_at=row.started_at, finished_at=row.finished_at,
+        pages_crawled=row.pages_crawled, error=row.error,
+    )
+
+
+def _row_to_site_audit_page(row: SiteAuditPageRow) -> SiteAuditPage:
+    return SiteAuditPage(
+        id=row.id, audit_id=row.audit_id, url=row.url, html_lang_attr=row.html_lang_attr,
+        expected_locale=row.expected_locale, detected_language=row.detected_language,
+        status_code=row.status_code, fetched_at=row.fetched_at,
+    )
+
+
+def _row_to_site_audit_finding(row: SiteAuditFindingRow) -> SiteAuditFinding:
+    return SiteAuditFinding(
+        id=row.id, audit_id=row.audit_id, page_id=row.page_id, check=SiteAuditCheck(row.check),
+        finding_type=row.finding_type, severity=SiteAuditSeverity(row.severity),
+        summary=row.summary, detail=row.detail, created_at=row.created_at,
     )
 
 

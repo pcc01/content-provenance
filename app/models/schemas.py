@@ -70,6 +70,30 @@ class RedriveOutcome(str, Enum):
     REJECTED = "rejected"                  # a human reviewer declined the proposed redrive
 
 
+class SiteAuditStatus(str, Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class SiteAuditCheck(str, Enum):
+    """The four pluggable checks a SiteAudit run can enable — see
+    app/core/audit/checks/. New checks just need a new value here plus a
+    matching module; SiteAuditFinding.detail's free-form JSON means no
+    schema change is needed for new finding shapes within a check."""
+    MIXED_LOCALE = "mixed_locale"
+    RTL_READINESS = "rtl_readiness"
+    ICU_I18N = "icu_i18n"
+    PRIVACY = "privacy"
+
+
+class SiteAuditSeverity(str, Enum):
+    INFO = "info"
+    WARNING = "warning"
+    CRITICAL = "critical"
+
+
 class ImageAssetKind(str, Enum):
     CONTEXT = "context"            # a reference screenshot shown alongside a text segment for reviewer context
     TRANSLATABLE = "translatable"  # a source or target image asset with its own provenance chain (e.g. a banner)
@@ -398,6 +422,57 @@ class PageSnapshot(BaseModel):
     html: str
     harvested_unit_ids: List[str] = Field(default_factory=list)
     fetched_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class SiteAudit(BaseModel):
+    """Phase 11 — a crawl of a THIRD-PARTY site (not this system's own
+    translation units) looking for i18n/l10n/compliance issues: mixed
+    locales, RTL/logical-CSS readiness, ICU/i18n-tooling usage, and privacy-
+    policy language mismatches. Mirrors RedriveRun's parent-run shape, one
+    level deeper (SiteAuditPage) for the crawled-page inventory."""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    root_url: str
+    primary_language: str
+    max_pages: int = 40
+    checks: List[SiteAuditCheck] = Field(default_factory=lambda: list(SiteAuditCheck))
+    status: SiteAuditStatus = SiteAuditStatus.PENDING
+    triggered_by: Optional[str] = None
+    started_at: datetime = Field(default_factory=datetime.utcnow)
+    finished_at: Optional[datetime] = None
+    pages_crawled: int = 0
+    error: Optional[str] = None
+
+
+class SiteAuditPage(BaseModel):
+    """One crawled page within a SiteAudit run."""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    audit_id: str
+    url: str
+    html_lang_attr: Optional[str] = None
+    expected_locale: Optional[str] = None
+    detected_language: Optional[str] = None
+    status_code: Optional[int] = None
+    fetched_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class SiteAuditFinding(BaseModel):
+    """One issue surfaced by a check. `finding_type` and `detail` are
+    deliberately free-form (a string + a JSON blob) rather than one column
+    per possible shape — new finding types across all four checks need no
+    schema change, same flexibility RedriveRunItem.detail/
+    ProvenanceEntity.attributes already rely on elsewhere. `page_id` is
+    nullable because some findings span two pages (e.g. a privacy policy's
+    language not matching the page that links to it) — the secondary URL
+    lives in `detail`, not a second FK column."""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    audit_id: str
+    page_id: Optional[str] = None
+    check: SiteAuditCheck
+    finding_type: str
+    severity: SiteAuditSeverity = SiteAuditSeverity.WARNING
+    summary: str
+    detail: Dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 # ─── Full Provenance Record ───────────────────────────────────────────────────

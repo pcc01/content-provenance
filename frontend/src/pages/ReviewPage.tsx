@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, type TranslationUnit } from "../api/client";
 import { PageFlaggedList } from "../components/PageFlaggedList";
 import { PageHistory } from "../components/PageHistory";
@@ -23,7 +23,15 @@ type Mode = "cooperative" | "fetch";
 // embeds the SDK (unchanged since Phase 5); "fetch" routes through
 // /api/v1/pages/render (Phase 8), which harvests + tags + rewrites ANY
 // URL server-side, so no app changes are required at all.
-export function ReviewPage() {
+interface Props {
+  // Phase 11: lets the Audit tab hand off a finding's URL straight into
+  // fetch-mode review instead of leaving the reviewer to copy/paste it —
+  // a new object reference on every call (even for the same url/locale)
+  // so the effect below fires again on repeat clicks.
+  initialFetchTarget?: { url: string; locale: string } | null;
+}
+
+export function ReviewPage({ initialFetchTarget }: Props = {}) {
   const [mode, setMode] = useState<Mode>("cooperative");
 
   const [targetBase, setTargetBase] = useState(DEFAULT_TARGET_BASE);
@@ -44,34 +52,55 @@ export function ReviewPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const frameRef = useRef<ReviewFrameHandle>(null);
 
-  function loadPage() {
+  // Shared by loadPage()'s fetch-mode branch and the initialFetchTarget
+  // handoff effect below — both just need to point the iframe at
+  // /pages/render for a given url+locale, resetting the same per-load state.
+  function loadFetchTarget(url: string, targetLocale: string, opts?: { refresh?: boolean }) {
     setSegments([]);
     setSegmentsError(null);
     setSelectedId(null);
     setActiveAsOf(null);
     setPageReady(false);
+    setLoadedFetchTarget({ url, locale: targetLocale });
+    const params = new URLSearchParams({
+      url,
+      target_language: targetLocale,
+      source_language: fetchSourceLanguage,
+      method: fetchMethod,
+      __review: "1",
+      _t: String(Date.now()),
+    });
+    if (opts?.refresh) params.set("refresh", "true");
+    setLoadedUrl(`/api/v1/pages/render?${params.toString()}`);
+  }
+
+  function loadPage() {
     // Cache-bust with a timestamp so clicking "Load page" with unchanged
     // fields still forces the iframe to re-navigate — an unchanged src
     // string is a DOM no-op (no reload) in React, which made it easy to
     // mistake a stale iframe for a broken one while iterating on this page.
-    const cacheBust = Date.now();
     if (mode === "cooperative") {
+      setSegments([]);
+      setSegmentsError(null);
+      setSelectedId(null);
+      setActiveAsOf(null);
+      setPageReady(false);
       setLoadedFetchTarget(null);
-      setLoadedUrl(`${targetBase}${route}?locale=${encodeURIComponent(locale)}&__review=1&_t=${cacheBust}`);
+      setLoadedUrl(`${targetBase}${route}?locale=${encodeURIComponent(locale)}&__review=1&_t=${Date.now()}`);
     } else {
-      setLoadedFetchTarget({ url: fetchUrl, locale });
-      const params = new URLSearchParams({
-        url: fetchUrl,
-        target_language: locale,
-        source_language: fetchSourceLanguage,
-        method: fetchMethod,
-        __review: "1",
-        _t: String(cacheBust),
-      });
-      if (forceRefresh) params.set("refresh", "true");
-      setLoadedUrl(`/api/v1/pages/render?${params.toString()}`);
+      loadFetchTarget(fetchUrl, locale, { refresh: forceRefresh });
     }
   }
+
+  // Phase 11: a click on "Review this page" from the Audit tab lands here.
+  useEffect(() => {
+    if (!initialFetchTarget) return;
+    setMode("fetch");
+    setFetchUrl(initialFetchTarget.url);
+    setLocale(initialFetchTarget.locale);
+    loadFetchTarget(initialFetchTarget.url, initialFetchTarget.locale);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialFetchTarget]);
 
   // Phase 9: reload the same fetched page, optionally pinned to a past
   // point in time. Doesn't re-run loadPage()'s field-reading logic — the

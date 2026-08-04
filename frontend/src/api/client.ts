@@ -246,6 +246,57 @@ export interface BulkApproveResult {
   error?: string;
 }
 
+export type SiteAuditCheck = "mixed_locale" | "rtl_readiness" | "icu_i18n" | "privacy";
+export type SiteAuditSeverity = "info" | "warning" | "critical";
+export type SiteAuditStatus = "pending" | "running" | "completed" | "failed";
+
+export interface SiteAudit {
+  id: string;
+  root_url: string;
+  primary_language: string;
+  max_pages: number;
+  checks: SiteAuditCheck[];
+  status: SiteAuditStatus;
+  triggered_by: string | null;
+  started_at: string;
+  finished_at: string | null;
+  pages_crawled: number;
+  error: string | null;
+}
+
+export interface SiteAuditPage {
+  id: string;
+  audit_id: string;
+  url: string;
+  html_lang_attr: string | null;
+  expected_locale: string | null;
+  detected_language: string | null;
+  status_code: number | null;
+  fetched_at: string;
+}
+
+export interface SiteAuditFinding {
+  id: string;
+  audit_id: string;
+  page_id: string | null;
+  check: SiteAuditCheck;
+  finding_type: string;
+  severity: SiteAuditSeverity;
+  summary: string;
+  detail: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface AuditRunSummary {
+  audit: SiteAudit;
+  findings_by_check: Record<string, number>;
+  findings_by_severity: Record<string, number>;
+}
+
+export function auditExportUrl(auditId: string): string {
+  return `${API_BASE}/audit/runs/${auditId}/export`;
+}
+
 export const api = {
   getTranslation: (id: string) => request<TranslationUnit>(`/translations/${id}`),
   getTranslationsBatch: (ids: string[]) =>
@@ -376,4 +427,16 @@ export const api = {
     }),
   resolvePageNote: (noteId: string, resolved: boolean) =>
     request<ReviewNote>(`/pages/notes/${noteId}/resolve?resolved=${resolved}`, { method: "PUT" }),
+
+  createAuditRun: (body: {
+    root_url: string; primary_language: string; max_pages?: number;
+    checks?: SiteAuditCheck[]; triggered_by?: string;
+  }) => request<SiteAudit>("/audit/runs", { method: "POST", body: JSON.stringify(body) }),
+  listAuditRuns: () => request<SiteAudit[]>("/audit/runs"),
+  getAuditRun: (id: string) => request<AuditRunSummary>(`/audit/runs/${id}`),
+  getAuditPages: (id: string) => request<SiteAuditPage[]>(`/audit/runs/${id}/pages`),
+  getAuditFindings: (id: string, params?: { check?: SiteAuditCheck; severity?: SiteAuditSeverity }) =>
+    request<SiteAuditFinding[]>(
+      `/audit/runs/${id}/findings${params ? `?${new URLSearchParams(params as Record<string, string>)}` : ""}`,
+    ),
 };

@@ -38,6 +38,9 @@ alembic>=1.13.0                 # Schema migrations
 playwright>=1.47.0              # Headless-browser render for arbitrary/JS-rendered pages
                                  # Run `playwright install chromium` once after pip install
 
+# ── Site i18n/compliance audit toolkit (Phase 11) ──────────────────────────────
+langdetect>=1.0.9                # Language detection for the mixed-locale and privacy-policy checks
+
 # ── Vector Stores (optional alternatives to in-memory) ────────────────────────
 # qdrant-client>=1.9.0          # Qdrant
 # elasticsearch>=8.0.0          # Elasticsearch

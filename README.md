@@ -441,6 +441,43 @@ highlight until approved individually or all at once via the
 section for the full design, and `frontend/extension/README.md` for how to
 load the extension.
 
+### Site Audit (Phase 11 — i18n/l10n/compliance review of a third-party site)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/v1/audit/runs` | Crawl a site and run the enabled checks — runs synchronously, returns the completed (or failed) audit |
+| `GET`  | `/api/v1/audit/runs` | List past audits |
+| `GET`  | `/api/v1/audit/runs/{id}` | Status + finding counts by check/severity |
+| `GET`  | `/api/v1/audit/runs/{id}/pages` | The crawled-page inventory |
+| `GET`  | `/api/v1/audit/runs/{id}/findings` | Findings, filterable by `check`/`severity`/`page_id` |
+| `GET`  | `/api/v1/audit/runs/{id}/export` | Plain-text report download |
+
+**POST /api/v1/audit/runs — request body**
+
+```json
+{
+  "root_url": "https://example.com",
+  "primary_language": "en",
+  "max_pages": 40,
+  "checks": ["mixed_locale", "rtl_readiness", "icu_i18n", "privacy"]
+}
+```
+
+Distinct from every other capability in this system: it audits a
+THIRD-PARTY site from the outside, not this system's own translations.
+`app/core/audit/crawler.py` does a Playwright-based (client-rendered SPA
+content included) same-domain crawl, reusing Phase 8's `robots.txt` check;
+four pluggable checks in `app/core/audit/checks/` — mixed-locale
+detection, RTL/logical-CSS-property readiness, ICU/i18n-tooling detection
+(including literal leaked ICU MessageFormat syntax in rendered text), and
+privacy-policy language-mismatch review — write structured findings rather
+than a single flat report file. The Review Shell's "Audit" tab
+(`AuditPage.tsx`/`AuditReport.tsx`) starts runs and browses findings
+grouped by check with severity coloring; a finding's "Review this page"
+button hands off directly into the existing fetch-mode review for that
+URL. See `ROADMAP.md`'s "Site I18n & Compliance Audit Toolkit" section for
+the full design.
+
 ---
 
 ## Standards Compliance
@@ -522,7 +559,7 @@ cd frontend/demo-target && npx tsc -b
 ```
 content-provenance/
 ├── alembic/                        # Schema migrations (source of truth for the DB schema)
-│   └── versions/                   # 0001_initial … 0010_page_level_notes
+│   └── versions/                   # 0001_initial … 0011_site_audits
 ├── app/
 │   ├── main.py                     # FastAPI app, lifespan, router registration, serves frontend/dist/
 │   ├── api/
@@ -535,7 +572,8 @@ content-provenance/
 │   │   ├── redrive.py              # Threshold-quality redrive runs, preview, queue, human-in-the-loop approve/reject
 │   │   ├── images.py               # Image asset upload, context-linking, localization
 │   │   ├── documents.py            # Phase 7a: text/Markdown document import + segments
-│   │   └── pages.py                # Phase 8/9/10: fetch+rewrite review, page history, page-level notes, pending-proposals list
+│   │   ├── pages.py                # Phase 8/9/10: fetch+rewrite review, page history, page-level notes, pending-proposals list
+│   │   └── audit.py                # Phase 11: site i18n/l10n/compliance audit runs + findings
 │   ├── core/
 │   │   ├── config.py               # Environment-based settings
 │   │   ├── database.py             # Thin public interface (get_db/init_db) over db/repository.py
@@ -555,6 +593,10 @@ content-provenance/
 │   │   ├── prov_builder.py         # W3C PROV-DM graph builder (text + image), PROV-JSON
 │   │   ├── page_fetch.py           # Phase 8: Playwright fetch, harvest/match/tag/rewrite an arbitrary URL
 │   │   ├── page_history.py         # Phase 9: point-in-time reconstruction, diff, timeline — no new snapshot storage
+│   │   ├── audit/                  # Phase 11: third-party site i18n/l10n/compliance audit
+│   │   │   ├── crawler.py          # Playwright BFS crawl — text/links/stylesheet+script bodies per page
+│   │   │   ├── runner.py           # Orchestrates crawl -> persist pages -> run checks -> persist findings
+│   │   │   └── checks/             # mixed_locale.py, rtl_readiness.py, icu_i18n.py, privacy.py — pure functions over crawled data
 │   │   ├── haystack_pipeline.py    # Haystack 2.x indexing and search
 │   │   └── translation_backends.py # Pluggable: Mock / Anthropic / DeepL / Google
 │   ├── models/
@@ -565,8 +607,8 @@ content-provenance/
 ├── frontend/                       # Review Shell — Vite + React + TypeScript (replaces the old static dashboard)
 │   ├── src/
 │   │   ├── api/client.ts           # Typed fetch wrapper for the whole API
-│   │   ├── components/             # ReviewFrame, SegmentDrawer, PageFlaggedList, PageHistory, PageNotes, PendingChanges, ProvenancePanel, QualityBadge, VersionHistory, NotesThread
-│   │   └── pages/                  # ReviewPage, LiveReviewPage, RedriveConsole, ImageReview, DocumentsPage, DocumentViewer, SearchPage, Dashboard
+│   │   ├── components/             # ReviewFrame, SegmentDrawer, PageFlaggedList, PageHistory, PageNotes, PendingChanges, AuditReport, ProvenancePanel, QualityBadge, VersionHistory, NotesThread
+│   │   └── pages/                  # ReviewPage, LiveReviewPage, RedriveConsole, ImageReview, DocumentsPage, DocumentViewer, AuditPage, SearchPage, Dashboard
 │   ├── review-sdk/                 # The in-context overlay injected into a cooperative target app, or extracted for Phase 10's extension
 │   │   ├── overlay.ts              # Highlight boxes, score/pending coloring, pluggable transport (postMessage or chrome.runtime)
 │   │   ├── harvest.ts              # Phase 10: shared harvest/rewrite DOM walk — compiled once, used by both Playwright and the extension
@@ -593,7 +635,8 @@ content-provenance/
 │   ├── test_documents.py           # Document import/segments API tests
 │   ├── test_pages.py               # Page fetch/harvest/render + history/diff/as_of tests (real headless-browser render)
 │   ├── test_revert.py              # Version revert API tests
-│   └── test_propose.py             # Phase 10: human-drafted proposal -> pending -> approve/reject tests
+│   ├── test_propose.py             # Phase 10: human-drafted proposal -> pending -> approve/reject tests
+│   └── test_audit.py               # Phase 11: mixed-locale/RTL/ICU/privacy findings against a local fixture site
 ├── .gitignore
 ├── CONTRIBUTING.md
 ├── Dockerfile

@@ -386,6 +386,51 @@ class PageSnapshotRow(Base):
     fetched_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 
 
+class SiteAuditRow(Base):
+    """Phase 11 — a crawl of a third-party site looking for i18n/l10n/
+    compliance issues. Mirrors RedriveRunRow's parent-run shape."""
+    __tablename__ = "site_audits"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    root_url: Mapped[str] = mapped_column(String)
+    primary_language: Mapped[str] = mapped_column(String)
+    max_pages: Mapped[int] = mapped_column(Integer, default=40)
+    checks: Mapped[list] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String, default="pending")
+    triggered_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    pages_crawled: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+
+class SiteAuditPageRow(Base):
+    __tablename__ = "site_audit_pages"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    audit_id: Mapped[str] = mapped_column(String, ForeignKey("site_audits.id"), index=True)
+    url: Mapped[str] = mapped_column(String)
+    html_lang_attr: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    expected_locale: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    detected_language: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    status_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class SiteAuditFindingRow(Base):
+    __tablename__ = "site_audit_findings"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    audit_id: Mapped[str] = mapped_column(String, ForeignKey("site_audits.id"), index=True)
+    page_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("site_audit_pages.id"), nullable=True, index=True)
+    check: Mapped[str] = mapped_column(String, index=True)
+    finding_type: Mapped[str] = mapped_column(String)
+    severity: Mapped[str] = mapped_column(String, default="warning")
+    summary: Mapped[str] = mapped_column(Text)
+    detail: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class IngestEventRow(Base):
     """One row per XLIFF document entering or leaving the system — separate
     from XliffDocumentRow (which stores the artifact itself) so the ledger

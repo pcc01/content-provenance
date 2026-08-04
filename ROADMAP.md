@@ -92,6 +92,23 @@ Status legend: ✅ Built · 🔧 Partial · 📋 Planned · 💡 Suggested
 | **Document formats in-context review — text/Markdown** | ✅ | `app/api/documents.py`, `DocumentViewer.tsx`, `DocumentsPage.tsx` — each paragraph/block becomes a `TranslationUnit`, reviewed through the same overlay SDK as any page |
 | **Document formats in-context review — PDF/PowerPoint/DOCX** | 📋 | Requested but not yet designed — needs its own investigation into text-layer/coordinate extraction per format and how much of the overlay contract carries over |
 
+### Site I18n & Compliance Audit Toolkit
+
+Distinct in kind from the rest of this table: audits arbitrary THIRD-PARTY
+sites (not this system's own translations) for i18n/l10n/compliance issues.
+See "Site I18n & Compliance Audit Toolkit (Phase 11)" below for the full
+design.
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Multi-page crawl of a third-party site | ✅ | `app/core/audit/crawler.py` — Playwright-based (renders client-side/SPA content, unlike the raw-HTTP scripts this replaces), reuses Phase 8's `robots.txt` check |
+| Mixed-locale detection | ✅ | `app/core/audit/checks/mixed_locale.py` — page-language mismatches, multi-language pages, cross-language internal links, mismatched external YouTube embeds |
+| RTL / logical-CSS-properties readiness | ✅ | `app/core/audit/checks/rtl_readiness.py` — physical vs. logical CSS property usage, `:dir()`/`[dir=]` support signal |
+| ICU / i18n-tooling detection | ✅ | `app/core/audit/checks/icu_i18n.py` — library signatures (react-intl, i18next, `Intl.*`, ...) and literal leaked ICU MessageFormat syntax in rendered text |
+| Privacy-policy review + language-mismatch check | ✅ | `app/core/audit/checks/privacy.py` — finds privacy/legal-labeled links and flags when the linked policy's language doesn't match the linking page's |
+| Persisted, reviewable audit runs | ✅ | `SiteAudit`/`SiteAuditPage`/`SiteAuditFinding` tables, `app/api/audit.py` |
+| Editor UI + handoff into existing review tooling | ✅ | `AuditPage.tsx`/`AuditReport.tsx` — a finding's "Review this page" button jumps straight into Phase 8's fetch-mode review for that URL |
+
 ### Translation
 
 | Feature | Status | Notes |
@@ -165,6 +182,7 @@ Environment" above for the full breakdown. Vite + React + TypeScript.
 | Document import/segments API tests | ✅ | `tests/test_documents.py` |
 | Page fetch/harvest/render API tests (against a local static fixture server) | ✅ | `tests/test_pages.py` |
 | Page history — timeline/as_of/diff tests, revert tests | ✅ | `tests/test_pages.py`, `tests/test_revert.py` |
+| Site audit tests — mixed-locale/RTL/ICU/privacy findings against a local fixture site | ✅ | `tests/test_audit.py` |
 | Postgres-backed test fixtures (schema reset per session) | ✅ | `tests/conftest.py` |
 | pytest-asyncio, session-scoped event loop | ✅ | `pyproject.toml` |
 | Frontend test suite | 📋 | Currently covered by manual browser verification only |
@@ -351,6 +369,86 @@ is a native file picker, opaque to CDP) — the harvest/overlay/bridge/notes/
 propose flow it drives was verified through the fetch-mode UI that shares
 the same code paths; loading the extension against a real logged-in site is
 a manual step for whoever installs it.
+
+### Site I18n & Compliance Audit Toolkit (Phase 11)
+
+Distinct in kind from Phases 1–10, which manage translations THIS system
+owns end-to-end: this phase audits arbitrary THIRD-PARTY sites from the
+outside — crawling for mixed-locale content, checking pages for flexbox/
+logical-CSS-property RTL-readiness, detecting ICU/i18n tooling in use, and
+reviewing privacy policies. Replaces three standalone Python scripts (each
+a requests+BeautifulSoup+langdetect crawler writing its own `.txt` report,
+no persistence, no shared crawl, no RTL or ICU checks at all) with a
+Postgres-backed, reviewable equivalent — full integration into the app was
+the user's explicit choice over keeping them as standalone scripts, along
+with latitude to redesign the check implementations rather than port the
+scripts' logic as-is.
+
+- **Crawl engine** (`app/core/audit/crawler.py`) — Playwright, not
+  requests+BeautifulSoup, so client-rendered SPA content is seen (the exact
+  gap Phase 8 already solved once for this system's own review flow). One
+  shared browser instance per crawl; reuses Phase 8's `_check_robots_allowed`
+  before every fetch (a real upgrade over the scripts, which check nothing).
+  A single `page.evaluate()` per page extracts text blocks, links,
+  stylesheet/script URLs + bodies (fetched via the same browser context —
+  no separate HTTP client), and iframe URLs — no DOM re-serialization
+  needed. BFS same-domain(+subdomain), `max_pages` cap (default 40), a
+  politeness delay between page loads (the scripts had none).
+- **Four pluggable checks** (`app/core/audit/checks/`), each a pure
+  function over already-crawled data (no I/O of their own):
+  - `mixed_locale.py` — redesigned version of what the scripts did: page-
+    language mismatches (detected vs. URL-path-implied locale), pages
+    mixing languages, cross-language internal links, mismatched external
+    YouTube embeds (`hl` param).
+  - `rtl_readiness.py` (new) — counts physical CSS properties
+    (`margin-left`, `text-align: left`, `float: right`, ...) against
+    logical equivalents (`margin-inline-start`, `text-align: start`, ...)
+    across a page's stylesheets; flags heavy physical usage with no
+    logical-property or `:dir()`/`[dir=]` support as RTL-risk. A heuristic
+    signal, not a compliance certification.
+  - `icu_i18n.py` (new) — greps script bodies for i18n library signatures
+    (react-intl, i18next, `Intl.*`, ...) and separately greps the page's
+    own RENDERED TEXT for literal, unparsed ICU MessageFormat syntax
+    (`{count, plural, ...}`) — a real visible bug if it leaks into what a
+    visitor actually sees.
+  - `privacy.py` — finds privacy/legal-labeled links (extends the scraper
+    script's keyword list) and, new, flags when the linked policy's
+    language doesn't match the linking page's — reuses `mixed_locale`'s
+    detection rather than a separate mechanism.
+- **Data model** — `SiteAudit`/`SiteAuditPage`/`SiteAuditFinding` mirror
+  `RedriveRun`/`RedriveRunItem`'s parent-run + child-rows pattern, one
+  level deeper for the crawled-page inventory. `SiteAuditFinding.detail` is
+  a free-form JSON blob (same flexibility `RedriveRunItem.detail` already
+  relies on) — new finding types need no schema change.
+- **API** (`app/api/audit.py`) — `POST /audit/runs` runs synchronously and
+  returns the completed audit, same "await the whole run" convention as
+  `redrive.py`'s `POST /runs` rather than adding background-task
+  infrastructure; `GET /audit/runs/{id}`, `/pages`, `/findings` (filterable
+  by check/severity/page), `/export` (plain-text report, preserving the
+  scripts' familiar output format).
+- **Frontend** — a new "Audit" tab (`AuditPage.tsx`/`AuditReport.tsx`):
+  start a run, browse past runs, findings grouped by check with severity
+  coloring. The one deliberate cross-phase tie-in: a finding's "Review this
+  page" button hands off directly into Phase 8's existing fetch-mode
+  review for that exact URL (`ReviewPage.tsx` gained an
+  `initialFetchTarget` prop for this), instead of living in an isolated
+  silo.
+
+Verified live in Chrome against a local fixture site seeded with one issue
+per check (a mislabeled-locale page, RTL-risk CSS, an i18n-library
+reference, a leaked ICU string, and a French privacy policy linked from an
+English page): all five expected findings rendered correctly grouped by
+check with correct severity coloring, and the "Review this page" handoff
+correctly loaded the flagged page into fetch-mode review. 6 new backend
+tests (`tests/test_audit.py`) against a local static multi-page fixture
+server (same pattern `test_pages.py` already uses), full suite 83/83
+passing, both frontend TS projects clean.
+
+**Known limitations, by design**: the crawl runs synchronously within the
+request (bounded by `max_pages`, not background-task infrastructure); the
+RTL/ICU checks are heuristic signals ("worth a human look"), not
+compliance certifications; `langdetect` accuracy on short text blocks is a
+carried-forward limitation from the scripts this replaces, not solved here.
 
 ### Document Formats In-Context Review (PDF, PowerPoint, DOCX)
 

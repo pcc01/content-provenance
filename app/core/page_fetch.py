@@ -213,6 +213,15 @@ async def fetch_and_render(
 
     html = _inject_sdk(html)
 
-    snapshot = PageSnapshot(url=url, target_language=target_language, html=html, harvested_unit_ids=unit_ids)
+    # fetched_at deliberately set to the SAME `now` used for every harvested
+    # unit's translated_at/version created_at above, not a fresh
+    # datetime.utcnow() here — Phase 9's as_of reconstruction picks the
+    # newest template with fetched_at <= as_of, and a few milliseconds of
+    # drift between "when the units were stamped" and "when the snapshot
+    # itself was stamped" would make as_of=<this fetch's own timestamp>
+    # incorrectly find no template yet.
+    snapshot = PageSnapshot(
+        url=url, target_language=target_language, html=html, harvested_unit_ids=unit_ids, fetched_at=now,
+    )
     await db.save_page_snapshot(snapshot)
     return snapshot

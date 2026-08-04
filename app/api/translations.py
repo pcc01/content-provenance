@@ -219,6 +219,38 @@ async def get_translation_versions(unit_id: str):
     return [v.model_dump() for v in versions]
 
 
+@router.post("/{unit_id}/versions/{version_id}/revert")
+async def revert_translation_version(unit_id: str, version_id: str, reverted_by: Optional[str] = None):
+    """Phase 9: restore a unit's target_text to what a past version had.
+    Never rewrites history — save_translation_unit's own diff-on-target_text
+    check writes this as a NEW version (source_event="revert") the same way
+    a human edit or redrive would, so the wasRevisionOf chain (built from
+    version history — see prov_builder.py) picks it up with no special
+    casing needed."""
+    db = get_db()
+    unit = await db.get_translation_unit(unit_id)
+    if not unit:
+        raise HTTPException(status_code=404, detail=f"Translation unit {unit_id} not found")
+
+    versions = await db.list_translation_unit_versions(unit_id)
+    target_version = next((v for v in versions if v.id == version_id), None)
+    if not target_version:
+        raise HTTPException(status_code=404, detail=f"Version {version_id} not found for unit {unit_id}")
+
+    unit.target_text = target_version.target_text
+    note = f"Reverted to version {target_version.version_number}"
+    if reverted_by:
+        note += f" by {reverted_by}"
+    await db.save_translation_unit(unit, version_source_event="revert", version_note=note)
+
+    deps = await db.get_deployments_for_unit(unit_id)
+    prov_record = await build_provenance_record(unit, deps)
+    await db.save_provenance_record(prov_record)
+    await db.delete_xliff(unit_id)  # cached export is now stale — force regeneration
+
+    return unit.model_dump()
+
+
 @router.post("/{unit_id}/deploy")
 async def record_deployment(
     unit_id: str,

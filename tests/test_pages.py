@@ -7,8 +7,10 @@ Run with: PYTHONPATH=. pytest tests/test_pages.py -v
 
 import functools
 import http.server
+import re
 import tempfile
 import threading
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -107,3 +109,76 @@ async def test_render_page_rejects_non_http_scheme(client):
         "/api/v1/pages/render", params={"url": "file:///etc/passwd", "target_language": "fr-FR"},
     )
     assert r.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_page_history_as_of_and_diff(client, fixture_server):
+    db = get_db()
+
+    first = await client.get(
+        "/api/v1/pages/render",
+        params={"url": fixture_server, "target_language": "it-IT", "refresh": "true"},
+    )
+    assert first.status_code == 200
+    ids = re.findall(r'data-tu-id="([^"]+)"', first.text)
+    assert len(ids) == 4
+    edited_unit_id = ids[0]  # the "Welcome to the fixture" heading
+
+    original_unit = await db.get_translation_unit(edited_unit_id)
+    original_text = original_unit.target_text
+
+    initial_timestamps = await db.list_version_timestamps(ids)
+    assert len(initial_timestamps) == 1
+    t0 = initial_timestamps[0]
+
+    # A later edit to just this one segment, with a controlled timestamp so
+    # the as_of/diff assertions below are deterministic.
+    t1 = t0 + timedelta(seconds=10)
+    edited_unit = await db.get_translation_unit(edited_unit_id)
+    edited_unit.target_text = "[IT] Manually edited heading"
+    edited_unit.translated_at = t1
+    await db.save_translation_unit(edited_unit, version_source_event="human_edit", version_note="test edit")
+
+    history_r = await client.get(
+        "/api/v1/pages/history", params={"url": fixture_server, "target_language": "it-IT"},
+    )
+    assert history_r.status_code == 200
+    assert len(history_r.json()["timestamps"]) == 2
+
+    as_of_before = await client.get(
+        "/api/v1/pages/render",
+        params={"url": fixture_server, "target_language": "it-IT", "as_of": t0.isoformat()},
+    )
+    assert as_of_before.status_code == 200
+    assert original_text in as_of_before.text
+    assert "Manually edited heading" not in as_of_before.text
+
+    as_of_after = await client.get(
+        "/api/v1/pages/render",
+        params={"url": fixture_server, "target_language": "it-IT", "as_of": t1.isoformat()},
+    )
+    assert as_of_after.status_code == 200
+    assert "Manually edited heading" in as_of_after.text
+
+    diff_r = await client.get(
+        "/api/v1/pages/diff",
+        params={
+            "url": fixture_server, "target_language": "it-IT",
+            "from_ts": t0.isoformat(), "to_ts": t1.isoformat(),
+        },
+    )
+    assert diff_r.status_code == 200
+    changes = diff_r.json()["changes"]
+    assert len(changes) == 1
+    assert changes[0]["unit_id"] == edited_unit_id
+    assert changes[0]["before_text"] == original_text
+    assert changes[0]["after_text"] == "[IT] Manually edited heading"
+
+
+@pytest.mark.asyncio
+async def test_page_history_404s_for_unknown_page(client):
+    r = await client.get(
+        "/api/v1/pages/history",
+        params={"url": "http://example.invalid/never-fetched", "target_language": "fr-FR"},
+    )
+    assert r.status_code == 404

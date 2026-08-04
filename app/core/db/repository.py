@@ -200,6 +200,48 @@ class PostgresRepository:
                 for r in rows
             ]
 
+    async def list_translation_unit_versions_for_units(
+        self, unit_ids: List[str],
+    ) -> Dict[str, List[TranslationUnitVersion]]:
+        """Batch form of list_translation_unit_versions — Phase 9's
+        time-travel needs every version of every unit on a page (can be
+        150+ units), so one query beats one-per-unit."""
+        result: Dict[str, List[TranslationUnitVersion]] = {uid: [] for uid in unit_ids}
+        if not unit_ids:
+            return result
+        async with self._session_factory() as session:
+            rows = (
+                await session.execute(
+                    select(TranslationUnitVersionRow)
+                    .where(TranslationUnitVersionRow.unit_id.in_(unit_ids))
+                    .order_by(TranslationUnitVersionRow.version_number.asc())
+                )
+            ).scalars().all()
+            for r in rows:
+                result.setdefault(r.unit_id, []).append(TranslationUnitVersion(
+                    id=r.id, unit_id=r.unit_id, version_number=r.version_number,
+                    target_text=r.target_text, translated_by_agent_id=r.translated_by_agent_id,
+                    method=TranslationMethod(r.method), created_at=r.created_at,
+                    source_event=r.source_event, quality_score=r.quality_score, note=r.note,
+                ))
+            return result
+
+    async def list_version_timestamps(self, unit_ids: List[str]) -> List[datetime]:
+        """Distinct points in time at which something on a page's harvested
+        units changed — Phase 9's timeline/"commit list"."""
+        if not unit_ids:
+            return []
+        async with self._session_factory() as session:
+            rows = (
+                await session.execute(
+                    select(TranslationUnitVersionRow.created_at)
+                    .where(TranslationUnitVersionRow.unit_id.in_(unit_ids))
+                    .distinct()
+                    .order_by(TranslationUnitVersionRow.created_at.asc())
+                )
+            ).scalars().all()
+            return list(rows)
+
     # ── Provenance Records ──────────────────────────────────────────────
 
     async def save_provenance_record(self, record: ProvenanceRecord) -> ProvenanceRecord:

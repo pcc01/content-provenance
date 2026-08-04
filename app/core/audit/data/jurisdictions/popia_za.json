@@ -1,0 +1,280 @@
+{
+  "jurisdiction_id": "popia_za",
+  "jurisdiction_name": "POPIA (South Africa)",
+  "country_code": "ZA",
+  "framework": "popia",
+  "version": "1.0",
+  "effective_date": "2021-07-01",
+  "last_updated": "2026-06-27",
+  "description": "Protection of Personal Information Act 4 of 2013 (South Africa)",
+
+  "full_name": "Protection of Personal Information Act 4 of 2013",
+  "regulator": "Information Regulator of South Africa",
+  "regulator_contact": "inforeg@justice.gov.za",
+
+  "student_age_categories": {
+    "child": {"min_age": 0, "max_age": 17},
+    "adult": {"min_age": 18, "max_age": 150}
+  },
+
+  "consent_requirements": {
+    "child": {
+      "parental_consent_required": true,
+      "explicit_consent_required": true,
+      "consent_type": "explicit",
+      "description": "Parental or guardian consent required for persons under 18"
+    },
+    "adult": {
+      "parental_consent_required": false,
+      "explicit_consent_required": true,
+      "consent_type": "explicit",
+      "description": "Explicit consent from data subject required"
+    }
+  },
+
+  "child_age_threshold": 18,
+
+  "legal_bases": [
+    "explicit_consent",
+    "contract_performance",
+    "legal_obligation",
+    "vital_interests",
+    "public_interest",
+    "legitimate_interest",
+    "judicial_function",
+    "data_subject_consent"
+  ],
+
+  "prohibited_data_collection": {
+    "child": [
+      "biometric_data",
+      "health_records",
+      "criminal_records",
+      "location_tracking_continuous"
+    ],
+    "adult": []
+  },
+
+  "allowed_data_collection": {
+    "educational_purpose": [
+      "student_name",
+      "student_grade_level",
+      "student_learning_style",
+      "student_performance_data",
+      "location_for_lesson",
+      "activity_responses",
+      "assessment_results"
+    ],
+    "restricted": [
+      "student_email",
+      "student_phone_number",
+      "parent_email",
+      "parent_phone_number"
+    ]
+  },
+
+  "data_categories_covered": [
+    "name",
+    "email",
+    "learning_data",
+    "location",
+    "audio_captures",
+    "image_captures",
+    "biometric_data"
+  ],
+
+  "special_categories": [
+    "race",
+    "ethnic_origin",
+    "political_opinion",
+    "health_data",
+    "biometric_data",
+    "criminal_record",
+    "religious_belief",
+    "trade_union_membership"
+  ],
+
+  "third_party_restrictions": {
+    "forbidden": [
+      "data_brokers",
+      "advertising_networks",
+      "social_media_trackers"
+    ],
+    "requires_explicit_consent": [
+      "cloud_storage_providers",
+      "analytics_services",
+      "payment_processors"
+    ],
+    "allowed_without_consent": [
+      "school_administrators",
+      "teachers_in_school",
+      "educational_research_institutions"
+    ]
+  },
+
+  "data_retention": {
+    "personal_data": {
+      "retention_months": 12,
+      "deletion_method": "anonymize_or_delete",
+      "archival_allowed": true,
+      "archival_duration_months": 36
+    },
+    "learning_activity_data": {
+      "retention_months": 24,
+      "deletion_method": "anonymize_or_delete",
+      "archival_allowed": true,
+      "archival_duration_months": 60
+    },
+    "session_data": {
+      "retention_months": 12,
+      "deletion_method": "delete",
+      "archival_allowed": false
+    },
+    "location_data": {
+      "retention_months": 6,
+      "deletion_method": "delete",
+      "archival_allowed": false
+    },
+    "audio_captures": {
+      "retention_months": 12,
+      "deletion_method": "delete",
+      "archival_allowed": false
+    },
+    "image_captures": {
+      "retention_months": 12,
+      "deletion_method": "delete",
+      "archival_allowed": false
+    },
+    "consent_records": {
+      "retention_months": 36,
+      "deletion_method": "never",
+      "archival_allowed": false
+    }
+  },
+
+  "data_rights": {
+    "right_to_access": {
+      "required": true,
+      "response_days": 30,
+      "description": "Data subject may request confirmation and access to their personal information"
+    },
+    "right_to_correction": {
+      "required": true,
+      "description": "Data subject may request correction or deletion of inaccurate, irrelevant, or outdated information"
+    },
+    "right_to_deletion": {
+      "required": true,
+      "description": "Data subject may request deletion where processing is unlawful or data is no longer needed"
+    },
+    "right_to_objection": {
+      "required": true,
+      "description": "Data subject may object to processing of personal information at any time"
+    },
+    "right_to_data_portability": {
+      "required": true,
+      "description": "Data subject may receive personal information in a structured, commonly used format"
+    }
+  },
+
+  "compliance_checks": {
+    "data_processing_agreement": {
+      "required": true,
+      "severity": "error",
+      "description": "Operator agreement required with all third-party processors (operators)"
+    },
+    "privacy_impact_assessment": {
+      "required": true,
+      "triggers": ["location_data", "sensitive_data", "biometric_data", "large_scale"],
+      "severity": "warning",
+      "description": "Privacy Impact Assessment recommended for high-risk processing activities"
+    },
+    "parental_consent": {
+      "required_for_ages": [0, 17],
+      "severity": "error",
+      "description": "Parental or guardian consent mandatory for persons under 18"
+    },
+    "right_to_access": {
+      "required": true,
+      "response_days": 30,
+      "severity": "error",
+      "description": "Must provide access to personal information within 30 days of request"
+    },
+    "right_to_deletion": {
+      "required": true,
+      "exceptions": ["legal_obligation", "public_interest"],
+      "severity": "error",
+      "description": "Must delete or correct personal information upon legitimate request"
+    },
+    "data_breach_notification": {
+      "required": true,
+      "notification_hours": 72,
+      "severity": "error",
+      "description": "Must notify the Information Regulator within 72 hours of becoming aware of a breach"
+    },
+    "information_officer": {
+      "required": true,
+      "severity": "warning",
+      "description": "Responsible Party must designate an Information Officer registered with the Information Regulator"
+    },
+    "privacy_notice": {
+      "required": true,
+      "severity": "error",
+      "description": "Must notify data subjects of the purpose of collection before or at time of collection"
+    }
+  },
+
+  "cross_border_transfers": {
+    "adequacy_required": true,
+    "binding_corporate_rules_allowed": true,
+    "contractual_clauses_allowed": true,
+    "consent_transfer_allowed": true,
+    "description": "Transfers to countries with adequate protection or with data subject consent and contractual safeguards"
+  },
+
+  "special_restrictions": {
+    "location_data": {
+      "allowed": true,
+      "requires_explicit_consent": true,
+      "requires_processing_agreement": true,
+      "retention_months": 6,
+      "description": "Location data is sensitive; short retention and explicit consent required"
+    },
+    "automatic_decision_making": {
+      "allowed": false,
+      "description": "Automated decision-making that affects data subjects without human review is restricted"
+    },
+    "profiling": {
+      "allowed": false,
+      "description": "Automated profiling of children and for non-educational purposes prohibited"
+    },
+    "biometric_data": {
+      "allowed": true,
+      "requires_explicit_consent": true,
+      "requires_impact_assessment": true,
+      "description": "Biometric data is a special category requiring explicit consent and heightened protection"
+    }
+  },
+
+  "warnings": [
+    "POPIA applies to all processing of personal information of South African data subjects",
+    "Parental or guardian consent is required for all persons under 18",
+    "You must register an Information Officer with the Information Regulator",
+    "Special-category data (race, health, biometric) requires explicit consent and extra safeguards",
+    "Breach must be reported to the Information Regulator within 72 hours",
+    "Cross-border transfers require adequate protection or explicit consent",
+    "You must notify data subjects of the purpose and processing of their personal information"
+  ],
+
+  "requirements": [
+    "Register an Information Officer with the Information Regulator of South Africa",
+    "Obtain explicit parental consent before collecting data from persons under 18",
+    "Implement a privacy notice (PAIA manual) for all data collection activities",
+    "Establish lawful basis for each processing activity from the 8 POPIA conditions",
+    "Have a processing agreement (operator contract) with all third-party processors",
+    "Implement data minimisation and purpose limitation principles",
+    "Maintain a data breach response plan with 72-hour notification capability",
+    "Honor data subject rights: access, correction, deletion, objection, portability",
+    "Implement security safeguards appropriate to the risk of the processing activity",
+    "Conduct Privacy Impact Assessments for high-risk processing activities"
+  ]
+}

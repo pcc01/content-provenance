@@ -1,0 +1,125 @@
+{
+  "jurisdiction_id": "lgpd_brazil",
+  "jurisdiction_name": "Brazil - Lei Geral de Proteção de Dados (LGPD)",
+  "country_code": "BR",
+  "framework": "lgpd",
+  "version": "1.0",
+  "effective_date": "2020-09-18",
+  "last_updated": "2026-05-06",
+  "description": "Brazilian General Data Protection Law",
+  
+  "student_age_categories": {
+    "child": {"min_age": 0, "max_age": 13},
+    "young_adult": {"min_age": 14, "max_age": 17},
+    "adult": {"min_age": 18, "max_age": 150}
+  },
+  
+  "consent_requirements": {
+    "child": {
+      "parental_consent_required": true,
+      "explicit_consent_required": true,
+      "consent_type": "explicit_parental_and_child",
+      "description": "Parental consent required; child's best interest is priority"
+    },
+    "young_adult": {
+      "parental_consent_required": true,
+      "explicit_consent_required": true,
+      "consent_type": "dual_consent",
+      "description": "Both parent and young adult must consent"
+    },
+    "adult": {
+      "parental_consent_required": false,
+      "explicit_consent_required": true,
+      "consent_type": "explicit",
+      "description": "Explicit consent from data subject required"
+    }
+  },
+  
+  "legal_bases": [
+    "explicit_consent",
+    "contract_performance",
+    "legal_obligation",
+    "vital_protection",
+    "legitimate_interest",
+    "public_administration"
+  ],
+  
+  "prohibited_data_collection": {
+    "child": [
+      "profiling_for_decisions",
+      "automated_decision_making_effects"
+    ],
+    "young_adult": [],
+    "adult": []
+  },
+  
+  "compliance_checks": {
+    "data_protection_officer": {
+      "required": false,
+      "recommended": true,
+      "severity": "warning",
+      "description": "Data Protection Officer recommended"
+    },
+    "impact_assessment": {
+      "required": false,
+      "recommended": true,
+      "triggers": ["sensitive_data", "large_scale", "children"],
+      "severity": "warning",
+      "description": "DPIA recommended for high-risk processing"
+    },
+    "consent_record": {
+      "required": true,
+      "severity": "error",
+      "description": "Must document consent given"
+    },
+    "privacy_policy": {
+      "required": true,
+      "severity": "error",
+      "description": "Must maintain clear privacy policy"
+    },
+    "data_breach_notification": {
+      "required": true,
+      "severity": "error",
+      "description": "Must notify affected individuals of data breaches"
+    }
+  },
+  
+  "data_rights": {
+    "right_to_access": {
+      "required": true,
+      "response_days": 30,
+      "description": "Data subject can request access"
+    },
+    "right_to_rectification": {
+      "required": true,
+      "description": "Data subject can request correction"
+    },
+    "right_to_deletion": {
+      "required": true,
+      "description": "Data subject can request deletion (right to be forgotten)"
+    },
+    "right_to_data_portability": {
+      "required": true,
+      "description": "Data subject can obtain data in structured format"
+    }
+  },
+  
+  "warnings": [
+    "LGPD applies to organizations processing personal data of Brazilian residents",
+    "Parental consent required for children under 18",
+    "Must notify individuals of breaches",
+    "Best interest of child is paramount principle",
+    "Cannot profile children or make automated decisions affecting them",
+    "Fines can reach 2% of revenue or R$50M per violation"
+  ],
+  
+  "requirements": [
+    "Obtain explicit parental consent for data collection from minors",
+    "Maintain privacy policy in Portuguese",
+    "Document all processing activities",
+    "Implement security measures",
+    "Respond to data subject rights requests",
+    "Notify authorities and individuals of data breaches",
+    "Honor child's best interest principle"
+  ]
+}

@@ -1,0 +1,314 @@
+{
+  "jurisdiction_id": "aepd_ar",
+  "jurisdiction_name": "PDPA (Argentina)",
+  "country_code": "AR",
+  "framework": "pdpa",
+  "version": "1.0",
+  "effective_date": "2000-10-30",
+  "last_updated": "2026-06-27",
+  "description": "Ley 25.326 de Protección de Datos Personales (Argentina)",
+
+  "full_name": "Ley 25.326 de Protección de Datos Personales",
+  "regulator": "AAIP (Agencia de Acceso a la Información Pública)",
+  "regulator_full_name": "Agencia de Acceso a la Información Pública (formerly DNPDP/AEPD)",
+  "eu_adequacy_status": true,
+  "eu_adequacy_since": "2003-06-30",
+
+  "student_age_categories": {
+    "young_child": {"min_age": 0, "max_age": 12},
+    "child": {"min_age": 13, "max_age": 15},
+    "teen": {"min_age": 16, "max_age": 17},
+    "adult": {"min_age": 18, "max_age": 150}
+  },
+
+  "consent_requirements": {
+    "young_child": {
+      "parental_consent_required": true,
+      "explicit_consent_required": true,
+      "consent_type": "explicit",
+      "description": "Parental or guardian consent required for children under 13 for all processing"
+    },
+    "child": {
+      "parental_consent_required": true,
+      "explicit_consent_required": true,
+      "consent_type": "explicit",
+      "description": "Parental or guardian consent required for persons 13-15 for non-essential processing"
+    },
+    "teen": {
+      "parental_consent_required": false,
+      "explicit_consent_required": true,
+      "consent_type": "explicit",
+      "description": "Persons 16-17 may consent independently; parental consent recommended for sensitive data"
+    },
+    "adult": {
+      "parental_consent_required": false,
+      "explicit_consent_required": true,
+      "consent_type": "explicit",
+      "description": "Explicit consent from data subject required; consent must be free, informed, and unambiguous"
+    }
+  },
+
+  "child_age_threshold": 13,
+  "secondary_age_threshold": 16,
+  "secondary_threshold_note": "Parental consent required for non-essential processing for persons under 16",
+
+  "legal_bases": [
+    "explicit_consent",
+    "contract_performance",
+    "legal_obligation",
+    "vital_interests",
+    "public_interest",
+    "legitimate_interest"
+  ],
+
+  "prohibited_data_collection": {
+    "young_child": [
+      "biometric_data",
+      "health_records",
+      "criminal_records",
+      "location_tracking_continuous",
+      "sensitive_data_without_consent"
+    ],
+    "child": [
+      "biometric_data",
+      "criminal_records",
+      "location_tracking_continuous"
+    ],
+    "teen": [
+      "criminal_records"
+    ],
+    "adult": []
+  },
+
+  "allowed_data_collection": {
+    "educational_purpose": [
+      "student_name",
+      "student_grade_level",
+      "student_learning_style",
+      "student_performance_data",
+      "location_for_lesson",
+      "activity_responses",
+      "assessment_results"
+    ],
+    "restricted": [
+      "student_email",
+      "student_phone_number",
+      "parent_email",
+      "parent_phone_number"
+    ]
+  },
+
+  "data_categories_covered": [
+    "name",
+    "email",
+    "learning_data",
+    "location",
+    "audio_captures",
+    "image_captures",
+    "biometric_data"
+  ],
+
+  "special_categories": [
+    "health_data",
+    "ethnic_origin",
+    "political_opinion",
+    "religious_belief",
+    "sexual_life",
+    "sexual_orientation",
+    "criminal_record",
+    "trade_union_membership"
+  ],
+
+  "special_categories_note": "Processing of sensitive personal data is prohibited without explicit consent or specific legal justification; health data may only be collected by healthcare professionals or appropriate institutions",
+
+  "third_party_restrictions": {
+    "forbidden": [
+      "data_brokers",
+      "advertising_networks",
+      "social_media_trackers"
+    ],
+    "requires_explicit_consent": [
+      "cloud_storage_providers",
+      "analytics_services",
+      "payment_processors"
+    ],
+    "allowed_without_consent": [
+      "school_administrators",
+      "teachers_in_school",
+      "educational_research_institutions"
+    ]
+  },
+
+  "data_retention": {
+    "personal_data": {
+      "retention_months": 12,
+      "deletion_method": "anonymize_or_delete",
+      "archival_allowed": true,
+      "archival_duration_months": 36
+    },
+    "learning_activity_data": {
+      "retention_months": 24,
+      "deletion_method": "anonymize_or_delete",
+      "archival_allowed": true,
+      "archival_duration_months": 60
+    },
+    "session_data": {
+      "retention_months": 12,
+      "deletion_method": "delete",
+      "archival_allowed": false
+    },
+    "location_data": {
+      "retention_months": 6,
+      "deletion_method": "delete",
+      "archival_allowed": false
+    },
+    "audio_captures": {
+      "retention_months": 12,
+      "deletion_method": "delete",
+      "archival_allowed": false
+    },
+    "image_captures": {
+      "retention_months": 12,
+      "deletion_method": "delete",
+      "archival_allowed": false
+    },
+    "consent_records": {
+      "retention_months": 36,
+      "deletion_method": "never",
+      "archival_allowed": false
+    }
+  },
+
+  "data_rights": {
+    "right_to_access": {
+      "required": true,
+      "response_days": 30,
+      "description": "Data subject may request confirmation of whether their data is held and obtain a copy at no charge"
+    },
+    "right_to_rectification": {
+      "required": true,
+      "response_days": 5,
+      "description": "Data subject may request correction of inaccurate or incomplete personal data within 5 business days"
+    },
+    "right_to_deletion": {
+      "required": true,
+      "response_days": 5,
+      "description": "Data subject may request deletion (suppression) of personal data where processing is unlawful or data is unnecessary"
+    },
+    "right_to_objection": {
+      "required": true,
+      "description": "Data subject may object to processing of personal data for legitimate reasons, including direct marketing"
+    }
+  },
+
+  "compliance_checks": {
+    "database_registration": {
+      "required": true,
+      "severity": "error",
+      "description": "Personal data databases (archivos) must be registered with the AAIP National Registry of Personal Data Databases"
+    },
+    "privacy_impact_assessment": {
+      "required": false,
+      "recommended": true,
+      "triggers": ["sensitive_data", "biometric_data", "large_scale", "children"],
+      "severity": "warning",
+      "description": "Privacy Impact Assessment recommended for high-risk or sensitive data processing"
+    },
+    "parental_consent": {
+      "required_for_ages": [0, 12],
+      "severity": "error",
+      "description": "Parental or guardian consent mandatory for children under 13 for all data processing"
+    },
+    "parental_consent_non_essential": {
+      "required_for_ages": [0, 15],
+      "severity": "warning",
+      "description": "Parental or guardian consent required for persons under 16 for non-essential processing"
+    },
+    "right_to_access": {
+      "required": true,
+      "response_days": 30,
+      "severity": "error",
+      "description": "Must provide access to personal data within 30 days of request at no charge"
+    },
+    "right_to_deletion": {
+      "required": true,
+      "response_days": 5,
+      "exceptions": ["legal_obligation", "public_interest", "statistical_purposes"],
+      "severity": "error",
+      "description": "Must delete or correct personal data within 5 business days of a valid request"
+    },
+    "data_breach_notification": {
+      "required": true,
+      "severity": "error",
+      "description": "Must notify AAIP of security incidents affecting personal data; notification of affected persons required where risk is significant"
+    },
+    "sensitive_data_prohibition": {
+      "required": true,
+      "severity": "error",
+      "description": "Processing of sensitive personal data (health, ethnic origin, political opinion, sexual life) is prohibited without explicit consent"
+    },
+    "data_quality": {
+      "required": true,
+      "severity": "error",
+      "description": "Data must be accurate, relevant, and up to date; must not be kept longer than necessary for the collection purpose"
+    }
+  },
+
+  "cross_border_transfers": {
+    "adequacy_required": true,
+    "eu_adequacy_granted": true,
+    "binding_corporate_rules_allowed": true,
+    "contractual_clauses_allowed": true,
+    "consent_transfer_allowed": true,
+    "description": "Argentina has EU adequacy status (since 2003). Transfers to countries without adequate protection require explicit consent or contractual safeguards. Transfers to countries on the prohibited list require AAIP authorisation."
+  },
+
+  "special_restrictions": {
+    "location_data": {
+      "allowed": true,
+      "requires_explicit_consent": true,
+      "requires_processing_agreement": true,
+      "retention_months": 6,
+      "description": "Location data requires explicit consent and short retention periods"
+    },
+    "automatic_decision_making": {
+      "allowed": false,
+      "description": "Automated decisions that significantly affect data subjects require human review and right of challenge"
+    },
+    "profiling": {
+      "allowed": false,
+      "description": "Profiling of children and automated profiling for non-educational purposes prohibited"
+    },
+    "biometric_data": {
+      "allowed": true,
+      "requires_explicit_consent": true,
+      "requires_impact_assessment": true,
+      "description": "Biometric data requires explicit consent and heightened security measures"
+    }
+  },
+
+  "warnings": [
+    "Argentina's PDPA (Ley 25.326) has EU adequacy status — it offers comparable protection to GDPR",
+    "Personal data databases (archivos) must be registered with the AAIP National Registry",
+    "Parental consent required for children under 13 for all processing",
+    "Parental consent required for persons under 16 for non-essential processing",
+    "Sensitive personal data (health, ethnic origin, political opinion, sexual life) cannot be processed without explicit consent",
+    "Data subjects may request access, rectification, deletion, or suppression of their data",
+    "Rectification and deletion must be completed within 5 business days",
+    "Cross-border transfers to countries without adequate protection require AAIP authorisation",
+    "Fines for violations can reach up to ARS $3M and include criminal liability in serious cases"
+  ],
+
+  "requirements": [
+    "Register all personal data databases (archivos) with the AAIP National Registry of Personal Data Databases",
+    "Obtain explicit parental consent before collecting data from children under 13",
+    "Obtain parental consent for non-essential processing of data from persons under 16",
+    "Obtain explicit consent before processing sensitive personal data",
+    "Establish lawful basis for each personal data processing activity",
+    "Implement a process to respond to access requests within 30 days at no charge",
+    "Implement a process to respond to rectification and deletion requests within 5 business days",
+    "Maintain a data breach response plan and notify AAIP of significant incidents",
+    "Apply data quality principles: accuracy, relevance, and minimum necessary retention",
+    "Implement technical and organisational security measures appropriate to the risk of processing"
+  ]
+}

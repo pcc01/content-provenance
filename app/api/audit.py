@@ -12,15 +12,17 @@ GET  /api/v1/audit/runs/{id}             - status + summary counts
 GET  /api/v1/audit/runs/{id}/pages       - the crawled-page inventory
 GET  /api/v1/audit/runs/{id}/findings    - filterable findings list
 GET  /api/v1/audit/runs/{id}/export      - plain-text report download
+GET  /api/v1/audit/runs/{id}/report.pdf  - branded PDF report download
 """
 
 from collections import Counter
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel, Field
 
+from app.core.audit.report import generate_pdf_report
 from app.core.audit.runner import run_audit
 from app.core.database import get_db
 from app.models.schemas import (
@@ -144,3 +146,22 @@ async def export_audit_report(audit_id: str):
         lines.append("No issues found.")
 
     return "\n".join(lines)
+
+
+@router.get("/runs/{audit_id}/report.pdf")
+async def export_audit_pdf_report(audit_id: str):
+    """Branded, client-facing PDF — logo, executive summary, findings by
+    check with severity coloring. Same underlying findings as /export,
+    formatted as something to actually hand a client rather than a .txt
+    dump."""
+    db = get_db()
+    audit = await db.get_site_audit(audit_id)
+    if not audit:
+        raise HTTPException(status_code=404, detail=f"Audit {audit_id} not found")
+    pages = await db.list_site_audit_pages(audit_id)
+    findings = await db.list_site_audit_findings(audit_id)
+    pdf_bytes = generate_pdf_report(audit, pages, findings)
+    return Response(
+        content=pdf_bytes, media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="audit-{audit_id[:8]}.pdf"'},
+    )

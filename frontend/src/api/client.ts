@@ -246,7 +246,10 @@ export interface BulkApproveResult {
   error?: string;
 }
 
-export type SiteAuditCheck = "mixed_locale" | "rtl_readiness" | "icu_i18n" | "privacy";
+export type SiteAuditCheck =
+  | "mixed_locale" | "rtl_readiness" | "icu_i18n" | "privacy"
+  | "text_expansion" | "font_coverage" | "hreflang" | "cookie_consent"
+  | "placeholder_leak" | "locale_format";
 export type SiteAuditSeverity = "info" | "warning" | "critical";
 export type SiteAuditStatus = "pending" | "running" | "completed" | "failed";
 
@@ -295,6 +298,10 @@ export interface AuditRunSummary {
 
 export function auditExportUrl(auditId: string): string {
   return `${API_BASE}/audit/runs/${auditId}/export`;
+}
+
+export function auditPdfUrl(auditId: string): string {
+  return `${API_BASE}/audit/runs/${auditId}/report.pdf`;
 }
 
 export const api = {

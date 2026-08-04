@@ -95,9 +95,12 @@ Status legend: ✅ Built · 🔧 Partial · 📋 Planned · 💡 Suggested
 ### Site I18n & Compliance Audit Toolkit
 
 Distinct in kind from the rest of this table: audits arbitrary THIRD-PARTY
-sites (not this system's own translations) for i18n/l10n/compliance issues.
-See "Site I18n & Compliance Audit Toolkit (Phase 11)" below for the full
-design.
+sites (not this system's own translations) for i18n/l10n/compliance
+issues — built as a consulting-practice tool (international-expansion
+readiness audits, with the report itself doubling as a lead-generation
+asset). See "Site I18n & Compliance Audit Toolkit (Phase 11)" and
+"Consulting-Grade Checks, Regulatory Data & PDF Report (Phase 12)" below
+for the full design.
 
 | Feature | Status | Notes |
 |---------|--------|-------|
@@ -106,8 +109,16 @@ design.
 | RTL / logical-CSS-properties readiness | ✅ | `app/core/audit/checks/rtl_readiness.py` — physical vs. logical CSS property usage, `:dir()`/`[dir=]` support signal |
 | ICU / i18n-tooling detection | ✅ | `app/core/audit/checks/icu_i18n.py` — library signatures (react-intl, i18next, `Intl.*`, ...) and literal leaked ICU MessageFormat syntax in rendered text |
 | Privacy-policy review + language-mismatch check | ✅ | `app/core/audit/checks/privacy.py` — finds privacy/legal-labeled links and flags when the linked policy's language doesn't match the linking page's |
+| Text expansion / truncation risk | ✅ | `app/core/audit/checks/text_expansion.py` — fixed-width CSS combined with clipped/hidden overflow, a common expansion blocker for longer translated text |
+| Font / script coverage | ✅ | `app/core/audit/checks/font_coverage.py` — flags a page targeting Arabic/Hebrew/CJK/Devanagari/Thai with no script-covering font-family declared |
+| hreflang / SEO localization | ✅ | `app/core/audit/checks/hreflang.py` — missing hreflang annotations, missing `x-default`, non-reciprocal hreflang links |
+| Cookie consent detection | ✅ | `app/core/audit/checks/cookie_consent.py` — known CMP signatures or banner text, checked against which regions actually require affirmative consent |
+| Untranslated placeholder leakage | ✅ | `app/core/audit/checks/placeholder_leak.py` — `{{var}}`, `%s`, `{0}`, TODO/Lorem-ipsum surviving into rendered output |
+| Locale format assumptions | ✅ | `app/core/audit/checks/locale_format.py` — US-centric form validation (zip/phone/state-dropdown) and hardcoded `$`/date formatting, on non-US-targeted pages |
+| Region → regulation mapping with real jurisdiction data | ✅ | `app/core/audit/regions.py` + `app/core/audit/data/jurisdictions/*.json` — ported (data only, not a live dependency) from the user's own privacy-compliance engine built for peripateticware |
 | Persisted, reviewable audit runs | ✅ | `SiteAudit`/`SiteAuditPage`/`SiteAuditFinding` tables, `app/api/audit.py` |
 | Editor UI + handoff into existing review tooling | ✅ | `AuditPage.tsx`/`AuditReport.tsx` — a finding's "Review this page" button jumps straight into Phase 8's fetch-mode review for that URL |
+| Branded PDF report | ✅ | `app/core/audit/report.py` (reportlab) — logo, executive summary, findings by check/severity, legal-disclaimer + consulting CTA closing section |
 
 ### Translation
 
@@ -182,7 +193,7 @@ Environment" above for the full breakdown. Vite + React + TypeScript.
 | Document import/segments API tests | ✅ | `tests/test_documents.py` |
 | Page fetch/harvest/render API tests (against a local static fixture server) | ✅ | `tests/test_pages.py` |
 | Page history — timeline/as_of/diff tests, revert tests | ✅ | `tests/test_pages.py`, `tests/test_revert.py` |
-| Site audit tests — mixed-locale/RTL/ICU/privacy findings against a local fixture site | ✅ | `tests/test_audit.py` |
+| Site audit tests — 10 checks + PDF export against a local fixture site | ✅ | `tests/test_audit.py` |
 | Postgres-backed test fixtures (schema reset per session) | ✅ | `tests/conftest.py` |
 | pytest-asyncio, session-scoped event loop | ✅ | `pyproject.toml` |
 | Frontend test suite | 📋 | Currently covered by manual browser verification only |
@@ -449,6 +460,81 @@ request (bounded by `max_pages`, not background-task infrastructure); the
 RTL/ICU checks are heuristic signals ("worth a human look"), not
 compliance certifications; `langdetect` accuracy on short text blocks is a
 carried-forward limitation from the scripts this replaces, not solved here.
+
+### Consulting-Grade Checks, Regulatory Data & PDF Report (Phase 12)
+
+Motivated by the toolkit's actual use case: auditing prospective clients'
+sites as part of an international-expansion consulting practice, with the
+report doubling as a lead-generation asset. Three additions on top of
+Phase 11's four checks.
+
+**Six more checks**, all in `app/core/audit/checks/`: text expansion/
+truncation risk (fixed-width CSS + clipped overflow — translated text
+commonly runs 20-35% longer than English), font/script coverage (a page
+targeting Arabic/Hebrew/CJK/Devanagari/Thai with no script-covering
+font-family declared — heuristic by design, no font-file parsing or new
+heavy dependency), hreflang/SEO localization (missing annotations, missing
+`x-default`, non-reciprocal links), cookie-consent detection (known CMP
+signatures or banner text, checked against which regions actually require
+affirmative consent), untranslated-placeholder leakage (`{{var}}`, `%s`,
+`{0}`, TODO/Lorem-ipsum surviving into rendered output — a broader version
+of Phase 11's ICU-syntax-leak check), and locale-format assumptions
+(US-centric form validation — 5-digit zip, US-state dropdown, 10-digit
+phone pattern — and hardcoded `$`/date formatting, flagged only on pages
+targeting a non-US region). The crawler was extended to collect hreflang
+link tags and form input/select-option data these checks need.
+
+**Real regulatory data, ported not live-linked**: the user has a full
+privacy-compliance engine already built for peripateticware
+(`backend/services/privacy_jurisdiction_resolver.py` + a live Postgres
+catalog + an AI-discovery pipeline for unmapped countries) — tightly
+coupled to that project's own domain (schools/orgs) and requiring its
+server to be running. Porting the ENGINE would mean this audit tool's
+regulatory findings silently break whenever another project's server is
+down, so only the DATA layer was ported: 9 jurisdiction JSON files (GDPR,
+CCPA, LGPD, PIPEDA, PDPA-Singapore, Mexico, Argentina, South Africa,
+Australia — FERPA/COPPA deliberately excluded as education-specific)
+copied into `app/core/audit/data/jurisdictions/`, read directly by
+`app/core/audit/regions.py` with zero live dependency on the source
+project. `privacy.py`'s findings now cite real jurisdiction names and a
+general-business summary per regulation instead of a hardcoded string
+list; `cookie_consent.py` checks the ported data's `compliance_checks`
+instead of a fixed tuple of framework names.
+
+Two content-accuracy bugs caught while porting, not just technical ones:
+the source files' own `requirements`/`warnings` arrays are written for
+peripateticware's education/student-data domain (GDPR's top bullet there
+is "Obtain explicit parental consent before any data collection") — wrong
+framing for a general commercial-site audit, replaced with hand-written
+general-business summaries instead of surfacing the ported arrays
+verbatim. And `aepd_ar.json` (Argentina) and `pdpa_singapore.json` both
+carry `"framework": "pdpa"` in the source data — a real collision — so
+lookups were switched to key off `jurisdiction_id` (unique per file)
+instead. A third bug, logic not content: `requires_cookie_consent()`
+initially matched on ANY `compliance_checks` key overlap, which
+incorrectly caught CCPA's `opt_out_mechanism` key too, producing two
+findings (a missing GDPR-style cookie banner AND a missing CCPA opt-out
+link) for what's really one requirement under the wrong regime — fixed to
+check `jurisdiction_id in ("gdpr_eu", "lgpd_brazil")` explicitly, caught
+via a direct smoke-test run before it reached a browser.
+
+**Branded PDF report** (`app/core/audit/report.py`, `reportlab` — a new,
+pure-Python-installable dependency): the user's "Word in Bits" logo, an
+executive summary table (counts by severity), findings grouped by check
+with severity coloring, and a closing section with a legal-disclaimer line
+(the automated findings aren't legal advice — a real liability/credibility
+consideration for a client-facing deliverable) plus a consulting CTA. New
+`GET /api/v1/audit/runs/{id}/report.pdf` endpoint; a "Download PDF report"
+link sits next to the existing plain-text export in `AuditReport.tsx`.
+
+Verified live: ran a real audit against the user's own site
+(thewordinbits.com, 15 pages) through the browser UI end-to-end — real,
+substantive findings (a text-expansion-risk CSS pattern repeated across
+the WordPress theme's pages, some `langdetect` noise on short nav-label
+text blocks — an already-documented limitation, not a new bug) rendered
+correctly grouped by check, and the PDF downloaded and opened correctly.
+7 tests in `tests/test_audit.py` (one seeded issue per new check, plus a
+PDF-endpoint smoke test), full suite 84/84 passing.
 
 ### Document Formats In-Context Review (PDF, PowerPoint, DOCX)
 

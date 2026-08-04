@@ -78,7 +78,7 @@ class SiteAuditStatus(str, Enum):
 
 
 class SiteAuditCheck(str, Enum):
-    """The four pluggable checks a SiteAudit run can enable — see
+    """The pluggable checks a SiteAudit run can enable — see
     app/core/audit/checks/. New checks just need a new value here plus a
     matching module; SiteAuditFinding.detail's free-form JSON means no
     schema change is needed for new finding shapes within a check."""
@@ -86,6 +86,12 @@ class SiteAuditCheck(str, Enum):
     RTL_READINESS = "rtl_readiness"
     ICU_I18N = "icu_i18n"
     PRIVACY = "privacy"
+    TEXT_EXPANSION = "text_expansion"
+    FONT_COVERAGE = "font_coverage"
+    HREFLANG = "hreflang"
+    COOKIE_CONSENT = "cookie_consent"
+    PLACEHOLDER_LEAK = "placeholder_leak"
+    LOCALE_FORMAT = "locale_format"
 
 
 class SiteAuditSeverity(str, Enum):

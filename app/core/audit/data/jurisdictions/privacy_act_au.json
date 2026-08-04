@@ -1,0 +1,140 @@
+{
+  "jurisdiction_id": "privacy_act_au",
+  "jurisdiction_name": "Australia - Privacy Act 1988 / Australian Privacy Principles (APPs)",
+  "country_code": "AU",
+  "framework": "privacy_act_au",
+  "version": "1.0",
+  "effective_date": "2014-03-12",
+  "last_updated": "2026-05-06",
+  "description": "Australia's Privacy Act 1988, incorporating the Australian Privacy Principles (APPs) which regulate the handling of personal information by Australian Government agencies and organisations with an annual turnover of more than $3 million.",
+
+  "student_age_categories": {
+    "child": {"min_age": 0, "max_age": 14},
+    "young_adult": {"min_age": 15, "max_age": 17},
+    "adult": {"min_age": 18, "max_age": 150}
+  },
+
+  "consent_requirements": {
+    "child": {
+      "parental_consent_required": true,
+      "explicit_consent_required": true,
+      "consent_type": "explicit_parental",
+      "description": "Parental consent required for children under 15"
+    },
+    "young_adult": {
+      "parental_consent_required": false,
+      "explicit_consent_required": true,
+      "consent_type": "explicit",
+      "description": "Individual can consent; parental notification recommended"
+    },
+    "adult": {
+      "parental_consent_required": false,
+      "explicit_consent_required": true,
+      "consent_type": "explicit",
+      "description": "Explicit consent from individual required"
+    }
+  },
+
+  "principles": [
+    "APP 1 - Open and transparent management of personal information",
+    "APP 2 - Anonymity and pseudonymity",
+    "APP 3 - Collection of solicited personal information",
+    "APP 4 - Dealing with unsolicited personal information",
+    "APP 5 - Notification of the collection of personal information",
+    "APP 6 - Use or disclosure of personal information",
+    "APP 7 - Direct marketing",
+    "APP 8 - Cross-border disclosure of personal information",
+    "APP 9 - Adoption, use or disclosure of government related identifiers",
+    "APP 10 - Quality of personal information",
+    "APP 11 - Security of personal information",
+    "APP 12 - Access to personal information",
+    "APP 13 - Correction of personal information"
+  ],
+
+  "compliance_checks": {
+    "privacy_policy": {
+      "required": true,
+      "severity": "error",
+      "description": "Must have a clearly expressed and up-to-date APP Privacy Policy"
+    },
+    "consent_documentation": {
+      "required": true,
+      "severity": "error",
+      "description": "Must obtain and document consent for collection of sensitive information"
+    },
+    "collection_notification": {
+      "required": true,
+      "severity": "error",
+      "description": "Must notify individuals at or before time of collection"
+    },
+    "data_security": {
+      "required": true,
+      "severity": "error",
+      "description": "Must take reasonable steps to protect personal information from misuse, interference, loss, and unauthorised access"
+    },
+    "access_mechanism": {
+      "required": true,
+      "response_days": 30,
+      "severity": "error",
+      "description": "Must provide access to personal information held about an individual on request"
+    },
+    "correction_mechanism": {
+      "required": true,
+      "severity": "error",
+      "description": "Must correct personal information that is inaccurate, out-of-date, incomplete, irrelevant or misleading"
+    },
+    "cross_border_disclosure": {
+      "required": true,
+      "severity": "error",
+      "description": "Must take reasonable steps to ensure overseas recipients comply with APPs before disclosing personal information"
+    }
+  },
+
+  "data_retention": {
+    "personal_data": {
+      "retention_months": 12,
+      "deletion_method": "delete_or_anonymize",
+      "archival_allowed": false
+    },
+    "learning_activity_data": {
+      "retention_months": 24,
+      "deletion_method": "delete_or_anonymize",
+      "archival_allowed": false
+    }
+  },
+
+  "third_party_restrictions": {
+    "forbidden": [],
+    "requires_explicit_consent": [
+      "third_party_sharing",
+      "cross_border_transfer",
+      "direct_marketing"
+    ],
+    "allowed_without_consent": [
+      "school_staff",
+      "authorized_agents"
+    ]
+  },
+
+  "warnings": [
+    "Privacy Act 1988 and APPs apply to organisations with annual turnover over AUD 3 million",
+    "Sensitive information (including health information) requires explicit consent",
+    "Must have an APP Privacy Policy freely available to the public",
+    "Cross-border disclosures require reasonable steps to ensure overseas recipient compliance",
+    "Must not use or disclose personal information for direct marketing without consent",
+    "Notifiable Data Breaches (NDB) scheme requires notification to OAIC and affected individuals",
+    "Penalties can include fines up to AUD 50 million for serious or repeated breaches"
+  ],
+
+  "requirements": [
+    "Maintain a clear and accessible APP Privacy Policy",
+    "Collect only information reasonably necessary for functions or activities",
+    "Notify individuals of collection, purposes, and how to access/correct data",
+    "Obtain explicit consent for sensitive information collection",
+    "Protect personal information with reasonable security measures",
+    "Destroy or de-identify personal information no longer needed",
+    "Provide access to personal information within 30 days of request",
+    "Correct inaccurate, outdated, incomplete, or misleading personal information",
+    "Notify OAIC and affected individuals of eligible data breaches (NDB scheme)"
+  ]
+}

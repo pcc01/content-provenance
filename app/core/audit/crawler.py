@@ -47,9 +47,21 @@ _EXTRACT_JS = """
   const scriptUrls = Array.from(document.querySelectorAll('script[src]')).map(s => s.src);
   const inlineScripts = Array.from(document.querySelectorAll('script:not([src])')).map(s => s.textContent || '');
   const iframeUrls = Array.from(document.querySelectorAll('iframe[src]')).map(f => f.src);
+  const hreflangLinks = Array.from(document.querySelectorAll('link[rel="alternate"][hreflang]')).map(l => ({
+    hreflang: l.getAttribute('hreflang') || '', href: l.href,
+  }));
+  const formInputs = Array.from(document.querySelectorAll('input')).map(i => ({
+    name: i.name || i.id || '', type: i.type || 'text',
+    pattern: i.getAttribute('pattern') || '', maxlength: i.getAttribute('maxlength') || '',
+  }));
+  const selects = Array.from(document.querySelectorAll('select')).map(s => ({
+    name: s.name || s.id || '',
+    options: Array.from(s.options).map(o => (o.textContent || '').trim()).filter(Boolean),
+  }));
   return {
     htmlLang: document.documentElement.getAttribute('lang'),
     textBlocks, links, stylesheetUrls, inlineStyles, scriptUrls, inlineScripts, iframeUrls,
+    hreflangLinks, formInputs, selects,
   };
 }
 """ % (_TEXT_TAGS)
@@ -80,6 +92,13 @@ class CrawledPage:
     # style/script bodies use the page's own url as a synthetic key.
     stylesheet_texts: dict = field(default_factory=dict)
     script_texts: dict = field(default_factory=dict)
+    # [{"hreflang": "en-GB", "href": "..."}], for the hreflang check.
+    hreflang_links: List[dict] = field(default_factory=list)
+    # [{"name": ..., "type": ..., "pattern": ..., "maxlength": ...}], for
+    # the locale_format check's US-centric form-validation detection.
+    form_inputs: List[dict] = field(default_factory=list)
+    # [{"name": ..., "options": [...]}], same purpose (state/province dropdowns).
+    selects: List[dict] = field(default_factory=list)
 
 
 def _same_site(url: str, root_netloc: str) -> bool:
@@ -203,6 +222,9 @@ async def _crawl_one_page(browser, url: str) -> Optional[CrawledPage]:
             iframe_urls=data.get("iframeUrls", []),
             stylesheet_texts=stylesheet_texts,
             script_texts=script_texts,
+            hreflang_links=data.get("hreflangLinks", []),
+            form_inputs=data.get("formInputs", []),
+            selects=data.get("selects", []),
         )
     finally:
         await page.close()

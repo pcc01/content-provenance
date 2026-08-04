@@ -1,0 +1,194 @@
+{
+  "jurisdiction_id": "gdpr_eu",
+  "jurisdiction_name": "EU - General Data Protection Regulation (GDPR)",
+  "country_code": "EU",
+  "framework": "gdpr",
+  "version": "1.0",
+  "effective_date": "2018-05-25",
+  "last_updated": "2026-05-06",
+  "description": "General Data Protection Regulation for the European Union",
+  
+  "student_age_categories": {
+    "young_child": {"min_age": 0, "max_age": 7},
+    "child": {"min_age": 8, "max_age": 13},
+    "teen": {"min_age": 14, "max_age": 17},
+    "adult": {"min_age": 18, "max_age": 150}
+  },
+  
+  "consent_requirements": {
+    "young_child": {
+      "parental_consent_required": true,
+      "explicit_consent_required": true,
+      "consent_type": "explicit",
+      "description": "Parental consent required for all data collection"
+    },
+    "child": {
+      "parental_consent_required": true,
+      "explicit_consent_required": true,
+      "consent_type": "explicit",
+      "description": "Parental consent required for all data collection"
+    },
+    "teen": {
+      "parental_consent_required": true,
+      "explicit_consent_required": true,
+      "consent_type": "explicit",
+      "description": "Parental consent required, teen can provide separate consent"
+    },
+    "adult": {
+      "parental_consent_required": false,
+      "explicit_consent_required": true,
+      "consent_type": "explicit",
+      "description": "Explicit consent from data subject required"
+    }
+  },
+  
+  "prohibited_data_collection": {
+    "young_child": [
+      "biometric_data",
+      "genetic_data",
+      "health_records",
+      "criminal_records",
+      "location_tracking_continuous"
+    ],
+    "child": [
+      "biometric_data",
+      "genetic_data",
+      "health_records",
+      "criminal_records",
+      "location_tracking_continuous"
+    ],
+    "teen": [
+      "genetic_data",
+      "criminal_records"
+    ],
+    "adult": []
+  },
+  
+  "allowed_data_collection": {
+    "educational_purpose": [
+      "student_name",
+      "student_grade_level",
+      "student_learning_style",
+      "student_performance_data",
+      "location_for_lesson",
+      "activity_responses",
+      "assessment_results"
+    ],
+    "restricted": [
+      "student_email",
+      "student_phone_number",
+      "parent_email",
+      "parent_phone_number"
+    ]
+  },
+  
+  "third_party_restrictions": {
+    "forbidden": [
+      "data_brokers",
+      "advertising_networks",
+      "social_media_trackers"
+    ],
+    "requires_explicit_consent": [
+      "cloud_storage_providers",
+      "analytics_services",
+      "payment_processors"
+    ],
+    "allowed_without_consent": [
+      "school_administrators",
+      "teachers_in_school",
+      "educational_research_institutions"
+    ]
+  },
+  
+  "data_retention": {
+    "personal_data": {
+      "retention_months": 12,
+      "deletion_method": "anonymize_or_delete",
+      "archival_allowed": true,
+      "archival_duration_months": 36
+    },
+    "learning_activity_data": {
+      "retention_months": 24,
+      "deletion_method": "anonymize_or_delete",
+      "archival_allowed": true,
+      "archival_duration_months": 60
+    },
+    "consent_records": {
+      "retention_months": 36,
+      "deletion_method": "never",
+      "archival_allowed": false
+    }
+  },
+  
+  "compliance_checks": {
+    "data_processing_agreement": {
+      "required": true,
+      "severity": "error",
+      "description": "Data Processing Agreement (DPA) required with all third parties"
+    },
+    "privacy_impact_assessment": {
+      "required": true,
+      "triggers": ["location_data", "sensitive_data", "large_scale"],
+      "severity": "warning",
+      "description": "DPIA recommended for high-risk processing"
+    },
+    "parental_consent": {
+      "required_for_ages": [0, 13],
+      "severity": "error",
+      "description": "Parental consent mandatory for children under 13"
+    },
+    "right_to_access": {
+      "required": true,
+      "response_days": 30,
+      "severity": "error",
+      "description": "Must provide data upon request within 30 days"
+    },
+    "right_to_deletion": {
+      "required": true,
+      "exceptions": ["legal_obligation", "consent_withdrawal"],
+      "severity": "error",
+      "description": "Must delete data upon request (right to be forgotten)"
+    },
+    "data_breach_notification": {
+      "required": true,
+      "notification_days": 72,
+      "severity": "error",
+      "description": "Must notify relevant authority within 72 hours of breach"
+    }
+  },
+  
+  "special_restrictions": {
+    "location_data": {
+      "allowed": true,
+      "requires_explicit_consent": true,
+      "requires_processing_agreement": true,
+      "retention_months": 3,
+      "description": "Location data highly regulated, short retention required"
+    },
+    "automatic_decision_making": {
+      "allowed": false,
+      "description": "Automated decision-making affecting child's educational opportunity prohibited"
+    },
+    "profiling": {
+      "allowed": false,
+      "description": "Automated profiling of children prohibited"
+    }
+  },
+  
+  "warnings": [
+    "You must have a Data Processing Agreement (DPA) with Google/Microsoft if using their services",
+    "Parental consent is required for children under 13",
+    "You must notify parents of any data collection for educational purposes",
+    "Location data must have short retention period (3 months recommended)",
+    "You must implement privacy by design and by default"
+  ],
+  
+  "requirements": [
+    "Obtain explicit parental consent before any data collection",
+    "Implement data minimization (only collect what's needed)",
+    "Have a data retention schedule in place",
+    "Train all staff on GDPR compliance",
+    "Document all processing activities",
+    "Implement security measures to protect data"
+  ]
+}

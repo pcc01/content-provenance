@@ -35,11 +35,27 @@ _LANG_CODES = [
 _LOCALE_PATH_RE = re.compile(r"/(" + "|".join(_LANG_CODES) + r"|[a-z]{2}-[a-zA-Z]{2})/")
 
 
-def _locale_from_path(path: str) -> Optional[str]:
+def _locale_tag_from_path(path: str) -> Optional[str]:
+    """Like _locale_from_path but keeps a region subtag if the URL has one
+    (e.g. "/en-gb/" -> "en-gb"), for the region-aware checks (cookie_consent,
+    locale_format) that need to distinguish e.g. US from other English-
+    speaking markets rather than just "English."""
     match = _LOCALE_PATH_RE.search(path)
-    if not match:
-        return None
-    return match.group(1).split("-")[0].lower()
+    return match.group(1).lower() if match else None
+
+
+def _locale_from_path(path: str) -> Optional[str]:
+    tag = _locale_tag_from_path(path)
+    return tag.split("-")[0] if tag else None
+
+
+def _page_region_tag(page_url: str, html_lang: Optional[str]) -> Optional[str]:
+    """Best-guess full locale tag for a page, shared by the region-aware
+    checks: a URL path locale (e.g. "/en-gb/") is a more deliberate signal
+    of which market a page targets than a possibly-templated <html lang>,
+    so it takes priority when both are present."""
+    tag = _locale_tag_from_path(urlparse(page_url).path)
+    return tag or (html_lang.lower() if html_lang else None)
 
 
 def _detect(text: str) -> Optional[str]:

@@ -1,0 +1,290 @@
+{
+  "jurisdiction_id": "lpdc_mx",
+  "jurisdiction_name": "LPDC (Mexico)",
+  "country_code": "MX",
+  "framework": "lfpdppp",
+  "version": "1.0",
+  "effective_date": "2010-07-05",
+  "last_updated": "2026-06-27",
+  "description": "Ley Federal de Protección de Datos Personales en Posesión de los Particulares (Mexico)",
+
+  "full_name": "Ley Federal de Protección de Datos Personales en Posesión de los Particulares",
+  "regulator": "INAI (Instituto Nacional de Transparencia)",
+  "regulator_full_name": "Instituto Nacional de Transparencia, Acceso a la Información y Protección de Datos Personales",
+
+  "student_age_categories": {
+    "child": {"min_age": 0, "max_age": 17},
+    "adult": {"min_age": 18, "max_age": 150}
+  },
+
+  "consent_requirements": {
+    "child": {
+      "parental_consent_required": true,
+      "explicit_consent_required": true,
+      "consent_type": "explicit",
+      "description": "Parental or tutor consent required for persons under 18; consent must be express and documented"
+    },
+    "adult": {
+      "parental_consent_required": false,
+      "explicit_consent_required": true,
+      "consent_type": "explicit",
+      "description": "Explicit consent from data owner (titular) required; must be free, specific, informed, and unambiguous"
+    }
+  },
+
+  "child_age_threshold": 18,
+
+  "legal_bases": [
+    "explicit_consent",
+    "contract_performance",
+    "legal_obligation",
+    "vital_interests",
+    "public_function",
+    "legitimate_interest"
+  ],
+
+  "privacy_notice_required": true,
+  "privacy_notice_name": "Aviso de Privacidad",
+  "privacy_notice_description": "A privacy notice (Aviso de Privacidad) is mandatory and must be provided to data subjects before or at the time of data collection",
+
+  "prohibited_data_collection": {
+    "child": [
+      "biometric_data",
+      "health_records",
+      "criminal_records",
+      "location_tracking_continuous"
+    ],
+    "adult": []
+  },
+
+  "allowed_data_collection": {
+    "educational_purpose": [
+      "student_name",
+      "student_grade_level",
+      "student_learning_style",
+      "student_performance_data",
+      "location_for_lesson",
+      "activity_responses",
+      "assessment_results"
+    ],
+    "restricted": [
+      "student_email",
+      "student_phone_number",
+      "parent_email",
+      "parent_phone_number"
+    ]
+  },
+
+  "data_categories_covered": [
+    "name",
+    "email",
+    "learning_data",
+    "location",
+    "audio_captures",
+    "image_captures",
+    "biometric_data"
+  ],
+
+  "special_categories": [
+    "health_data",
+    "biometric_data",
+    "racial_origin",
+    "ethnic_origin",
+    "sexual_orientation",
+    "political_opinion",
+    "religious_belief",
+    "trade_union_membership",
+    "genetic_data"
+  ],
+
+  "third_party_restrictions": {
+    "forbidden": [
+      "data_brokers",
+      "advertising_networks",
+      "social_media_trackers"
+    ],
+    "requires_explicit_consent": [
+      "cloud_storage_providers",
+      "analytics_services",
+      "payment_processors"
+    ],
+    "allowed_without_consent": [
+      "school_administrators",
+      "teachers_in_school",
+      "educational_research_institutions"
+    ]
+  },
+
+  "data_retention": {
+    "personal_data": {
+      "retention_months": 12,
+      "deletion_method": "anonymize_or_delete",
+      "archival_allowed": true,
+      "archival_duration_months": 36
+    },
+    "learning_activity_data": {
+      "retention_months": 24,
+      "deletion_method": "anonymize_or_delete",
+      "archival_allowed": true,
+      "archival_duration_months": 60
+    },
+    "session_data": {
+      "retention_months": 12,
+      "deletion_method": "delete",
+      "archival_allowed": false
+    },
+    "location_data": {
+      "retention_months": 6,
+      "deletion_method": "delete",
+      "archival_allowed": false
+    },
+    "audio_captures": {
+      "retention_months": 12,
+      "deletion_method": "delete",
+      "archival_allowed": false
+    },
+    "image_captures": {
+      "retention_months": 12,
+      "deletion_method": "delete",
+      "archival_allowed": false
+    },
+    "consent_records": {
+      "retention_months": 36,
+      "deletion_method": "never",
+      "archival_allowed": false
+    }
+  },
+
+  "data_rights": {
+    "arco_rights": {
+      "description": "ARCO rights — Access, Rectification, Cancellation, and Opposition — are the core rights under Mexican data protection law",
+      "response_days": 20,
+      "extension_days": 20
+    },
+    "right_to_access": {
+      "required": true,
+      "response_days": 20,
+      "description": "Data owner (titular) may request access to their personal data held by the responsible party (responsable)"
+    },
+    "right_to_rectification": {
+      "required": true,
+      "description": "Data owner may request correction of inaccurate or incomplete personal data"
+    },
+    "right_to_cancellation": {
+      "required": true,
+      "description": "Data owner may request deletion (cancellation) of personal data when it is no longer necessary or processing is unlawful"
+    },
+    "right_to_opposition": {
+      "required": true,
+      "description": "Data owner may oppose the processing of personal data for specific purposes"
+    },
+    "right_to_data_portability": {
+      "required": true,
+      "description": "Data owner may receive personal data in a structured, commonly used format (added via 2021 guidelines)"
+    }
+  },
+
+  "compliance_checks": {
+    "aviso_de_privacidad": {
+      "required": true,
+      "severity": "error",
+      "description": "Privacy Notice (Aviso de Privacidad) must be provided before or at time of data collection"
+    },
+    "data_processing_agreement": {
+      "required": true,
+      "severity": "error",
+      "description": "Data transfer or processing agreements required with all third-party processors (encargados)"
+    },
+    "privacy_impact_assessment": {
+      "required": false,
+      "recommended": true,
+      "triggers": ["sensitive_data", "biometric_data", "large_scale", "children"],
+      "severity": "warning",
+      "description": "Privacy Impact Assessment recommended for processing of sensitive personal data"
+    },
+    "parental_consent": {
+      "required_for_ages": [0, 17],
+      "severity": "error",
+      "description": "Parental or tutor consent mandatory for persons under 18"
+    },
+    "right_to_access": {
+      "required": true,
+      "response_days": 20,
+      "severity": "error",
+      "description": "Must respond to ARCO rights requests within 20 business days (extendable by 20 more)"
+    },
+    "right_to_deletion": {
+      "required": true,
+      "exceptions": ["legal_obligation", "public_interest", "statistical_purposes"],
+      "severity": "error",
+      "description": "Must delete (cancel) personal data upon legitimate request"
+    },
+    "data_breach_notification": {
+      "required": true,
+      "notification_hours": 72,
+      "severity": "error",
+      "description": "Must notify INAI within 72 hours of discovering a personal data security breach"
+    },
+    "sensitive_data_express_consent": {
+      "required": true,
+      "severity": "error",
+      "description": "Processing of sensitive personal data (health, biometric, racial origin, sexual orientation) requires express consent"
+    }
+  },
+
+  "cross_border_transfers": {
+    "adequacy_required": false,
+    "binding_corporate_rules_allowed": true,
+    "contractual_clauses_allowed": true,
+    "consent_transfer_allowed": true,
+    "description": "Cross-border data transfers require contractual clauses, binding corporate rules, or an international treaty; responsible party remains liable"
+  },
+
+  "special_restrictions": {
+    "location_data": {
+      "allowed": true,
+      "requires_explicit_consent": true,
+      "requires_processing_agreement": true,
+      "retention_months": 6,
+      "description": "Location data requires explicit consent and is subject to short retention requirements"
+    },
+    "automatic_decision_making": {
+      "allowed": false,
+      "description": "Automated decisions that significantly affect data subjects require human review"
+    },
+    "profiling": {
+      "allowed": false,
+      "description": "Profiling of children and for non-educational purposes prohibited"
+    },
+    "biometric_data": {
+      "allowed": true,
+      "requires_explicit_consent": true,
+      "requires_impact_assessment": true,
+      "description": "Biometric data is sensitive personal data requiring express consent"
+    }
+  },
+
+  "warnings": [
+    "LPDC (LFPDPPP) applies to all private entities processing personal data of Mexican residents",
+    "A Privacy Notice (Aviso de Privacidad) must be delivered to data subjects before data collection",
+    "ARCO rights (Access, Rectification, Cancellation, Opposition) must be honored within 20 business days",
+    "Sensitive personal data (health, biometric, racial origin, sexual orientation) requires express consent",
+    "Parental or guardian consent required for persons under 18",
+    "Data breach must be reported to INAI within 72 hours of discovery",
+    "Cross-border transfers require contractual safeguards; responsible party remains liable for processors abroad",
+    "Fines can reach up to 320,000 days of minimum wage (approx. MXN $30M+) per violation"
+  ],
+
+  "requirements": [
+    "Prepare and deliver a Privacy Notice (Aviso de Privacidad) before collecting personal data",
+    "Obtain express parental consent before collecting data from persons under 18",
+    "Obtain express consent for all sensitive personal data (health, biometric, racial origin, sexual orientation)",
+    "Establish lawful basis for each processing activity",
+    "Have a data transfer agreement (contrato de transferencia) with all third-party processors",
+    "Implement a process to respond to ARCO rights requests within 20 business days",
+    "Maintain a data breach response plan with 72-hour INAI notification capability",
+    "Apply data minimisation and purpose limitation principles",
+    "Implement appropriate technical and organisational security measures",
+    "Designate a privacy contact or data protection officer for handling data subject requests"
+  ]
+}

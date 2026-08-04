@@ -10,7 +10,13 @@ const ALL_CHECKS: { id: SiteAuditCheck; label: string }[] = [
   { id: "mixed_locale", label: "Mixed locale" },
   { id: "rtl_readiness", label: "RTL / logical CSS" },
   { id: "icu_i18n", label: "ICU / i18n tooling" },
-  { id: "privacy", label: "Privacy policy" },
+  { id: "privacy", label: "Privacy & regulatory" },
+  { id: "text_expansion", label: "Text expansion risk" },
+  { id: "font_coverage", label: "Font / script coverage" },
+  { id: "hreflang", label: "hreflang / SEO" },
+  { id: "cookie_consent", label: "Cookie consent" },
+  { id: "placeholder_leak", label: "Placeholder leakage" },
+  { id: "locale_format", label: "Locale format assumptions" },
 ];
 
 // Phase 11 — crawls a third-party site (not this system's own translations)

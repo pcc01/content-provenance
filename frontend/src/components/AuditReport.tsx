@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, auditExportUrl, type AuditRunSummary, type SiteAuditFinding } from "../api/client";
+import { api, auditExportUrl, auditPdfUrl, type AuditRunSummary, type SiteAuditFinding } from "../api/client";
 
 interface Props {
   auditId: string;
@@ -16,7 +16,13 @@ const CHECK_LABEL: Record<string, string> = {
   mixed_locale: "Mixed Locale",
   rtl_readiness: "RTL / Logical CSS Readiness",
   icu_i18n: "ICU / I18n Tooling",
-  privacy: "Privacy Policy",
+  privacy: "Privacy & Regulatory Compliance",
+  text_expansion: "Text Expansion Risk",
+  font_coverage: "Font / Script Coverage",
+  hreflang: "hreflang / SEO Localization",
+  cookie_consent: "Cookie Consent",
+  placeholder_leak: "Untranslated Placeholder Leakage",
+  locale_format: "Locale Format Assumptions",
 };
 
 function findingUrl(f: SiteAuditFinding): string | null {
@@ -54,7 +60,10 @@ export function AuditReport({ auditId, onReviewPage }: Props) {
             {summary.audit.error && <span style={{ color: "#b91c1c" }}> · {summary.audit.error}</span>}
           </div>
         </div>
-        <a href={auditExportUrl(auditId)} download style={{ fontSize: 12 }}>Download report (.txt)</a>
+        <div style={{ display: "flex", gap: 12 }}>
+          <a href={auditPdfUrl(auditId)} download style={{ fontSize: 12 }}>Download PDF report</a>
+          <a href={auditExportUrl(auditId)} download style={{ fontSize: 12 }}>Download report (.txt)</a>
+        </div>
       </div>
 
       {findings.length === 0 && (

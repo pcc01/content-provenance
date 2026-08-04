@@ -11,7 +11,10 @@ from datetime import datetime
 from typing import Dict
 from urllib.parse import urlparse
 
-from app.core.audit.checks import icu_i18n, mixed_locale, privacy, rtl_readiness
+from app.core.audit.checks import (
+    cookie_consent, font_coverage, hreflang, icu_i18n, locale_format,
+    mixed_locale, placeholder_leak, privacy, rtl_readiness, text_expansion,
+)
 from app.core.audit.checks.mixed_locale import _detect, _locale_from_path
 from app.core.audit.crawler import crawl_site
 from app.core.database import get_db
@@ -23,6 +26,12 @@ _CHECK_MODULES = {
     SiteAuditCheck.RTL_READINESS: rtl_readiness,
     SiteAuditCheck.ICU_I18N: icu_i18n,
     SiteAuditCheck.PRIVACY: privacy,
+    SiteAuditCheck.TEXT_EXPANSION: text_expansion,
+    SiteAuditCheck.FONT_COVERAGE: font_coverage,
+    SiteAuditCheck.HREFLANG: hreflang,
+    SiteAuditCheck.COOKIE_CONSENT: cookie_consent,
+    SiteAuditCheck.PLACEHOLDER_LEAK: placeholder_leak,
+    SiteAuditCheck.LOCALE_FORMAT: locale_format,
 }
 
 

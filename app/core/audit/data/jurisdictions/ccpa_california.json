@@ -1,0 +1,159 @@
+{
+  "jurisdiction_id": "ccpa_california",
+  "jurisdiction_name": "California Consumer Privacy Act (CCPA)",
+  "country_code": "US",
+  "subdivision_code": "CA",
+  "framework": "ccpa",
+  "version": "2.0",
+  "effective_date": "2020-01-01",
+  "last_updated": "2026-05-06",
+  "description": "California Consumer Privacy Act protecting consumer data privacy",
+  
+  "student_age_categories": {
+    "minor": {"min_age": 0, "max_age": 17},
+    "adult": {"min_age": 18, "max_age": 150}
+  },
+  
+  "consent_requirements": {
+    "minor": {
+      "parental_consent_required": true,
+      "explicit_consent_required": false,
+      "consent_type": "opt_out_with_parental_notice",
+      "description": "Parent can opt-out of sale/sharing of minor's data (default is opt-in)"
+    },
+    "adult": {
+      "parental_consent_required": false,
+      "explicit_consent_required": false,
+      "consent_type": "opt_out",
+      "description": "Consumer can opt-out of sale/sharing"
+    }
+  },
+  
+  "prohibited_data_collection": {
+    "minor": [
+      "data_sale_without_parental_consent"
+    ],
+    "adult": []
+  },
+  
+  "allowed_data_collection": {
+    "educational_purpose": [
+      "student_name",
+      "student_grade_level",
+      "student_performance_data",
+      "learning_activity_data",
+      "assessment_results",
+      "device_identifiers"
+    ],
+    "restricted": [
+      "precise_location"
+    ]
+  },
+  
+  "third_party_restrictions": {
+    "forbidden": [
+      "data_sale_for_marketing",
+      "data_sale_for_profiling"
+    ],
+    "requires_explicit_consent": [
+      "sensitive_personal_information"
+    ],
+    "allowed_without_consent": [
+      "service_providers",
+      "school_contractors"
+    ]
+  },
+  
+  "data_retention": {
+    "personal_data": {
+      "retention_months": 12,
+      "deletion_method": "delete",
+      "archival_allowed": false
+    },
+    "learning_activity_data": {
+      "retention_months": 24,
+      "deletion_method": "delete",
+      "archival_allowed": false
+    }
+  },
+  
+  "consumer_rights": {
+    "right_to_know": {
+      "required": true,
+      "response_days": 45,
+      "description": "Consumer can request what data is collected"
+    },
+    "right_to_delete": {
+      "required": true,
+      "response_days": 45,
+      "description": "Consumer can request deletion of personal data"
+    },
+    "right_to_opt_out": {
+      "required": true,
+      "description": "Consumer can opt-out of data sale or sharing"
+    },
+    "right_to_opt_in": {
+      "required": true,
+      "description": "For minors, parent can authorize data sale"
+    },
+    "right_to_non_discrimination": {
+      "required": true,
+      "description": "Cannot discriminate for exercising privacy rights"
+    }
+  },
+  
+  "compliance_checks": {
+    "privacy_policy": {
+      "required": true,
+      "severity": "error",
+      "description": "Must have clear privacy policy listing consumer rights"
+    },
+    "parental_notice": {
+      "required_for_minors": true,
+      "severity": "error",
+      "description": "Must notify parents of data collection from minors"
+    },
+    "opt_out_mechanism": {
+      "required": true,
+      "severity": "error",
+      "description": "Must provide easy mechanism for consumers to opt-out"
+    },
+    "vendor_contracts": {
+      "required": true,
+      "severity": "warning",
+      "description": "Service providers must have data processor agreements"
+    }
+  },
+  
+  "special_restrictions": {
+    "sensitive_personal_information": {
+      "allowed": true,
+      "requires_explicit_consent": true,
+      "retention_months": 6,
+      "description": "Sensitive data (SSN, health, etc.) highly restricted"
+    },
+    "profiling": {
+      "allowed": true,
+      "restrictions": "cannot_materially_affect_rights",
+      "description": "Cannot use profiling in way that materially affects educational opportunity"
+    }
+  },
+  
+  "warnings": [
+    "CCPA applies to for-profit entities collecting CA residents' data",
+    "Minors have special protections - parental rights apply",
+    "Cannot sell or share minors' data without parental consent (opt-in)",
+    "Must provide clear opt-out mechanism for consumers",
+    "Have 45 days to respond to consumer rights requests",
+    "Penalties can reach $7,500 per violation"
+  ],
+  
+  "requirements": [
+    "Provide clear privacy policy describing data practices",
+    "Obtain parental consent before selling minors' data",
+    "Respond to consumer requests to know, delete, or opt-out",
+    "Implement reasonable security",
+    "Limit data retention to what's necessary",
+    "Do not discriminate against consumers exercising CCPA rights"
+  ]
+}

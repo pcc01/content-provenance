@@ -1,0 +1,125 @@
+{
+  "jurisdiction_id": "pipeda_canada",
+  "jurisdiction_name": "Canada - Personal Information Protection and Electronic Documents Act (PIPEDA)",
+  "country_code": "CA",
+  "framework": "pipeda",
+  "version": "1.0",
+  "effective_date": "2000-01-01",
+  "last_updated": "2026-05-06",
+  "description": "Canadian privacy law protecting personal information in the private sector",
+  
+  "student_age_categories": {
+    "child": {"min_age": 0, "max_age": 15},
+    "young_adult": {"min_age": 16, "max_age": 17},
+    "adult": {"min_age": 18, "max_age": 150}
+  },
+  
+  "consent_requirements": {
+    "child": {
+      "parental_consent_required": true,
+      "explicit_consent_required": true,
+      "consent_type": "explicit_parental",
+      "description": "Parental consent required for children under 16"
+    },
+    "young_adult": {
+      "parental_consent_required": true,
+      "explicit_consent_required": true,
+      "consent_type": "explicit_with_parental_notification",
+      "description": "Parent should be notified and can withdraw consent"
+    },
+    "adult": {
+      "parental_consent_required": false,
+      "explicit_consent_required": true,
+      "consent_type": "explicit",
+      "description": "Explicit consent from individual required"
+    }
+  },
+  
+  "principles": [
+    "Accountability - designate privacy officer",
+    "Identifying purposes - clearly state why data is collected",
+    "Consent - obtain valid consent before collection",
+    "Limiting collection - only collect necessary data",
+    "Limiting use - use only for stated purpose",
+    "Accuracy - keep data accurate",
+    "Safeguards - protect with security measures",
+    "Openness - maintain privacy policies",
+    "Access - allow individuals to access their data",
+    "Complaint handling - respond to privacy complaints"
+  ],
+  
+  "compliance_checks": {
+    "designated_privacy_officer": {
+      "required": false,
+      "recommended": true,
+      "severity": "warning",
+      "description": "Designate individual responsible for privacy"
+    },
+    "privacy_policy": {
+      "required": true,
+      "severity": "error",
+      "description": "Must have accessible privacy policy"
+    },
+    "consent_documentation": {
+      "required": true,
+      "severity": "error",
+      "description": "Document consent from parents and students"
+    },
+    "data_access_process": {
+      "required": true,
+      "response_days": 30,
+      "severity": "error",
+      "description": "Must respond to data access requests within 30 days"
+    },
+    "data_correction_process": {
+      "required": true,
+      "severity": "error",
+      "description": "Allow individuals to request correction of inaccurate data"
+    }
+  },
+  
+  "data_retention": {
+    "personal_data": {
+      "retention_months": 12,
+      "deletion_method": "delete_or_anonymize",
+      "archival_allowed": false
+    },
+    "learning_activity_data": {
+      "retention_months": 24,
+      "deletion_method": "delete_or_anonymize",
+      "archival_allowed": false
+    }
+  },
+  
+  "third_party_restrictions": {
+    "forbidden": [],
+    "requires_explicit_consent": [
+      "third_party_service_providers",
+      "educational_research_sharing"
+    ],
+    "allowed_without_consent": [
+      "school_staff",
+      "authorized_agents"
+    ]
+  },
+  
+  "warnings": [
+    "PIPEDA applies to private sector organizations in Canada",
+    "Parental consent required for children under 16",
+    "Must designate someone responsible for privacy compliance",
+    "Must have clear privacy policy",
+    "Must respond to access/correction requests",
+    "Cannot use location data without explicit consent"
+  ],
+  
+  "requirements": [
+    "Identify purposes before collecting personal information",
+    "Obtain explicit parental consent for children under 16",
+    "Only collect data necessary for identified purposes",
+    "Protect data with appropriate security measures",
+    "Keep data accurate and up-to-date",
+    "Allow access to and correction of data",
+    "Notify individuals of privacy policies",
+    "Respond to privacy complaints"
+  ]
+}

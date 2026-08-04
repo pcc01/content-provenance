@@ -441,7 +441,7 @@ highlight until approved individually or all at once via the
 section for the full design, and `frontend/extension/README.md` for how to
 load the extension.
 
-### Site Audit (Phase 11 — i18n/l10n/compliance review of a third-party site)
+### Site Audit (Phase 11/12 — i18n/l10n/compliance review of a third-party site)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -451,6 +451,7 @@ load the extension.
 | `GET`  | `/api/v1/audit/runs/{id}/pages` | The crawled-page inventory |
 | `GET`  | `/api/v1/audit/runs/{id}/findings` | Findings, filterable by `check`/`severity`/`page_id` |
 | `GET`  | `/api/v1/audit/runs/{id}/export` | Plain-text report download |
+| `GET`  | `/api/v1/audit/runs/{id}/report.pdf` | Branded PDF report download (logo, executive summary, findings by check) |
 
 **POST /api/v1/audit/runs — request body**
 
@@ -459,24 +460,38 @@ load the extension.
   "root_url": "https://example.com",
   "primary_language": "en",
   "max_pages": 40,
-  "checks": ["mixed_locale", "rtl_readiness", "icu_i18n", "privacy"]
+  "checks": [
+    "mixed_locale", "rtl_readiness", "icu_i18n", "privacy",
+    "text_expansion", "font_coverage", "hreflang", "cookie_consent",
+    "placeholder_leak", "locale_format"
+  ]
 }
 ```
 
 Distinct from every other capability in this system: it audits a
-THIRD-PARTY site from the outside, not this system's own translations.
+THIRD-PARTY site from the outside, not this system's own translations, and
+doubles as a consulting-practice tool (international-expansion readiness
+audits — the branded PDF report is meant to be handed to a client).
 `app/core/audit/crawler.py` does a Playwright-based (client-rendered SPA
-content included) same-domain crawl, reusing Phase 8's `robots.txt` check;
-four pluggable checks in `app/core/audit/checks/` — mixed-locale
-detection, RTL/logical-CSS-property readiness, ICU/i18n-tooling detection
-(including literal leaked ICU MessageFormat syntax in rendered text), and
-privacy-policy language-mismatch review — write structured findings rather
-than a single flat report file. The Review Shell's "Audit" tab
+content included) same-domain crawl, reusing Phase 8's `robots.txt` check.
+Ten pluggable checks in `app/core/audit/checks/` — mixed-locale detection,
+RTL/logical-CSS-property readiness, ICU/i18n-tooling detection (including
+literal leaked ICU MessageFormat syntax in rendered text), privacy-policy
+language-mismatch + region-aware regulatory review, text-expansion/
+truncation risk, font/script coverage, hreflang/SEO localization,
+cookie-consent detection, untranslated-placeholder leakage, and hardcoded
+locale-format assumptions — write structured findings rather than a
+single flat report file. Region→regulation mapping
+(`app/core/audit/regions.py` + `app/core/audit/data/jurisdictions/*.json`)
+uses real jurisdiction data ported from the user's own privacy-compliance
+engine built for peripateticware — the DATA only, not a live dependency on
+that project's server. The Review Shell's "Audit" tab
 (`AuditPage.tsx`/`AuditReport.tsx`) starts runs and browses findings
 grouped by check with severity coloring; a finding's "Review this page"
 button hands off directly into the existing fetch-mode review for that
-URL. See `ROADMAP.md`'s "Site I18n & Compliance Audit Toolkit" section for
-the full design.
+URL; `app/core/audit/report.py` (reportlab) generates the branded PDF. See
+`ROADMAP.md`'s "Site I18n & Compliance Audit Toolkit" and "Consulting-Grade
+Checks, Regulatory Data & PDF Report" sections for the full design.
 
 ---
 
@@ -593,17 +608,21 @@ content-provenance/
 │   │   ├── prov_builder.py         # W3C PROV-DM graph builder (text + image), PROV-JSON
 │   │   ├── page_fetch.py           # Phase 8: Playwright fetch, harvest/match/tag/rewrite an arbitrary URL
 │   │   ├── page_history.py         # Phase 9: point-in-time reconstruction, diff, timeline — no new snapshot storage
-│   │   ├── audit/                  # Phase 11: third-party site i18n/l10n/compliance audit
-│   │   │   ├── crawler.py          # Playwright BFS crawl — text/links/stylesheet+script bodies per page
+│   │   ├── audit/                  # Phase 11/12: third-party site i18n/l10n/compliance audit
+│   │   │   ├── crawler.py          # Playwright BFS crawl — text/links/forms/hreflang/stylesheet+script bodies per page
 │   │   │   ├── runner.py           # Orchestrates crawl -> persist pages -> run checks -> persist findings
-│   │   │   └── checks/             # mixed_locale.py, rtl_readiness.py, icu_i18n.py, privacy.py — pure functions over crawled data
+│   │   │   ├── regions.py          # Phase 12: region -> regulation mapping, ported from peripateticware's privacy engine (data only)
+│   │   │   ├── report.py           # Phase 12: branded PDF report (reportlab)
+│   │   │   ├── data/jurisdictions/ # Phase 12: 9 ported jurisdiction JSON files (GDPR, CCPA, LGPD, ...)
+│   │   │   └── checks/             # mixed_locale, rtl_readiness, icu_i18n, privacy, text_expansion, font_coverage, hreflang, cookie_consent, placeholder_leak, locale_format — pure functions over crawled data
 │   │   ├── haystack_pipeline.py    # Haystack 2.x indexing and search
 │   │   └── translation_backends.py # Pluggable: Mock / Anthropic / DeepL / Google
 │   ├── models/
 │   │   └── schemas.py              # Pydantic models — PROV, XLIFF, Translation, Deployment, QualityScore, RedriveRun, ImageAsset, ReviewNote…
-│   └── xliff/
-│       ├── xliff_service.py        # XLIFF 2.0 generation/parsing with full embedded PROV + version history
-│       └── xliff_import.py         # Import logic (create/update units from a parsed XLIFF doc)
+│   ├── xliff/
+│   │   ├── xliff_service.py        # XLIFF 2.0 generation/parsing with full embedded PROV + version history
+│   │   └── xliff_import.py         # Import logic (create/update units from a parsed XLIFF doc)
+│   └── static/branding/logo.png    # Phase 12: consulting-firm logo used in the PDF audit report
 ├── frontend/                       # Review Shell — Vite + React + TypeScript (replaces the old static dashboard)
 │   ├── src/
 │   │   ├── api/client.ts           # Typed fetch wrapper for the whole API
@@ -636,7 +655,7 @@ content-provenance/
 │   ├── test_pages.py               # Page fetch/harvest/render + history/diff/as_of tests (real headless-browser render)
 │   ├── test_revert.py              # Version revert API tests
 │   ├── test_propose.py             # Phase 10: human-drafted proposal -> pending -> approve/reject tests
-│   └── test_audit.py               # Phase 11: mixed-locale/RTL/ICU/privacy findings against a local fixture site
+│   └── test_audit.py               # Phase 11/12: all 10 checks + PDF export against a local fixture site
 ├── .gitignore
 ├── CONTRIBUTING.md
 ├── Dockerfile

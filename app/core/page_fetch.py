@@ -129,7 +129,7 @@ async def _check_robots_allowed(url: str) -> bool:
 
 def _inject_sdk(html: str) -> str:
     script = (
-        '<script src="/review-sdk/overlay.js"></script>'
+        '<script src="/sdk-dist/overlay.js"></script>'
         "<script>window.ReviewSDK.initReviewOverlay();</script>"
     )
     if "</body>" in html:

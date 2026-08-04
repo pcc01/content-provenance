@@ -91,10 +91,14 @@ if (FRONTEND_DIST / "assets").exists():
 # review-sdk/overlay.ts compiled to a dependency-free browser script (`npm
 # run build:sdk` in frontend/) — Phase 8's fetch+rewrite loader injects this
 # into pages it re-serves, which never go through Vite's dev-transform.
+# Mounted at /sdk-dist, deliberately NOT /review-sdk — the Review Shell's
+# own React app fetches frontend/review-sdk/*.ts as source (via Vite's dev
+# transform, e.g. ReviewFrame.tsx/DocumentViewer.tsx's relative imports),
+# and a same-prefix proxy/mount would shadow those legitimate requests.
 REVIEW_SDK_DIST = Path("frontend/review-sdk/dist")
 
 if REVIEW_SDK_DIST.exists():
-    app.mount("/review-sdk", StaticFiles(directory=REVIEW_SDK_DIST), name="review-sdk")
+    app.mount("/sdk-dist", StaticFiles(directory=REVIEW_SDK_DIST), name="review-sdk-dist")
 
 
 @app.get("/", response_class=HTMLResponse)

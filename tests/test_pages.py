@@ -55,7 +55,7 @@ async def test_render_page_harvests_tags_and_rewrites_urls(client, fixture_serve
     assert 'data-tu-id="' in html
     assert "[FR] Welcome to the fixture" in html
     assert "[FR] This is a paragraph for harvesting." in html
-    assert 'src="/review-sdk/overlay.js"' in html or "ReviewSDK" in html
+    assert 'src="/sdk-dist/overlay.js"' in html or "ReviewSDK" in html
 
     # The two identical "Click me" buttons must get distinct ids — dom_path
     # (including nth-of-type) disambiguates them, not just their text.

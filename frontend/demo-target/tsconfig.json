@@ -12,5 +12,6 @@
     "jsx": "react-jsx",
     "strict": true
   },
-  "include": ["src", "../review-sdk"]
+  "include": ["src", "../review-sdk"],
+  "exclude": ["../review-sdk/vite.sdk.config.ts"]
 }

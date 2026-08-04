@@ -442,6 +442,11 @@ class SiteAudit(BaseModel):
     max_pages: int = 40
     checks: List[SiteAuditCheck] = Field(default_factory=lambda: list(SiteAuditCheck))
     status: SiteAuditStatus = SiteAuditStatus.PENDING
+    # The requester's email — required at the API layer (see AuditRunRequest
+    # in app/api/audit.py) once this tool is public-facing: every report is
+    # a lead. Optional here (not at the API boundary) so existing/internal
+    # rows and any future non-lead-gen caller aren't forced to have one.
+    requester_email: Optional[str] = None
     triggered_by: Optional[str] = None
     started_at: datetime = Field(default_factory=datetime.utcnow)
     finished_at: Optional[datetime] = None

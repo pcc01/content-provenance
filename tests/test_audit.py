@@ -137,12 +137,14 @@ def audit_fixture_server():
 @pytest.mark.asyncio
 async def test_audit_run_finds_every_seeded_issue(client, audit_fixture_server):
     r = await client.post("/api/v1/audit/runs", json={
-        "root_url": audit_fixture_server, "primary_language": "en", "max_pages": 10,
+        "root_url": audit_fixture_server, "primary_language": "en", "requester_email": "reviewer@example.com",
+        "max_pages": 10,
     })
     assert r.status_code == 200
     audit = r.json()
     assert audit["status"] == "completed"
     assert audit["pages_crawled"] == 5
+    assert audit["requester_email"] == "reviewer@example.com"
     audit_id = audit["id"]
 
     findings_r = await client.get(f"/api/v1/audit/runs/{audit_id}/findings")
@@ -181,7 +183,8 @@ async def test_audit_run_finds_every_seeded_issue(client, audit_fixture_server):
 @pytest.mark.asyncio
 async def test_audit_run_summary_and_pages(client, audit_fixture_server):
     r = await client.post("/api/v1/audit/runs", json={
-        "root_url": audit_fixture_server, "primary_language": "en", "max_pages": 10,
+        "root_url": audit_fixture_server, "primary_language": "en", "requester_email": "reviewer@example.com",
+        "max_pages": 10,
     })
     audit_id = r.json()["id"]
 
@@ -202,8 +205,8 @@ async def test_audit_run_summary_and_pages(client, audit_fixture_server):
 @pytest.mark.asyncio
 async def test_audit_findings_filterable_by_check(client, audit_fixture_server):
     r = await client.post("/api/v1/audit/runs", json={
-        "root_url": audit_fixture_server, "primary_language": "en", "max_pages": 10,
-        "checks": ["mixed_locale"],
+        "root_url": audit_fixture_server, "primary_language": "en", "requester_email": "reviewer@example.com",
+        "max_pages": 10, "checks": ["mixed_locale"],
     })
     audit_id = r.json()["id"]
 
@@ -216,7 +219,8 @@ async def test_audit_findings_filterable_by_check(client, audit_fixture_server):
 @pytest.mark.asyncio
 async def test_audit_export_report(client, audit_fixture_server):
     r = await client.post("/api/v1/audit/runs", json={
-        "root_url": audit_fixture_server, "primary_language": "en", "max_pages": 10,
+        "root_url": audit_fixture_server, "primary_language": "en", "requester_email": "reviewer@example.com",
+        "max_pages": 10,
     })
     audit_id = r.json()["id"]
 
@@ -229,7 +233,8 @@ async def test_audit_export_report(client, audit_fixture_server):
 @pytest.mark.asyncio
 async def test_audit_pdf_report(client, audit_fixture_server):
     r = await client.post("/api/v1/audit/runs", json={
-        "root_url": audit_fixture_server, "primary_language": "en", "max_pages": 10,
+        "root_url": audit_fixture_server, "primary_language": "en", "requester_email": "reviewer@example.com",
+        "max_pages": 10,
     })
     audit_id = r.json()["id"]
 
@@ -241,6 +246,19 @@ async def test_audit_pdf_report(client, audit_fixture_server):
 
 
 @pytest.mark.asyncio
+async def test_audit_run_requires_valid_email(client, audit_fixture_server):
+    missing = await client.post("/api/v1/audit/runs", json={
+        "root_url": audit_fixture_server, "primary_language": "en",
+    })
+    assert missing.status_code == 422
+
+    invalid = await client.post("/api/v1/audit/runs", json={
+        "root_url": audit_fixture_server, "primary_language": "en", "requester_email": "not-an-email",
+    })
+    assert invalid.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_audit_run_404_for_unknown_id(client):
     r = await client.get("/api/v1/audit/runs/does-not-exist")
     assert r.status_code == 404
@@ -249,7 +267,7 @@ async def test_audit_run_404_for_unknown_id(client):
 @pytest.mark.asyncio
 async def test_audit_run_rejects_non_http_scheme(client):
     r = await client.post("/api/v1/audit/runs", json={
-        "root_url": "file:///etc/passwd", "primary_language": "en",
+        "root_url": "file:///etc/passwd", "primary_language": "en", "requester_email": "reviewer@example.com",
     })
     assert r.status_code == 200  # runs synchronously and reports failure in the body, not an HTTP error
     audit = r.json()

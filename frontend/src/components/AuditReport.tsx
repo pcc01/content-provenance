@@ -57,6 +57,7 @@ export function AuditReport({ auditId, onReviewPage }: Props) {
           <strong style={{ fontSize: 14 }}>{summary.audit.root_url}</strong>
           <div style={{ fontSize: 12, color: "#6b7280" }}>
             {summary.audit.status} · {summary.audit.pages_crawled} page(s) crawled · {findings.length} finding(s)
+            {summary.audit.requester_email && <> · requested by {summary.audit.requester_email}</>}
             {summary.audit.error && <span style={{ color: "#b91c1c" }}> · {summary.audit.error}</span>}
           </div>
         </div>

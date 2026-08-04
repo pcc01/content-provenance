@@ -1,0 +1,37 @@
+# Production overrides for docker-compose.yml
+# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# NOTE: the `ports: !override` entries below REPLACE the base file's port
+# mappings instead of merging with them (the base file publishes 8001/5433 on
+# ALL interfaces — fine on a dev laptop, a hole on an internet-adjacent box
+# shared with another project). Mirrors peripateticware's own
+# docker-compose.prod.yml pattern: bind to 127.0.0.1 only, cloudflared is the
+# sole consumer. `!override` requires Docker Compose >= 2.24.4. Verify with:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml config | grep -A3 ports
+
+services:
+  app:
+    environment:
+      APP_ENV: production
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://audit.thewordinbits.com}
+    # `!override` REPLACES the base list; a plain [] MERGES with the base
+    # list (Compose's default for list-valued keys), which would silently
+    # keep the dev bind-mounts (./app, ./frontend) active here too — prod
+    # runs the code baked into the image, not a live host mount of a dev
+    # machine's working tree.
+    volumes: !override
+      - model_cache:/root/.cache/huggingface
+      - image_storage:/app/data/images
+    # Loopback only — cloudflared is the sole consumer, matching
+    # peripateticware's docker-compose.prod.yml exactly.
+    ports: !override
+      - "127.0.0.1:8001:8000"
+    restart: always
+    mem_limit: 3g
+    cpus: '2.0'
+
+  postgres:
+    restart: always
+    # No host port at all — only the app container talks to Postgres,
+    # same reasoning as peripateticware's prod override.
+    ports: !override []

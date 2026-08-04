@@ -733,7 +733,8 @@ class PostgresRepository:
             session.add(SiteAuditRow(
                 id=audit.id, root_url=audit.root_url, primary_language=audit.primary_language,
                 max_pages=audit.max_pages, checks=[c.value for c in audit.checks],
-                status=audit.status.value, triggered_by=audit.triggered_by,
+                status=audit.status.value, requester_email=audit.requester_email,
+                triggered_by=audit.triggered_by,
                 started_at=audit.started_at, finished_at=audit.finished_at,
                 pages_crawled=audit.pages_crawled, error=audit.error,
             ))
@@ -1147,7 +1148,8 @@ def _row_to_site_audit(row: SiteAuditRow) -> SiteAudit:
     return SiteAudit(
         id=row.id, root_url=row.root_url, primary_language=row.primary_language,
         max_pages=row.max_pages, checks=[SiteAuditCheck(c) for c in row.checks],
-        status=SiteAuditStatus(row.status), triggered_by=row.triggered_by,
+        status=SiteAuditStatus(row.status), requester_email=row.requester_email,
+        triggered_by=row.triggered_by,
         started_at=row.started_at, finished_at=row.finished_at,
         pages_crawled=row.pages_crawled, error=row.error,
     )

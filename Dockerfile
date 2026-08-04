@@ -1,4 +1,21 @@
 # ── AI Translation Provenance System — Dockerfile ─────────────────────────────
+#
+# Multi-stage: a Node stage builds the Review Shell + review-sdk bundles
+# (frontend/dist/, frontend/review-sdk/dist/) that app/main.py serves via
+# StaticFiles, so `docker build` is self-contained on any host — no manual
+# `npm run build` step to remember before building the image (previously
+# required, easy to forget on a remote deploy host with no local dev
+# workflow reminding you).
+
+FROM node:20-slim AS frontend-build
+WORKDIR /frontend
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN npm ci
+COPY frontend/ ./
+# Builds frontend/dist/ (Review Shell) + review-sdk/dist/ (overlay.js,
+# harvest.js) in one pass — see frontend/package.json's "build" script.
+RUN npm run build
+
 FROM python:3.12-slim
 
 # System dependencies
@@ -26,6 +43,11 @@ COPY app/ ./app/
 COPY frontend/ ./frontend/
 COPY alembic/ ./alembic/
 COPY alembic.ini .
+
+# Built frontend assets from the Node stage — overwrites the source-only
+# frontend/ copy above with the same tree plus dist/ output.
+COPY --from=frontend-build /frontend/dist ./frontend/dist
+COPY --from=frontend-build /frontend/review-sdk/dist ./frontend/review-sdk/dist
 
 # Expose port
 EXPOSE 8000

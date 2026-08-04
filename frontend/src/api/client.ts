@@ -260,6 +260,7 @@ export interface SiteAudit {
   max_pages: number;
   checks: SiteAuditCheck[];
   status: SiteAuditStatus;
+  requester_email: string | null;
   triggered_by: string | null;
   started_at: string;
   finished_at: string | null;
@@ -436,7 +437,7 @@ export const api = {
     request<ReviewNote>(`/pages/notes/${noteId}/resolve?resolved=${resolved}`, { method: "PUT" }),
 
   createAuditRun: (body: {
-    root_url: string; primary_language: string; max_pages?: number;
+    root_url: string; primary_language: string; requester_email: string; max_pages?: number;
     checks?: SiteAuditCheck[]; triggered_by?: string;
   }) => request<SiteAudit>("/audit/runs", { method: "POST", body: JSON.stringify(body) }),
   listAuditRuns: () => request<SiteAudit[]>("/audit/runs"),

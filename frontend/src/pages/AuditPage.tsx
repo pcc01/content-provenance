@@ -23,8 +23,11 @@ const ALL_CHECKS: { id: SiteAuditCheck; label: string }[] = [
 // looking for i18n/l10n/compliance issues: mixed locales, RTL/logical-CSS
 // readiness, ICU/i18n-tooling usage, and privacy-policy language mismatches.
 // Replaces three standalone scripts the user previously ran by hand.
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
 export function AuditPage({ onReviewPage }: Props) {
   const [rootUrl, setRootUrl] = useState("");
+  const [requesterEmail, setRequesterEmail] = useState("");
   const [primaryLanguage, setPrimaryLanguage] = useState("en");
   const [maxPages, setMaxPages] = useState(40);
   const [checks, setChecks] = useState<Set<SiteAuditCheck>>(new Set(ALL_CHECKS.map((c) => c.id)));
@@ -48,14 +51,16 @@ export function AuditPage({ onReviewPage }: Props) {
     });
   }
 
+  const emailValid = EMAIL_RE.test(requesterEmail.trim());
+
   async function startAudit() {
-    if (!rootUrl.trim()) return;
+    if (!rootUrl.trim() || !emailValid) return;
     setRunning(true);
     setError(null);
     try {
       const audit = await api.createAuditRun({
-        root_url: rootUrl, primary_language: primaryLanguage, max_pages: maxPages,
-        checks: Array.from(checks),
+        root_url: rootUrl, primary_language: primaryLanguage, requester_email: requesterEmail.trim(),
+        max_pages: maxPages, checks: Array.from(checks),
       });
       reloadRuns();
       setSelectedId(audit.id);
@@ -86,6 +91,17 @@ export function AuditPage({ onReviewPage }: Props) {
           />
         </label>
         <label style={{ fontSize: 13 }}>
+          Your email <span style={{ color: "#9ca3af" }}>(so we can send you this report)</span>
+          <input
+            type="email" value={requesterEmail} onChange={(e) => setRequesterEmail(e.target.value)}
+            placeholder="you@example.com"
+            style={{
+              display: "block", width: "100%", marginTop: 4, padding: 4, boxSizing: "border-box",
+              borderColor: requesterEmail && !emailValid ? "#e5484d" : undefined,
+            }}
+          />
+        </label>
+        <label style={{ fontSize: 13 }}>
           Primary language
           <input
             value={primaryLanguage} onChange={(e) => setPrimaryLanguage(e.target.value)}
@@ -111,7 +127,7 @@ export function AuditPage({ onReviewPage }: Props) {
             ))}
           </div>
         </div>
-        <button onClick={startAudit} disabled={running || !rootUrl.trim()} style={{ padding: "6px 0", cursor: "pointer" }}>
+        <button onClick={startAudit} disabled={running || !rootUrl.trim() || !emailValid} style={{ padding: "6px 0", cursor: "pointer" }}>
           {running ? "Crawling… (this can take a while)" : "Start audit"}
         </button>
         {error && (
@@ -140,6 +156,11 @@ export function AuditPage({ onReviewPage }: Props) {
                   {r.root_url}
                 </div>
                 <div style={{ color: "#6b7280" }}>{r.status} · {new Date(r.started_at).toLocaleString()}</div>
+                {r.requester_email && (
+                  <div style={{ color: "#9ca3af", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {r.requester_email}
+                  </div>
+                )}
               </button>
             ))}
           </div>

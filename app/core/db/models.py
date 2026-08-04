@@ -397,6 +397,7 @@ class SiteAuditRow(Base):
     max_pages: Mapped[int] = mapped_column(Integer, default=40)
     checks: Mapped[list] = mapped_column(JSON, default=list)
     status: Mapped[str] = mapped_column(String, default="pending")
+    requester_email: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
     triggered_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)

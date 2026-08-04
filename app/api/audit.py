@@ -15,12 +15,13 @@ GET  /api/v1/audit/runs/{id}/export      - plain-text report download
 GET  /api/v1/audit/runs/{id}/report.pdf  - branded PDF report download
 """
 
+import re
 from collections import Counter
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import PlainTextResponse, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.core.audit.report import generate_pdf_report
 from app.core.audit.runner import run_audit
@@ -31,13 +32,29 @@ from app.models.schemas import (
 
 router = APIRouter()
 
+# Deliberately simple (not RFC 5322): this is a lead-capture gate, not a
+# deliverability guarantee — good enough to reject obvious typos/garbage
+# without adding an email-validator dependency for one field.
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
 
 class AuditRunRequest(BaseModel):
     root_url: str
     primary_language: str
+    # Required — every report from the public-facing tool is a lead; who
+    # requested it and for which URL needs to be captured, not optional.
+    requester_email: str
     max_pages: int = Field(40, ge=1, le=200)
     checks: List[SiteAuditCheck] = Field(default_factory=lambda: list(SiteAuditCheck))
     triggered_by: Optional[str] = None
+
+    @field_validator("requester_email")
+    @classmethod
+    def _validate_email(cls, v: str) -> str:
+        v = v.strip()
+        if not _EMAIL_RE.match(v):
+            raise ValueError(f"'{v}' doesn't look like a valid email address")
+        return v
 
 
 class AuditRunSummary(BaseModel):
@@ -55,6 +72,7 @@ async def create_audit_run(request: AuditRunRequest):
     db = get_db()
     audit = SiteAudit(
         root_url=request.root_url, primary_language=request.primary_language,
+        requester_email=request.requester_email,
         max_pages=request.max_pages, checks=request.checks, triggered_by=request.triggered_by,
     )
     await db.create_site_audit(audit)
@@ -118,6 +136,7 @@ async def export_audit_report(audit_id: str):
     lines = [
         "=" * 60, "  Site I18n & Compliance Audit Report", "=" * 60, "",
         f"Root URL: {audit.root_url}",
+        f"Requested by: {audit.requester_email or 'N/A'}",
         f"Primary language: {audit.primary_language}",
         f"Status: {audit.status.value}",
         f"Pages crawled: {audit.pages_crawled}",

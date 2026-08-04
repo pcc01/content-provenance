@@ -85,6 +85,8 @@ def generate_pdf_report(
         ["Pages crawled", str(audit.pages_crawled)],
         ["Report generated", datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")],
     ]
+    if audit.requester_email:
+        meta_rows.insert(1, ["Requested by", audit.requester_email])
     meta_table = Table(meta_rows, colWidths=[1.6 * inch, 4.9 * inch])
     meta_table.setStyle(TableStyle([
         ("FONTSIZE", (0, 0), (-1, -1), 9),

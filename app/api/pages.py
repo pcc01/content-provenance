@@ -129,6 +129,32 @@ async def page_diff(
     return {"url": url, "target_language": target_language, "changes": changes}
 
 
+@router.get("/pending")
+async def list_pending_changes(url: str = Query(...), target_language: str = Query(...)):
+    """Phase 10's editor view: every proposed-but-not-yet-approved change
+    on this page, source vs. current vs. proposed text, ready for the
+    reviewer to approve individually or all at once (see
+    POST /api/v1/redrive/items/bulk-approve)."""
+    db = get_db()
+    snapshot = await db.get_latest_page_snapshot(url, target_language)
+    if snapshot is None:
+        raise HTTPException(status_code=404, detail=f"No snapshot found for {url} ({target_language})")
+
+    items = await db.list_pending_redrive_items_for_units(snapshot.harvested_unit_ids)
+    pending = []
+    for item in items:
+        unit = await db.get_translation_unit(item.unit_id)
+        pending.append({
+            "item_id": item.id,
+            "run_id": item.run_id,
+            "unit_id": item.unit_id,
+            "source_text": unit.source_text if unit else None,
+            "current_text": unit.target_text if unit else None,
+            "proposed_text": item.proposed_text,
+        })
+    return {"url": url, "target_language": target_language, "pending": pending}
+
+
 @router.get("/notes")
 async def list_page_notes(url: str = Query(...), target_language: str = Query(...)):
     db = get_db()

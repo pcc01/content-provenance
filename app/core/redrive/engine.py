@@ -26,6 +26,43 @@ def _provider_label(backend: TranslationBackend) -> str:
     return backend.__class__.__name__.replace("TranslationBackend", "").lower() or "unknown"
 
 
+class _NeverInvokedScorer(QualityScorer):
+    """approve_item/reject_item never call .score() — RedriveEngine still
+    requires a scorer instance at construction time, and "human" (Phase
+    10's proposal runs — see propose.py) isn't a real provider get_scorer()
+    recognizes. This exists purely so construction succeeds; if it were
+    ever actually invoked that's a bug elsewhere, so it fails loudly rather
+    than returning a made-up score."""
+
+    async def score(self, unit: TranslationUnit) -> ScoreResult:
+        raise RuntimeError("_NeverInvokedScorer.score() was called — this should be unreachable.")
+
+
+def build_engine_for_run(run: RedriveRun) -> "RedriveEngine":
+    """Constructs an engine using a RUN's OWN recorded scoring_provider/
+    redrive_provider — approving/rejecting an item must use what that run
+    was actually configured with, not whatever's globally configured now
+    (which may have drifted since the run was created, and is never a real
+    scorer for a "human" provider)."""
+    provider = run.scoring_provider.lower()
+    scorer = _NeverInvokedScorer() if provider == "human" else get_scorer(provider)
+    return RedriveEngine(scorer=scorer, scorer_label=provider, redrive_label=run.redrive_provider)
+
+
+async def build_engine_for_item(item_id: str) -> Optional["RedriveEngine"]:
+    """Same as build_engine_for_run, resolved from an item id — what the
+    approve/reject endpoints and Phase 10's bulk-approve both start from.
+    None if the item or its run can't be found."""
+    db = get_db()
+    item = await db.get_redrive_run_item(item_id)
+    if item is None:
+        return None
+    run = await db.get_redrive_run(item.run_id)
+    if run is None:
+        return None
+    return build_engine_for_run(run)
+
+
 class RedriveEngine:
     def __init__(
         self,

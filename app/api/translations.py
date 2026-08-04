@@ -182,9 +182,12 @@ async def list_translations(
 async def get_translations_batch(ids: str = Query(..., description="Comma-separated translation unit ids")):
     """Bulk lookup for the review overlay SDK — fetches quality/status for a
     whole page's worth of segments in one call instead of one request per
-    highlighted element."""
+    highlighted element. has_pending_proposal (Phase 10) lets the overlay
+    give a segment with an unapproved proposal a distinct highlight,
+    separate from its quality-score coloring."""
     db = get_db()
     unit_ids = [i.strip() for i in ids.split(",") if i.strip()]
+    pending_unit_ids = {item.unit_id for item in await db.list_pending_redrive_items_for_units(unit_ids)}
     results = []
     for unit_id in unit_ids:
         unit = await db.get_translation_unit(unit_id)
@@ -195,6 +198,7 @@ async def get_translations_batch(ids: str = Query(..., description="Comma-separa
             **unit.model_dump(),
             "latest_score": latest_score.score if latest_score else None,
             "latest_score_reasons": latest_score.reasons if latest_score else [],
+            "has_pending_proposal": unit_id in pending_unit_ids,
         })
     return results
 

@@ -862,6 +862,23 @@ class PostgresRepository:
                 items=[_row_to_redrive_run_item(i) for i in items],
             )
 
+    async def list_pending_redrive_items_for_units(self, unit_ids: List[str]) -> List[RedriveRunItem]:
+        """Phase 10's editor view: every PENDING_APPROVAL item touching any
+        of a page's harvested units, regardless of which (possibly ad-hoc,
+        possibly batch) run created it."""
+        if not unit_ids:
+            return []
+        async with self._session_factory() as session:
+            rows = (
+                await session.execute(
+                    select(RedriveRunItemRow).where(
+                        RedriveRunItemRow.unit_id.in_(unit_ids),
+                        RedriveRunItemRow.outcome == RedriveOutcome.PENDING_APPROVAL.value,
+                    )
+                )
+            ).scalars().all()
+            return [_row_to_redrive_run_item(r) for r in rows]
+
     # ── Provider Usage Ledger ────────────────────────────────────────────
 
     async def get_or_create_ledger_row(

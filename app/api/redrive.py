@@ -11,32 +11,19 @@ GET  /api/v1/redrive/preview                           - dry-run forecast (no wr
 GET  /api/v1/redrive/queue                             - units currently below a threshold, worst-first
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.redrive.engine import RedriveEngine
+from app.core.redrive.engine import RedriveEngine, _NeverInvokedScorer, build_engine_for_item
 from app.core.redrive.propose import propose_human_translation
-from app.core.scoring.base import QualityScorer, ScoreResult
 from app.core.scoring.factory import get_scorer
-from app.models.schemas import RedriveRun, RedriveRunItem, TranslationUnit
+from app.models.schemas import RedriveRun, RedriveRunItem
 
 router = APIRouter()
-
-
-class _NeverInvokedScorer(QualityScorer):
-    """approve_item/reject_item never call .score() — RedriveEngine still
-    requires a scorer instance at construction time, and "human" (Phase
-    10's proposal runs) isn't a real provider get_scorer() recognizes. This
-    exists purely so construction succeeds; if it were ever actually
-    invoked that's a bug elsewhere, so it fails loudly rather than
-    returning a made-up score."""
-
-    async def score(self, unit: TranslationUnit) -> ScoreResult:
-        raise RuntimeError("_NeverInvokedScorer.score() was called — this should be unreachable.")
 
 
 class RedriveRunRequest(BaseModel):
@@ -56,6 +43,11 @@ class ProposeRequest(BaseModel):
     unit_id: str
     proposed_text: str
     proposed_by: str
+
+
+class BulkApproveRequest(BaseModel):
+    item_ids: List[str]
+    actor: str
 
 
 def _build_engine(scoring_provider: Optional[str], redrive_label: Optional[str] = None) -> RedriveEngine:
@@ -97,11 +89,9 @@ async def get_redrive_run(run_id: str):
 
 @router.post("/runs/{run_id}/items/{item_id}/approve", response_model=RedriveRunItem)
 async def approve_redrive_item(run_id: str, item_id: str, request: RedriveApprovalRequest):
-    db = get_db()
-    run = await db.get_redrive_run(run_id)
-    if not run:
-        raise HTTPException(status_code=404, detail=f"Redrive run {run_id} not found")
-    engine = _build_engine(run.scoring_provider, redrive_label=run.redrive_provider)
+    engine = await build_engine_for_item(item_id)
+    if engine is None:
+        raise HTTPException(status_code=404, detail=f"Redrive run {run_id} or item {item_id} not found")
     try:
         return await engine.approve_item(item_id, approved_by=request.actor)
     except ValueError as e:
@@ -110,15 +100,34 @@ async def approve_redrive_item(run_id: str, item_id: str, request: RedriveApprov
 
 @router.post("/runs/{run_id}/items/{item_id}/reject", response_model=RedriveRunItem)
 async def reject_redrive_item(run_id: str, item_id: str, request: RedriveApprovalRequest):
-    db = get_db()
-    run = await db.get_redrive_run(run_id)
-    if not run:
-        raise HTTPException(status_code=404, detail=f"Redrive run {run_id} not found")
-    engine = _build_engine(run.scoring_provider, redrive_label=run.redrive_provider)
+    engine = await build_engine_for_item(item_id)
+    if engine is None:
+        raise HTTPException(status_code=404, detail=f"Redrive run {run_id} or item {item_id} not found")
     try:
         return await engine.reject_item(item_id, rejected_by=request.actor, reason=request.reason)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/items/bulk-approve")
+async def bulk_approve_items(request: BulkApproveRequest):
+    """Phase 10's editor view: approve several PENDING_APPROVAL items in
+    one action (hand-picked subset, or every pending item on a page — see
+    GET /api/v1/pages/pending), each resolved through its OWN run's engine
+    since different items can belong to different ad-hoc proposal runs
+    (every /redrive/propose call creates its own single-item run)."""
+    results = []
+    for item_id in request.item_ids:
+        engine = await build_engine_for_item(item_id)
+        if engine is None:
+            results.append({"item_id": item_id, "ok": False, "error": "not found"})
+            continue
+        try:
+            item = await engine.approve_item(item_id, approved_by=request.actor)
+            results.append({"item_id": item_id, "ok": True, "item": item.model_dump()})
+        except ValueError as e:
+            results.append({"item_id": item_id, "ok": False, "error": str(e)})
+    return {"results": results}
 
 
 @router.post("/propose", response_model=RedriveRunItem, status_code=201)

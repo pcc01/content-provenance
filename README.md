@@ -392,6 +392,12 @@ with no changes. PDF/PowerPoint/DOCX are tracked but not yet designed — see
 | `GET` | `/api/v1/pages/render` | Fetch (or re-serve/reconstruct) a URL, harvested/tagged/rewritten and ready to review |
 | `GET` | `/api/v1/pages/history` | Timeline of points where something on the page changed |
 | `GET` | `/api/v1/pages/diff` | Which segments differ between two points in time |
+| `POST` | `/api/v1/pages/harvest` | Phase 10: match/create units for an already-harvested item list — what the browser extension's content script calls, no headless browser involved |
+| `GET`/`POST` | `/api/v1/pages/notes` | Page-level notes thread (not tied to one segment) |
+| `PUT` | `/api/v1/pages/notes/{note_id}/resolve` | Mark a page-level note resolved/unresolved |
+| `GET` | `/api/v1/pages/pending` | Every unapproved human-drafted proposal on a page — the editor view's data source |
+| `POST` | `/api/v1/redrive/propose` | A reviewer's own draft, filed as a `PENDING_APPROVAL` item through the same human-in-the-loop machinery as a redrive |
+| `POST` | `/api/v1/redrive/items/bulk-approve` | Approve several pending items (proposals or redrives) at once |
 
 `render` query params: `url` (required), `target_language` (required),
 `source_language` (default `en-US`), `method` (default `ai`), `refresh`
@@ -422,6 +428,18 @@ load a past version or diff two points; reverting a segment (in
 {version_id}/revert` — restores old text as a *new* version, never rewrites
 history. See `ROADMAP.md`'s "Page History / Time Travel" section for the
 full design.
+
+Phase 10 adds a browser extension (`frontend/extension/`, Manifest V3) that
+runs this same harvest/match engine against a real tab's live DOM instead of
+an anonymous fetch — cookies, session, and client-side routing all work for
+free. It tags matched elements with `data-tu-id` but never swaps a live
+page's text (unlike the fetch mode above). A reviewer using either mode can
+also type their own draft for a segment (`SegmentDrawer`'s "Propose
+translation") or leave a page-level note; proposals show as a dashed-purple
+highlight until approved individually or all at once via the
+`PendingChanges.tsx` editor view. See `ROADMAP.md`'s "Live-Session Bridge"
+section for the full design, and `frontend/extension/README.md` for how to
+load the extension.
 
 ---
 
@@ -504,7 +522,7 @@ cd frontend/demo-target && npx tsc -b
 ```
 content-provenance/
 ├── alembic/                        # Schema migrations (source of truth for the DB schema)
-│   └── versions/                   # 0001_initial … 0009_page_snapshots
+│   └── versions/                   # 0001_initial … 0010_page_level_notes
 ├── app/
 │   ├── main.py                     # FastAPI app, lifespan, router registration, serves frontend/dist/
 │   ├── api/
@@ -517,7 +535,7 @@ content-provenance/
 │   │   ├── redrive.py              # Threshold-quality redrive runs, preview, queue, human-in-the-loop approve/reject
 │   │   ├── images.py               # Image asset upload, context-linking, localization
 │   │   ├── documents.py            # Phase 7a: text/Markdown document import + segments
-│   │   └── pages.py                # Phase 8: fetch + rewrite review for arbitrary URLs
+│   │   └── pages.py                # Phase 8/9/10: fetch+rewrite review, page history, page-level notes, pending-proposals list
 │   ├── core/
 │   │   ├── config.py               # Environment-based settings
 │   │   ├── database.py             # Thin public interface (get_db/init_db) over db/repository.py
@@ -532,7 +550,8 @@ content-provenance/
 │   │   │   └── factory.py          # CompositeScorer selection
 │   │   ├── redrive/                # Threshold-quality redrive engine
 │   │   │   ├── engine.py           # RedriveEngine — score, threshold, redrive, human-in-the-loop
-│   │   │   └── ledger.py           # DB-backed per-provider usage budget
+│   │   │   ├── ledger.py           # DB-backed per-provider usage budget
+│   │   │   └── propose.py          # Phase 10: a human's own draft, filed as an ad-hoc PENDING_APPROVAL item
 │   │   ├── prov_builder.py         # W3C PROV-DM graph builder (text + image), PROV-JSON
 │   │   ├── page_fetch.py           # Phase 8: Playwright fetch, harvest/match/tag/rewrite an arbitrary URL
 │   │   ├── page_history.py         # Phase 9: point-in-time reconstruction, diff, timeline — no new snapshot storage
@@ -546,15 +565,22 @@ content-provenance/
 ├── frontend/                       # Review Shell — Vite + React + TypeScript (replaces the old static dashboard)
 │   ├── src/
 │   │   ├── api/client.ts           # Typed fetch wrapper for the whole API
-│   │   ├── components/             # ReviewFrame, SegmentDrawer, PageFlaggedList, PageHistory, ProvenancePanel, QualityBadge, VersionHistory, NotesThread
-│   │   └── pages/                  # ReviewPage, RedriveConsole, ImageReview, DocumentsPage, DocumentViewer, SearchPage, Dashboard
-│   ├── review-sdk/                 # The in-context overlay injected into a cooperative target app
-│   │   ├── overlay.ts              # Highlight boxes, score coloring, postMessage protocol
+│   │   ├── components/             # ReviewFrame, SegmentDrawer, PageFlaggedList, PageHistory, PageNotes, PendingChanges, ProvenancePanel, QualityBadge, VersionHistory, NotesThread
+│   │   └── pages/                  # ReviewPage, LiveReviewPage, RedriveConsole, ImageReview, DocumentsPage, DocumentViewer, SearchPage, Dashboard
+│   ├── review-sdk/                 # The in-context overlay injected into a cooperative target app, or extracted for Phase 10's extension
+│   │   ├── overlay.ts              # Highlight boxes, score/pending coloring, pluggable transport (postMessage or chrome.runtime)
+│   │   ├── harvest.ts              # Phase 10: shared harvest/rewrite DOM walk — compiled once, used by both Playwright and the extension
 │   │   ├── reviewTagProps.ts       # data-tu-id tagging primitive
 │   │   ├── useReviewT.ts           # react-i18next binding shape for real-app adoption
 │   │   ├── vite.sdk.config.ts      # Bundles overlay.ts to dist/overlay.js — served at /sdk-dist by
 │   │   │                           # FastAPI for Phase 8's fetch+rewrite pages (never go through Vite's dev-transform)
+│   │   ├── vite.harvest.config.ts  # Bundles harvest.ts to dist/harvest.js
 │   │   └── dist/                   # Build output — `npm run build:sdk` (gitignored)
+│   ├── extension/                  # Phase 10: Manifest V3 browser extension — reviews a real tab's live session
+│   │   ├── background.ts           # Service worker relaying messages between the reviewed tab and the Review Shell's tab
+│   │   ├── harvest-content-script.ts  # Injected on demand into the reviewed tab; tags elements, never swaps live text
+│   │   ├── bridge-content-script.ts   # Injected into the Review Shell's own page; relays chrome.runtime <-> window.postMessage
+│   │   └── popup.html / popup.ts   # Toolbar popup — target language, start/stop, mini notes panel
 │   └── demo-target/                # Minimal fixture app the Review Shell iframes for local verification
 ├── docs/
 │   └── architecture.svg            # System architecture diagram
@@ -566,7 +592,8 @@ content-provenance/
 │   ├── test_images.py              # Image asset API tests
 │   ├── test_documents.py           # Document import/segments API tests
 │   ├── test_pages.py               # Page fetch/harvest/render + history/diff/as_of tests (real headless-browser render)
-│   └── test_revert.py              # Version revert API tests
+│   ├── test_revert.py              # Version revert API tests
+│   └── test_propose.py             # Phase 10: human-drafted proposal -> pending -> approve/reject tests
 ├── .gitignore
 ├── CONTRIBUTING.md
 ├── Dockerfile

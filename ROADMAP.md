@@ -85,7 +85,8 @@ Status legend: ✅ Built · 🔧 Partial · 📋 Planned · 💡 Suggested
 | Review notes thread (threaded, resolvable) | ✅ | `app/api/notes.py`, `NotesThread.tsx` |
 | Demo target fixture for self-contained verification | ✅ | `frontend/demo-target/` |
 | **Non-cooperative page review — fetch + rewrite loader (any URL)** | ✅ | `app/core/page_fetch.py`, `GET /api/v1/pages/render` — headless-browser (Playwright) fetch, harvests/matches/tags translatable text server-side, no SDK tagging or app changes required. Verified live against peripateticware (169 real segments harvested/translated/reviewed) |
-| Live-session bridge (browser extension) for pages needing real cookies/session state | 📋 | Follow-on to the fetch+rewrite loader, not a classical reverse proxy — see Phase 10 in the plan |
+| Live-session bridge (browser extension) for pages needing real cookies/session state | ✅ | `frontend/extension/` — Manifest V3, reuses Phase 8's harvest/match engine against a real tab's live DOM instead of an anonymous fetch. See "Live-Session Bridge" below |
+| Page-level review notes (not tied to one segment) + editor view for human-drafted proposals | ✅ | `PageNotes.tsx`, `PendingChanges.tsx` — a reviewer's own draft goes through the same human-in-the-loop approval as a redrive, then shows as a dashed-purple highlight until approved individually or in bulk |
 | Adopt the SDK in a real target app (peripateticware) instead of the demo fixture | — | Superseded by the fetch+rewrite loader above — peripateticware is now reviewable without any source changes, so cooperative-tagging adoption is no longer the only path |
 | **Page history / time-travel — browse, diff, and revert a page's past versions** | ✅ | `app/core/page_history.py`, `PageHistory.tsx` — reconstructs "page as of time T" from existing `TranslationUnitVersion` history + a `PageSnapshot` template, no new snapshot-storage system. `GET /api/v1/pages/render?as_of=`, `/history`, `/diff`; revert via `POST /translations/{id}/versions/{id}/revert` |
 | **Document formats in-context review — text/Markdown** | ✅ | `app/api/documents.py`, `DocumentViewer.tsx`, `DocumentsPage.tsx` — each paragraph/block becomes a `TranslationUnit`, reviewed through the same overlay SDK as any page |
@@ -226,9 +227,9 @@ private IP ranges, since the point is reviewing your own infrastructure
 including localhost; `dom_path`-based matching can drift across a real
 redesign, creating a near-duplicate unit rather than updating the old one.
 
-**Next**: a live-session bridge (Phase 10, tracked not planned) — a browser
-extension reusing this same harvest/match engine against a real logged-in
-tab instead of an anonymous fetch, for pages that need real session state.
+**Next**: a live-session bridge (Phase 10, below) — a browser extension
+reusing this same harvest/match engine against a real logged-in tab instead
+of an anonymous fetch, for pages that need real session state.
 
 ### Page History / Time Travel (Phase 9) — browse, diff, and revert
 
@@ -268,6 +269,88 @@ between two fetches isn't reflected in an as_of render from before that
 redesign. Re-fetching (Phase 8's "Force refresh") captures a fresh
 template; periodic/scheduled re-crawling to catch drift automatically is
 explicitly out of scope, a deliberate deferral rather than an oversight.
+
+### Live-Session Bridge (Phase 10) — real tabs, page-level notes, human drafting
+
+Phase 8's fetch is always anonymous — no cookies, no login session — so a
+page that shows different content to a logged-out visitor gets reviewed as
+a logged-out visitor sees it. This phase reuses Phase 8's harvest/match
+engine against a REAL tab's live DOM instead: cookies, session, sub-resource
+loading, and client-side routing all work for free because it's the
+browser's own session. Not a classical reverse proxy, same rationale as
+Phase 8.
+
+- **Shared harvest logic, not duplicated** — the harvest/rewrite JS that
+  used to live as Python string literals inside `page_fetch.py` was
+  extracted to `frontend/review-sdk/harvest.ts`, compiled to
+  `dist/harvest.js`. `page_fetch.py` reads the compiled JS from disk;
+  Playwright's `page.evaluate` and the extension's content script both call
+  the exact same code.
+- **`POST /api/v1/pages/harvest`** — the matching/creation step
+  (`match_or_create_units`) extracted as its own endpoint: the extension's
+  content script walks the DOM itself (no headless browser involved — the
+  real tab already is the browser), posts `{idx, domPath, text}` items, and
+  gets back `{tuId, sourceText, targetText, latestScore}` per item.
+- **`overlay.ts` gets a pluggable transport** — a `ReviewTransport`
+  interface (`send`/`onMessage`) replaces the hardcoded `postMessage` calls;
+  the default `PostMessageTransport` keeps Phase 5/8/9's iframe hosting
+  unchanged, and the extension supplies a `chrome.runtime`-based one
+  instead. The box-drawing/click logic itself doesn't change either way.
+- **The extension** (`frontend/extension/`, Manifest V3): `background.ts`
+  relays messages between the reviewed tab and the Review Shell's tab by
+  `chrome.tabs` id; `harvest-content-script.ts` runs the shared harvest
+  logic and tags matched elements with `data-tu-id` **without swapping
+  text** (unlike Phase 8/9 — swapping a live page's real text while someone
+  might be using the real site would be surprising and hard to undo cleanly;
+  overlay boxes + score coloring are enough, and the localized text can
+  already be seen via Phase 8/9's rendered view of the same URL);
+  `bridge-content-script.ts` relays `chrome.runtime` messages into
+  `window.postMessage` on the Review Shell's own page, so `ReviewPage.tsx`
+  needs no changes to receive `tu:selected` from a different source;
+  `popup.html`/`popup.ts` is the toolbar popup (target-language input, a
+  "start reviewing this tab" toggle, and a mini notes panel).
+- **Page-level notes** — motivated by a reviewer doing a final revision
+  pass who needs to record something that doesn't map to one segment ("use
+  formal register throughout this page"). `ReviewNote` became polymorphic
+  (`unit_id` now optional; new optional `page_url`/`target_language`) rather
+  than a new table. `GET/POST /api/v1/pages/notes`,
+  `PUT /api/v1/pages/notes/{id}/resolve`; `PageNotes.tsx` is the same
+  list+add+resolve pattern `NotesThread.tsx` already used, surfaced in both
+  the Review Shell's fetch-mode sidebar and the extension's popup.
+- **Live drafting + editor view** — a reviewer can type their own draft for
+  a segment right in `SegmentDrawer`; "Propose translation" calls
+  `POST /api/v1/redrive/propose`, which creates a single-item ad-hoc
+  `RedriveRun` (`scoring_provider="human"`, `redrive_provider="human"`) with
+  one `PENDING_APPROVAL` item — the exact same human-in-the-loop mechanism
+  Phase 3's scorer-triggered redrives use, so approval reuses
+  `approve_item`/`reject_item` unchanged. `GET /api/v1/pages/pending` lists
+  every unapproved proposal on a page; `POST /api/v1/redrive/items/bulk-
+  approve` approves several at once. `PendingChanges.tsx` is the editor
+  view: source/current/proposed text per pending item, with individual and
+  "Approve all" actions; a segment with a pending proposal gets a distinct
+  dashed-purple overlay box instead of score-coloring, both driven by a new
+  `has_pending_proposal` field on `GET /translations/batch`.
+
+Verified live end-to-end (propose → dashed-purple highlight appears → shows
+in the pending panel → approve → text updates on the page → History/Diff
+reflect it correctly), which surfaced two real bugs, both fixed: `pages.py`'s
+`as_of`/`diff` endpoints 500'd on a tz-aware timestamp (e.g. the frontend's
+own `new Date().toISOString()`) because every stored timestamp is a naive
+`datetime.utcnow()` — fixed by normalizing at the API boundary; and
+`save_translation_unit` stamped every version's `created_at` from
+`unit.translated_at` (which only ever reflects unit-*creation* time, never
+updated by a redrive/approve), so an approved edit's new version got the
+exact same timestamp as the original and lost a tie-break in `as_of`/diff
+reconstruction — fixed by only trusting `translated_at` when a caller
+deliberately advances it past the prior version. 3 regression tests added
+via the real propose→approve path; full suite 77/77 passing.
+
+The extension itself can't be exercised through this project's usual
+browser-automation verification (`chrome://extensions`' "Load unpacked" flow
+is a native file picker, opaque to CDP) — the harvest/overlay/bridge/notes/
+propose flow it drives was verified through the fetch-mode UI that shares
+the same code paths; loading the extension against a real logged-in site is
+a manual step for whoever installs it.
 
 ### Document Formats In-Context Review (PDF, PowerPoint, DOCX)
 

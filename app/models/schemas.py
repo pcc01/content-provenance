@@ -373,6 +373,25 @@ class Document(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
+# ─── Page Snapshots (Phase 8: non-cooperative page review) ─────────────────
+
+class PageSnapshot(BaseModel):
+    """A fetched-and-rewritten copy of an arbitrary URL — the "template" for
+    Phase 8's fetch+rewrite loader, and the structural anchor Phase 9's
+    time-travel reconstruction reads from. `html` is the fully rewritten
+    document (data-tu-id tags, target-locale text baked in at fetch time,
+    absolute asset URLs, the review-sdk script injected) — re-fetching
+    creates a NEW row rather than overwriting, so the history of what a
+    page's structure looked like over time is preserved the same way
+    TranslationUnitVersion preserves segment-level history."""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    url: str
+    target_language: str
+    html: str
+    harvested_unit_ids: List[str] = Field(default_factory=list)
+    fetched_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 # ─── Full Provenance Record ───────────────────────────────────────────────────
 
 class ProvenanceRecord(BaseModel):

@@ -366,6 +366,21 @@ class DocumentRow(Base):
     meta: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
 
 
+class PageSnapshotRow(Base):
+    """A fetched-and-rewritten copy of an arbitrary URL (Phase 8). Rows are
+    append-only — a re-fetch inserts a new row rather than updating an
+    existing one, so Phase 9's time-travel can reconstruct the page's
+    structure as it looked at any past fetch, not just the latest."""
+    __tablename__ = "page_snapshots"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    url: Mapped[str] = mapped_column(String, index=True)
+    target_language: Mapped[str] = mapped_column(String, index=True)
+    html: Mapped[str] = mapped_column(Text)
+    harvested_unit_ids: Mapped[list] = mapped_column(JSON, default=list)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
 class IngestEventRow(Base):
     """One row per XLIFF document entering or leaving the system — separate
     from XliffDocumentRow (which stores the artifact itself) so the ledger

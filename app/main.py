@@ -22,7 +22,7 @@ from fastapi.responses import HTMLResponse, FileResponse
 from contextlib import asynccontextmanager
 import uvicorn
 
-from app.api import translations, provenance, search, xliff_export, xliff_import, redrive, images, notes, documents
+from app.api import translations, provenance, search, xliff_export, xliff_import, redrive, images, notes, documents, pages
 from app.core.database import init_db
 from app.core.haystack_pipeline import init_haystack
 
@@ -75,6 +75,7 @@ app.include_router(xliff_export.router, prefix="/api/v1/xliff", tags=["XLIFF"])
 app.include_router(redrive.router, prefix="/api/v1/redrive", tags=["Redrive"])
 app.include_router(images.router, prefix="/api/v1/images", tags=["Images"])
 app.include_router(documents.router, prefix="/api/v1/documents", tags=["Documents"])
+app.include_router(pages.router, prefix="/api/v1/pages", tags=["Pages"])
 
 
 # The Review Shell (frontend/) is a Vite+React app now, not a static HTML
@@ -86,6 +87,14 @@ FRONTEND_DIST = Path("frontend/dist")
 
 if (FRONTEND_DIST / "assets").exists():
     app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="frontend-assets")
+
+# review-sdk/overlay.ts compiled to a dependency-free browser script (`npm
+# run build:sdk` in frontend/) — Phase 8's fetch+rewrite loader injects this
+# into pages it re-serves, which never go through Vite's dev-transform.
+REVIEW_SDK_DIST = Path("frontend/review-sdk/dist")
+
+if REVIEW_SDK_DIST.exists():
+    app.mount("/review-sdk", StaticFiles(directory=REVIEW_SDK_DIST), name="review-sdk")
 
 
 @app.get("/", response_class=HTMLResponse)

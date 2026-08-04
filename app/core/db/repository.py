@@ -30,7 +30,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.db.models import (
     AgentRow, DeploymentRecordRow, DocumentRow, ImageAssetRow, ImageContextLinkRow,
-    ImageTranslationUnitRow, IngestEventRow, ProviderUsageLedgerRow,
+    ImageTranslationUnitRow, IngestEventRow, PageSnapshotRow, ProviderUsageLedgerRow,
     ProvenanceActivityRow, ProvenanceBundleRow, ProvenanceEntityRow,
     ProvenanceRelationRow, QualityScoreRow, RedriveRunItemRow, RedriveRunRow,
     ReviewNoteRow, TranslationProjectRow, TranslationUnitRow,
@@ -39,7 +39,7 @@ from app.core.db.models import (
 from app.models.schemas import (
     DeploymentContext, DeploymentRecord, Document, DocumentFormat, ImageAsset,
     ImageAssetKind, ImageContextLink, ImageTranslationUnit, IngestDirection,
-    IngestEvent, ProvenanceActivity, ProvenanceAgent, ProvenanceEntity,
+    IngestEvent, PageSnapshot, ProvenanceActivity, ProvenanceAgent, ProvenanceEntity,
     ProvenanceRecord, QualityScore, RedriveOutcome, RedriveRun, RedriveRunItem,
     RedriveRunStatus, ReviewNote, ScoreError, TranslationMethod,
     TranslationProject, TranslationStatus, TranslationUnit, TranslationUnitVersion,
@@ -122,6 +122,25 @@ class PostgresRepository:
             stmt = stmt.limit(limit)
             rows = (await session.execute(stmt)).scalars().all()
             return [_row_to_unit(r) for r in rows]
+
+    async def get_translation_unit_by_source_id(
+        self, source_id: str, target_language: str,
+    ) -> Optional[TranslationUnit]:
+        """Phase 8's harvest-and-match: source_id carries a stable content
+        hash for page-harvested units, so re-fetching the same page finds
+        the existing unit instead of creating a duplicate."""
+        async with self._session_factory() as session:
+            row = (
+                await session.execute(
+                    select(TranslationUnitRow)
+                    .where(
+                        TranslationUnitRow.source_id == source_id,
+                        TranslationUnitRow.target_language == target_language,
+                    )
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            return _row_to_unit(row) if row else None
 
     # ── Translation Unit Versions ───────────────────────────────────────
 
@@ -603,6 +622,43 @@ class PostgresRepository:
             units.sort(key=lambda u: u.metadata.get("position", 0))
             return units
 
+    # ── Page Snapshots (Phase 8: non-cooperative page review) ──────────────
+
+    async def save_page_snapshot(self, snapshot: PageSnapshot) -> PageSnapshot:
+        async with self._session_factory() as session:
+            session.add(PageSnapshotRow(
+                id=snapshot.id, url=snapshot.url, target_language=snapshot.target_language,
+                html=snapshot.html, harvested_unit_ids=snapshot.harvested_unit_ids,
+                fetched_at=snapshot.fetched_at,
+            ))
+            await session.commit()
+        return snapshot
+
+    async def get_latest_page_snapshot(
+        self, url: str, target_language: str,
+    ) -> Optional[PageSnapshot]:
+        async with self._session_factory() as session:
+            row = (
+                await session.execute(
+                    select(PageSnapshotRow)
+                    .where(PageSnapshotRow.url == url, PageSnapshotRow.target_language == target_language)
+                    .order_by(PageSnapshotRow.fetched_at.desc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            return _row_to_page_snapshot(row) if row else None
+
+    async def list_page_snapshots(self, url: str, target_language: str) -> List[PageSnapshot]:
+        async with self._session_factory() as session:
+            rows = (
+                await session.execute(
+                    select(PageSnapshotRow)
+                    .where(PageSnapshotRow.url == url, PageSnapshotRow.target_language == target_language)
+                    .order_by(PageSnapshotRow.fetched_at.asc())
+                )
+            ).scalars().all()
+            return [_row_to_page_snapshot(r) for r in rows]
+
     # ── PROV-JSON ────────────────────────────────────────────────────────
     # Not persisted separately — it's a pure function of a ProvenanceRecord
     # (see app.core.prov_builder.to_prov_json), so recomputing on a cache
@@ -889,6 +945,13 @@ def _row_to_quality_score(row: QualityScoreRow) -> QualityScore:
         scorer=row.scorer, reasons=row.reasons,
         errors=[ScoreError(**e) for e in row.errors],
         raw_response=row.raw_response, needs_review=row.needs_review, scored_at=row.scored_at,
+    )
+
+
+def _row_to_page_snapshot(row: PageSnapshotRow) -> PageSnapshot:
+    return PageSnapshot(
+        id=row.id, url=row.url, target_language=row.target_language, html=row.html,
+        harvested_unit_ids=row.harvested_unit_ids, fetched_at=row.fetched_at,
     )
 
 

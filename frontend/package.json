@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite --port 5173",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && npm run build:sdk",
+    "build:sdk": "vite build --config review-sdk/vite.sdk.config.ts",
     "preview": "vite preview --port 5173"
   },
   "dependencies": {

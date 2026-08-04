@@ -26,9 +26,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Install Python dependencies
+# Install Python dependencies. --timeout/--retries matter here specifically
+# because haystack-ai/sentence-transformers pull in torch, a several-hundred-
+# MB wheel — pip's default 15s read-timeout is easy to trip on a real
+# sustained transfer (a slow/flaky link) even when a quick connectivity
+# check to the same host succeeds fine.
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --timeout 300 --retries 5 -r requirements.txt
 
 # Pre-download the embedding model so startup is fast
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')" || true

@@ -12,6 +12,8 @@ export function PageNotes({ url, targetLanguage }: { url: string; targetLanguage
   const [author, setAuthor] = useState("reviewer@example.com");
   const [body, setBody] = useState("");
   const [loading, setLoading] = useState(true);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const reload = () => api.getPageNotes(url, targetLanguage).then(setNotes).finally(() => setLoading(false));
 
@@ -19,14 +21,28 @@ export function PageNotes({ url, targetLanguage }: { url: string; targetLanguage
 
   async function submit() {
     if (!body.trim()) return;
-    await api.addPageNote(url, targetLanguage, author, body.trim());
-    setBody("");
-    reload();
+    setSaveState("saving");
+    setSaveError(null);
+    try {
+      await api.addPageNote(url, targetLanguage, author, body.trim());
+      setBody("");
+      await reload();
+      setSaveState("saved");
+      setTimeout(() => setSaveState((s) => (s === "saved" ? "idle" : s)), 1500);
+    } catch (e) {
+      setSaveState("error");
+      setSaveError(e instanceof Error ? e.message : String(e));
+    }
   }
 
   async function toggleResolved(note: ReviewNote) {
-    await api.resolvePageNote(note.id, !note.resolved);
-    reload();
+    try {
+      await api.resolvePageNote(note.id, !note.resolved);
+      await reload();
+    } catch (e) {
+      setSaveState("error");
+      setSaveError(e instanceof Error ? e.message : String(e));
+    }
   }
 
   if (loading) return <div style={{ fontSize: 12, color: "#9ca3af" }}>Loading page notes…</div>;
@@ -61,8 +77,15 @@ export function PageNotes({ url, targetLanguage }: { url: string; targetLanguage
             placeholder="Note a challenge or strategy for this page…"
             style={{ flex: 1, fontSize: 12, padding: 4 }}
           />
-          <button onClick={submit} style={{ fontSize: 12, cursor: "pointer" }}>Add</button>
+          <button onClick={submit} disabled={saveState === "saving"} style={{ fontSize: 12, cursor: "pointer", minWidth: 50 }}>
+            {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved ✓" : "Add"}
+          </button>
         </div>
+        {saveState === "error" && (
+          <div style={{ fontSize: 11, color: "#b91c1c", background: "#fef2f2", padding: 6, borderRadius: 4 }}>
+            Failed to save: {saveError}
+          </div>
+        )}
       </div>
     </div>
   );

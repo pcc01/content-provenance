@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Content Provenance — Live Review</title>
+  <style>
+    body { font-family: system-ui, sans-serif; width: 280px; padding: 12px; font-size: 13px; }
+    strong { font-size: 14px; }
+    label { display: block; font-size: 11px; color: #6b7280; margin-top: 8px; }
+    input { width: 100%; box-sizing: border-box; padding: 4px; font-size: 12px; }
+    button { margin-top: 8px; padding: 6px 0; width: 100%; cursor: pointer; }
+    #status { font-size: 11px; color: #6b7280; margin-top: 6px; min-height: 14px; }
+    ul { list-style: none; padding: 0; margin: 8px 0; max-height: 120px; overflow-y: auto; }
+    li { font-size: 11px; padding: 4px; background: #f9fafb; border-radius: 4px; margin-bottom: 4px; }
+    .row { display: flex; gap: 4px; margin-top: 4px; }
+    .row input { flex: 1; }
+    .row button { width: auto; margin-top: 0; padding: 4px 10px; }
+  </style>
+</head>
+<body>
+  <strong>Content Provenance</strong>
+  <label>Source language<input id="sourceLanguage" value="en-US"></label>
+  <label>Target language<input id="targetLanguage" value="fr-FR"></label>
+  <button id="startButton">Start reviewing this tab</button>
+  <div id="status"></div>
+
+  <label style="margin-top: 16px;">Page notes</label>
+  <ul id="notesList"></ul>
+  <div class="row">
+    <input id="noteBody" placeholder="Note a challenge or strategy…">
+    <button id="addNoteButton">Add</button>
+  </div>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

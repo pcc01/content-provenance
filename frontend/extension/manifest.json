@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Content Provenance — Live Review",
+  "version": "0.1.0",
+  "description": "Phase 10: review a live browser tab in-context, bridged to the Content Provenance Review Shell — no changes to the reviewed site required.",
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Content Provenance — Live Review"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "permissions": ["activeTab", "scripting", "storage"],
+  "content_scripts": [
+    {
+      "matches": ["http://localhost:5173/*", "http://localhost:8001/*"],
+      "js": ["bridge-content-script.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

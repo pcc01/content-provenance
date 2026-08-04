@@ -6,6 +6,8 @@ export function NotesThread({ unitId }: { unitId: string }) {
   const [author, setAuthor] = useState("reviewer@example.com");
   const [body, setBody] = useState("");
   const [loading, setLoading] = useState(true);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const reload = () => api.listNotes(unitId).then(setNotes).finally(() => setLoading(false));
 
@@ -13,14 +15,28 @@ export function NotesThread({ unitId }: { unitId: string }) {
 
   async function submit() {
     if (!body.trim()) return;
-    await api.addNote(unitId, author, body.trim());
-    setBody("");
-    reload();
+    setSaveState("saving");
+    setSaveError(null);
+    try {
+      await api.addNote(unitId, author, body.trim());
+      setBody("");
+      await reload();
+      setSaveState("saved");
+      setTimeout(() => setSaveState((s) => (s === "saved" ? "idle" : s)), 1500);
+    } catch (e) {
+      setSaveState("error");
+      setSaveError(e instanceof Error ? e.message : String(e));
+    }
   }
 
   async function toggleResolved(note: ReviewNote) {
-    await api.resolveNote(unitId, note.id, !note.resolved);
-    reload();
+    try {
+      await api.resolveNote(unitId, note.id, !note.resolved);
+      await reload();
+    } catch (e) {
+      setSaveState("error");
+      setSaveError(e instanceof Error ? e.message : String(e));
+    }
   }
 
   if (loading) return <p style={{ color: "#6b7280" }}>Loading notes…</p>;
@@ -53,8 +69,15 @@ export function NotesThread({ unitId }: { unitId: string }) {
           onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
           placeholder="Add a note…" style={{ flex: 1, fontSize: 13, padding: 4 }}
         />
-        <button onClick={submit} style={{ fontSize: 12, cursor: "pointer" }}>Add</button>
+        <button onClick={submit} disabled={saveState === "saving"} style={{ fontSize: 12, cursor: "pointer", minWidth: 46 }}>
+          {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved ✓" : "Add"}
+        </button>
       </div>
+      {saveState === "error" && (
+        <div style={{ fontSize: 12, color: "#b91c1c", background: "#fef2f2", padding: 8, borderRadius: 6 }}>
+          Failed to save: {saveError}
+        </div>
+      )}
     </div>
   );
 }

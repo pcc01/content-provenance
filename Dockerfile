@@ -26,11 +26,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Install Python dependencies. --timeout/--retries matter here specifically
-# because haystack-ai/sentence-transformers pull in torch, a several-hundred-
-# MB wheel — pip's default 15s read-timeout is easy to trip on a real
-# sustained transfer (a slow/flaky link) even when a quick connectivity
-# check to the same host succeeds fine.
+# CPU-only torch FIRST, from PyTorch's own CPU wheel index — haystack-ai/
+# sentence-transformers pull in torch transitively, and PyPI's default
+# torch wheel bundles the full CUDA/GPU toolkit (nvidia_cudnn, cublas,
+# cusolver, triton, nccl, ...) — 2.5GB+ of downloads this app never uses
+# (a small CPU-based MiniLM embedding model is the only thing that needs
+# torch here, and there's no GPU in this container regardless). Installing
+# the CPU build first satisfies the later transitive requirement without
+# pip re-resolving to the GPU one.
+RUN pip install --no-cache-dir --timeout 300 --retries 5 \
+    torch --index-url https://download.pytorch.org/whl/cpu
+
+# --timeout/--retries matter here too: pip's default 15s read-timeout is
+# easy to trip on a real sustained transfer (a slow/flaky link) even when
+# a quick connectivity check to the same host succeeds fine.
 COPY requirements.txt .
 RUN pip install --no-cache-dir --timeout 300 --retries 5 -r requirements.txt
 

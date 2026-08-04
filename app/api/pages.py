@@ -22,7 +22,7 @@ POST /api/v1/pages/notes           - add a page-level note
 PUT  /api/v1/pages/notes/{id}/resolve - mark a page-level note resolved/unresolved
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from fastapi.responses import HTMLResponse
@@ -35,6 +35,18 @@ from app.core.page_history import diff_page, get_page_timeline, reconstruct_page
 from app.models.schemas import ReviewNote, TranslationMethod
 
 router = APIRouter()
+
+
+def _naive_utc(dt: Optional[datetime]) -> Optional[datetime]:
+    """Every created_at/fetched_at timestamp in this system is stored as a
+    naive datetime.utcnow() (see db/repository.py). Query params, though,
+    can arrive tz-aware (e.g. a JS `Date.toISOString()` has a trailing "Z"),
+    which pydantic parses as UTC-aware — comparing that against a naive
+    stored timestamp raises TypeError. Normalize at this API boundary
+    rather than changing the storage convention everywhere."""
+    if dt is None or dt.tzinfo is None:
+        return dt
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 class PageNoteCreateRequest(BaseModel):
@@ -87,6 +99,7 @@ async def render_page(
     db = get_db()
 
     if as_of is not None:
+        as_of = _naive_utc(as_of)
         html = await reconstruct_page_as_of(url, target_language, as_of)
         if html is None:
             raise HTTPException(
@@ -123,7 +136,7 @@ async def page_diff(
     from_ts: datetime = Query(..., description="Earlier point in time to compare from"),
     to_ts: datetime = Query(..., description="Later point in time to compare to"),
 ):
-    changes = await diff_page(url, target_language, from_ts, to_ts)
+    changes = await diff_page(url, target_language, _naive_utc(from_ts), _naive_utc(to_ts))
     if changes is None:
         raise HTTPException(status_code=404, detail=f"No snapshot found for {url} ({target_language})")
     return {"url": url, "target_language": target_language, "changes": changes}

@@ -82,13 +82,25 @@ class PostgresRepository:
             ).scalars().first()
             if existing is None or existing.target_text != (unit.target_text or ""):
                 next_version = (existing.version_number + 1) if existing else 1
+                # unit.translated_at only reflects unit-CREATION time unless
+                # a caller deliberately advances it before calling this (see
+                # test_pages.py's controlled-timestamp edits). Most redrive/
+                # approve callers never touch it, so reusing it unconditionally
+                # gave every later version the SAME created_at as the first —
+                # ties in _version_as_of's max() then silently favored the old
+                # text over the new one in as_of/diff reconstruction. Only
+                # trust it if it actually advances past the prior version;
+                # otherwise this version really happened "now."
+                created_at = unit.translated_at
+                if created_at is None or (existing is not None and created_at <= existing.created_at):
+                    created_at = datetime.utcnow()
                 session.add(TranslationUnitVersionRow(
                     unit_id=unit.id,
                     version_number=next_version,
                     target_text=unit.target_text or "",
                     translated_by_agent_id=unit.translated_by_agent_id,
                     method=unit.translation_method.value,
-                    created_at=unit.translated_at or datetime.utcnow(),
+                    created_at=created_at,
                     source_event="initial" if next_version == 1 else version_source_event,
                     quality_score=unit.quality_score,
                     note=version_note if next_version > 1 else None,

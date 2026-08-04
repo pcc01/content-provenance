@@ -9,6 +9,7 @@ interface Props {
   unitId: string;
   onClose: () => void;
   onPreview?: (text: string) => void; // posts tu:preview into the framed page — visual only, not persisted
+  onProposed?: () => void; // fires after a proposal is saved, so the page can refresh pending-state UI
 }
 
 type Tab = "details" | "history" | "provenance" | "notes";
@@ -41,7 +42,7 @@ function TranslatedByLine({
   );
 }
 
-export function SegmentDrawer({ unitId, onClose, onPreview }: Props) {
+export function SegmentDrawer({ unitId, onClose, onPreview, onProposed }: Props) {
   const [unit, setUnit] = useState<TranslationUnit | null>(null);
   const [versions, setVersions] = useState<TranslationUnitVersion[]>([]);
   const [provenance, setProvenance] = useState<ProvenanceResponse["provenance"] | null>(null);
@@ -73,6 +74,7 @@ export function SegmentDrawer({ unitId, onClose, onPreview }: Props) {
     try {
       await api.proposeTranslation(unit.id, draft, proposedBy);
       setProposeStatus("done");
+      onProposed?.();
     } catch (e) {
       setProposeError(e instanceof Error ? e.message : String(e));
       setProposeStatus("error");

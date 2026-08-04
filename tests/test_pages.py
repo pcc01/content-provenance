@@ -10,7 +10,7 @@ import http.server
 import re
 import tempfile
 import threading
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -173,6 +173,95 @@ async def test_page_history_as_of_and_diff(client, fixture_server):
     assert changes[0]["unit_id"] == edited_unit_id
     assert changes[0]["before_text"] == original_text
     assert changes[0]["after_text"] == "[IT] Manually edited heading"
+
+
+@pytest.mark.asyncio
+async def test_page_render_as_of_accepts_tz_aware_timestamp(client, fixture_server):
+    """Regression: `new Date().toISOString()` on the frontend (e.g.
+    PendingChanges' onApplied refresh) produces a "Z"-suffixed, tz-aware
+    timestamp. Every created_at/fetched_at in this system is stored as a
+    naive datetime.utcnow(), so comparing against a tz-aware `as_of` used to
+    raise TypeError ("can't compare offset-naive and offset-aware
+    datetimes"), 500ing the render endpoint — see _naive_utc in
+    app/api/pages.py."""
+    r = await client.get(
+        "/api/v1/pages/render",
+        params={"url": fixture_server, "target_language": "sv-SE", "refresh": "true"},
+    )
+    assert r.status_code == 200
+
+    aware_as_of = datetime.utcnow().isoformat() + "Z"
+    as_of_r = await client.get(
+        "/api/v1/pages/render",
+        params={"url": fixture_server, "target_language": "sv-SE", "as_of": aware_as_of},
+    )
+    assert as_of_r.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_page_diff_accepts_tz_aware_timestamps(client, fixture_server):
+    r = await client.get(
+        "/api/v1/pages/render",
+        params={"url": fixture_server, "target_language": "nb-NO", "refresh": "true"},
+    )
+    assert r.status_code == 200
+
+    aware_from = (datetime.utcnow() - timedelta(minutes=1)).isoformat() + "Z"
+    aware_to = datetime.utcnow().isoformat() + "Z"
+    diff_r = await client.get(
+        "/api/v1/pages/diff",
+        params={"url": fixture_server, "target_language": "nb-NO", "from_ts": aware_from, "to_ts": aware_to},
+    )
+    assert diff_r.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_redrive_approve_without_advancing_translated_at_still_shows_in_as_of(client, fixture_server):
+    """Regression: the real approve_item()/_apply_redrive() code path never
+    updates unit.translated_at (only unit-creation call sites do). Before
+    the fix, save_translation_unit stamped EVERY version's created_at from
+    unit.translated_at, so a redrive's new version got the exact same
+    created_at as the original — ties in _version_as_of's max() then
+    silently kept the OLD text in as_of/diff reconstruction even though the
+    live unit.target_text (and the UI's segment list) had the new text.
+    Exercises the actual propose -> approve flow, not a manually-advanced
+    timestamp, so it fails the way the live bug did."""
+    db = get_db()
+
+    first = await client.get(
+        "/api/v1/pages/render",
+        params={"url": fixture_server, "target_language": "fi-FI", "refresh": "true"},
+    )
+    assert first.status_code == 200
+    ids = re.findall(r'data-tu-id="([^"]+)"', first.text)
+    unit_id = ids[0]
+
+    propose_r = await client.post(
+        "/api/v1/redrive/propose",
+        json={"unit_id": unit_id, "proposed_text": "[FI] Approved via test", "proposed_by": "reviewer@example.com"},
+    )
+    assert propose_r.status_code == 201
+    item = propose_r.json()
+
+    approve_r = await client.post(
+        f"/api/v1/redrive/runs/{item['run_id']}/items/{item['id']}/approve",
+        json={"actor": "editor@example.com"},
+    )
+    assert approve_r.status_code == 200
+
+    versions = await db.list_translation_unit_versions(unit_id)
+    assert len(versions) == 2
+    assert versions[1].created_at > versions[0].created_at
+
+    as_of_after = await client.get(
+        "/api/v1/pages/render",
+        params={
+            "url": fixture_server, "target_language": "fi-FI",
+            "as_of": datetime.utcnow().isoformat(),
+        },
+    )
+    assert as_of_after.status_code == 200
+    assert "Approved via test" in as_of_after.text
 
 
 @pytest.mark.asyncio

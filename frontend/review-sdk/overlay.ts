@@ -61,6 +61,11 @@ function scoreColor(score: number | null): string {
   return "#30a46c"; // green
 }
 
+// Phase 10's editor view: a segment with an unapproved proposal gets a
+// distinct color/style, overriding score-coloring — a reviewer needs to
+// see "this is waiting on me" at a glance, separate from quality.
+const PENDING_COLOR = "#8b5cf6"; // purple
+
 class ReviewOverlay {
   private apiBase: string;
   private transport: ReviewTransport;
@@ -125,16 +130,19 @@ class ReviewOverlay {
 
   private attachBox(el: HTMLElement, tuId: string): void {
     const seg = this.segments.get(tuId)!;
+    const boxColor = seg.has_pending_proposal ? PENDING_COLOR : scoreColor(seg.latest_score);
     const box = document.createElement("div");
     box.style.position = "absolute";
-    box.style.border = `2px solid ${scoreColor(seg.latest_score)}`;
+    box.style.border = `2px ${seg.has_pending_proposal ? "dashed" : "solid"} ${boxColor}`;
     box.style.borderRadius = "3px";
     box.style.boxSizing = "border-box";
     box.style.pointerEvents = "auto";
     box.style.cursor = "pointer";
     box.style.transition = "background-color 120ms ease";
-    box.title = seg.latest_score !== null ? `Quality: ${seg.latest_score}` : "Not yet scored";
-    box.addEventListener("mouseenter", () => { box.style.backgroundColor = `${scoreColor(seg.latest_score)}22`; });
+    box.title = seg.has_pending_proposal
+      ? "Proposed change awaiting approval"
+      : seg.latest_score !== null ? `Quality: ${seg.latest_score}` : "Not yet scored";
+    box.addEventListener("mouseenter", () => { box.style.backgroundColor = `${boxColor}22`; });
     box.addEventListener("mouseleave", () => { box.style.backgroundColor = "transparent"; });
     box.addEventListener("click", (e) => {
       e.preventDefault();

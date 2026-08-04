@@ -11,6 +11,7 @@ export interface TranslationSegment {
   status: string;
   latest_score: number | null;
   latest_score_reasons: string[];
+  has_pending_proposal: boolean;
 }
 
 // Overlay (inside the framed page) -> Review Shell (parent)

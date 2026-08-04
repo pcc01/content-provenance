@@ -3,6 +3,7 @@ import { api, type TranslationUnit } from "../api/client";
 import { PageFlaggedList } from "../components/PageFlaggedList";
 import { PageHistory } from "../components/PageHistory";
 import { PageNotes } from "../components/PageNotes";
+import { PendingChanges } from "../components/PendingChanges";
 import { ReviewFrame, type ReviewFrameHandle } from "../components/ReviewFrame";
 import { SegmentDrawer } from "../components/SegmentDrawer";
 
@@ -109,6 +110,14 @@ export function ReviewPage() {
 
   function handlePreview(text: string) {
     if (selectedId) frameRef.current?.send({ type: "tu:preview", tuId: selectedId, text });
+  }
+
+  // A proposal changes has_pending_proposal for this segment, which both the
+  // PendingChanges panel and the overlay's box coloring need to reflect —
+  // same cheap "as_of now" reload PendingChanges' own onApplied already uses
+  // after a bulk-approve, rather than a second bespoke refresh path.
+  function handleProposed() {
+    if (loadedFetchTarget) loadAsOf(new Date().toISOString());
   }
 
   function handleListSelect(tuId: string) {
@@ -230,6 +239,14 @@ export function ReviewPage() {
           />
         )}
         {loadedFetchTarget && (
+          <PendingChanges
+            url={loadedFetchTarget.url}
+            targetLanguage={loadedFetchTarget.locale}
+            ready={pageReady}
+            onApplied={() => loadAsOf(new Date().toISOString())}
+          />
+        )}
+        {loadedFetchTarget && (
           <PageNotes url={loadedFetchTarget.url} targetLanguage={loadedFetchTarget.locale} />
         )}
       </div>
@@ -245,7 +262,12 @@ export function ReviewPage() {
       </div>
 
       {selectedId && (
-        <SegmentDrawer unitId={selectedId} onClose={() => setSelectedId(null)} onPreview={handlePreview} />
+        <SegmentDrawer
+          unitId={selectedId}
+          onClose={() => setSelectedId(null)}
+          onPreview={handlePreview}
+          onProposed={handleProposed}
+        />
       )}
     </div>
   );

@@ -225,10 +225,31 @@ export interface PageDiff {
   changes: PageDiffChange[];
 }
 
+export interface PendingChange {
+  item_id: string;
+  run_id: string;
+  unit_id: string;
+  source_text: string | null;
+  current_text: string | null;
+  proposed_text: string | null;
+}
+
+export interface PendingChanges {
+  url: string;
+  target_language: string;
+  pending: PendingChange[];
+}
+
+export interface BulkApproveResult {
+  item_id: string;
+  ok: boolean;
+  error?: string;
+}
+
 export const api = {
   getTranslation: (id: string) => request<TranslationUnit>(`/translations/${id}`),
   getTranslationsBatch: (ids: string[]) =>
-    request<(TranslationUnit & { latest_score: number | null })[]>(
+    request<(TranslationUnit & { latest_score: number | null; has_pending_proposal: boolean })[]>(
       `/translations/batch?ids=${encodeURIComponent(ids.join(","))}`,
     ),
   getVersions: (id: string) => request<TranslationUnitVersion[]>(`/translations/${id}/versions`),
@@ -336,6 +357,14 @@ export const api = {
     request<RedriveRunItem>("/redrive/propose", {
       method: "POST",
       body: JSON.stringify({ unit_id: unitId, proposed_text: proposedText, proposed_by: proposedBy }),
+    }),
+
+  getPendingChanges: (url: string, targetLanguage: string) =>
+    request<PendingChanges>(`/pages/pending?${new URLSearchParams({ url, target_language: targetLanguage })}`),
+  bulkApproveItems: (itemIds: string[], actor: string) =>
+    request<{ results: BulkApproveResult[] }>("/redrive/items/bulk-approve", {
+      method: "POST",
+      body: JSON.stringify({ item_ids: itemIds, actor }),
     }),
 
   getPageNotes: (url: string, targetLanguage: string) =>

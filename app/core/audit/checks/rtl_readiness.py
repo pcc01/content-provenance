@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 
 from app.core.audit.checks.mixed_locale import _locale_from_path
 from app.core.audit.crawler import CrawledPage
+from app.core.audit.source_attribution import attribute_source
 from app.models.schemas import SiteAudit, SiteAuditCheck, SiteAuditFinding, SiteAuditSeverity
 
 # Languages written right-to-left — a page genuinely targeting one of
@@ -84,6 +85,18 @@ def run(pages: List[CrawledPage], page_ids: Dict[str, str], audit: SiteAudit) ->
         if total_physical < _MIN_PHYSICAL_HITS_TO_FLAG or total_logical > 0 or has_dir_support:
             continue
 
+        # Per-source breakdown — the page-level gating decision above needs
+        # the combined total, but "591 physical properties" isn't
+        # actionable without knowing whose CSS that actually is.
+        counts_by_source = {
+            source_url: sum(len(pat.findall(css_text)) for pat in _PHYSICAL_PATTERNS.values())
+            for source_url, css_text in page.stylesheet_texts.items()
+        }
+        sources = [
+            {"url": url, "count": count, **attribute_source(url, page.url).as_dict()}
+            for url, count in sorted(counts_by_source.items(), key=lambda kv: -kv[1]) if count > 0
+        ]
+
         examples = [name for name, count in physical_counts.items() if count > 0][:5]
         findings.append(SiteAuditFinding(
             audit_id=audit.id, page_id=page_ids.get(page.url), check=SiteAuditCheck.RTL_READINESS,
@@ -92,6 +105,7 @@ def run(pages: List[CrawledPage], page_ids: Dict[str, str], audit: SiteAudit) ->
             detail={
                 "url": page.url, "physical_property_count": total_physical,
                 "example_properties": examples, "stylesheets_checked": len(css_texts),
+                "sources": sources[:5],
             },
         ))
 

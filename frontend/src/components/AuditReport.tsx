@@ -34,6 +34,23 @@ function findingUrl(f: SiteAuditFinding): string | null {
   return (d.url as string) || (d.from_url as string) || (d.privacy_url as string) || (d.embed_url as string) || null;
 }
 
+// "Whose code is this?" — text_expansion/rtl_readiness/font_coverage
+// attribute each finding to its actual source (see
+// app/core/audit/source_attribution.py): a WordPress theme/plugin by
+// name when detectable, else a generic same-origin/third-party/inline
+// category. Shows the top-ranked source only — the full breakdown is in
+// the raw finding detail for anyone who needs it.
+function topSource(f: SiteAuditFinding): string | null {
+  const list = (f.detail.sources ?? f.detail.font_declaration_sources) as
+    { url: string; category: string; platform_detail?: string }[] | undefined;
+  if (!list || list.length === 0) return null;
+  const top = list[0];
+  if (top.platform_detail) return top.platform_detail;
+  if (top.category === "inline") return "inline styles on this page";
+  if (top.category === "third_party") return `third-party: ${new URL(top.url).hostname}`;
+  return top.url;
+}
+
 export function AuditReport({ auditId, onReviewPage }: Props) {
   const [summary, setSummary] = useState<AuditRunSummary | null>(null);
   const [findings, setFindings] = useState<SiteAuditFinding[] | null>(null);
@@ -83,6 +100,7 @@ export function AuditReport({ auditId, onReviewPage }: Props) {
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {items.map((f) => {
               const url = findingUrl(f);
+              const source = topSource(f);
               return (
                 <div key={f.id} style={{
                   padding: 8, borderRadius: 6, fontSize: 12,
@@ -96,6 +114,9 @@ export function AuditReport({ auditId, onReviewPage }: Props) {
                       {f.summary}
                     </span>
                   </div>
+                  {source && (
+                    <div style={{ marginTop: 4, color: "#6b7280", fontStyle: "italic" }}>Source: {source}</div>
+                  )}
                   {url && (
                     <div style={{ marginTop: 4, display: "flex", gap: 8, alignItems: "center" }}>
                       <span style={{ color: "#6b7280", wordBreak: "break-all" }}>{url}</span>

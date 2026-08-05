@@ -15,6 +15,7 @@ from typing import Dict, List, Optional
 
 from app.core.audit.checks.mixed_locale import _locale_from_path
 from app.core.audit.crawler import CrawledPage
+from app.core.audit.source_attribution import attribute_source
 from app.models.schemas import SiteAudit, SiteAuditCheck, SiteAuditFinding, SiteAuditSeverity
 
 _SCRIPT_LANGUAGES = {
@@ -61,18 +62,29 @@ def run(pages: List[CrawledPage], page_ids: Dict[str, str], audit: SiteAudit) ->
         script = _page_script(page, audit_primary)
         if not script:
             continue
-        css_texts = list(page.stylesheet_texts.values())
-        families = [f for css in css_texts for f in _extract_font_families(css)]
+        families = [f for css in page.stylesheet_texts.values() for f in _extract_font_families(css)]
         hints = _SCRIPT_FONT_HINTS.get(script, [])
         covered = any(hint in family for family in families for hint in hints)
         if covered:
             continue
 
+        # There's no single "offending" source for an ABSENCE — instead,
+        # list which sources declared font-family at all, so the fix
+        # ("add a script-covering fallback") has a concrete place to land
+        # rather than just "somewhere in your CSS."
+        font_sources = [
+            {"url": url, **attribute_source(url, page.url).as_dict()}
+            for url, css in page.stylesheet_texts.items() if _extract_font_families(css)
+        ]
+
         findings.append(SiteAuditFinding(
             audit_id=audit.id, page_id=page_ids.get(page.url), check=SiteAuditCheck.FONT_COVERAGE,
             finding_type="possible_missing_script_font", severity=SiteAuditSeverity.WARNING,
             summary=f"Page targets {script} script but no {script}-covering font-family was declared",
-            detail={"url": page.url, "script": script, "declared_fonts": sorted(set(families))[:10]},
+            detail={
+                "url": page.url, "script": script, "declared_fonts": sorted(set(families))[:10],
+                "font_declaration_sources": font_sources[:5],
+            },
         ))
 
     return findings

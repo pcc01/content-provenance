@@ -218,6 +218,19 @@ async def test_audit_run_finds_every_seeded_issue(client, audit_fixture_server):
     rtl_dir = next(f for f in findings if f["finding_type"] == "missing_rtl_dir_attribute")
     assert rtl_dir["detail"]["expected_lang"] == "ar"
 
+    # Source attribution — the fixture's RTL/text-expansion CSS lives in an
+    # inline <style> block (see _INDEX_HTML), so both should attribute to
+    # category "inline" with no WordPress-specific platform_detail (this
+    # fixture server has no /wp-content/ paths at all).
+    rtl_risk = next(f for f in findings if f["finding_type"] == "rtl_risk_physical_properties")
+    assert rtl_risk["detail"]["sources"]
+    assert all(s["category"] == "inline" for s in rtl_risk["detail"]["sources"])
+    assert all("platform_detail" not in s for s in rtl_risk["detail"]["sources"])
+
+    expansion_risk = next(f for f in findings if f["finding_type"] == "text_expansion_risk")
+    assert expansion_risk["detail"]["sources"]
+    assert all(s["category"] == "inline" for s in expansion_risk["detail"]["sources"])
+
     mismatch = next(f for f in findings if f["finding_type"] == "page_language_mismatch")
     assert mismatch["detail"]["expected"] == "fr"
     assert mismatch["detail"]["detected"] == "en"

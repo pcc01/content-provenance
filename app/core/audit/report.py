@@ -58,6 +58,24 @@ def _finding_url(finding: SiteAuditFinding) -> str:
     return ""
 
 
+def _finding_source(finding: SiteAuditFinding) -> str:
+    """"Whose code is this?" — text_expansion/rtl_readiness/font_coverage
+    attribute findings to their actual source (see
+    app/core/audit/source_attribution.py). A client-facing PDF should say
+    "caused by your WordPress theme X" where possible, not just a bare
+    property count — that's the difference between a finding being
+    actionable and just a number."""
+    sources = finding.detail.get("sources") or finding.detail.get("font_declaration_sources")
+    if not sources:
+        return ""
+    top = sources[0]
+    if top.get("platform_detail"):
+        return str(top["platform_detail"])
+    if top.get("category") == "inline":
+        return "inline styles on this page"
+    return str(top.get("url", ""))
+
+
 def generate_pdf_report(
     audit: SiteAudit, pages: List[SiteAuditPage], findings: List[SiteAuditFinding],
 ) -> bytes:
@@ -142,10 +160,13 @@ def generate_pdf_report(
             color = _SEVERITY_COLOR.get(f.severity.value, colors.black)
             severity_html = f'<font color="{color.hexval()}"><b>{f.severity.value.upper()}</b></font>'
             story.append(Paragraph(f"{severity_html} — {f.summary}", finding_style))
+            source = _finding_source(f)
+            if source:
+                story.append(Paragraph(f"Source: {source}", detail_style))
             url = _finding_url(f)
             if url:
                 story.append(Paragraph(url, detail_style))
-            else:
+            if not source and not url:
                 story.append(Spacer(1, 6))
 
     # ── Closing / CTA ────────────────────────────────────────────────────

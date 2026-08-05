@@ -11,10 +11,29 @@ import re
 from typing import Dict, List, Optional
 from urllib.parse import parse_qs, urlparse
 
-from langdetect import detect, LangDetectException
+from langdetect import detect, DetectorFactory, LangDetectException
 
 from app.core.audit.crawler import CrawledPage
 from app.models.schemas import SiteAudit, SiteAuditCheck, SiteAuditFinding, SiteAuditSeverity
+
+# langdetect seeds its internal RNG from OS entropy unless told otherwise —
+# undocumented in the README's basic usage, but confirmed in its source
+# (Detector.__init__ calls self.random.seed(self.seed), and
+# DetectorFactory.seed defaults to None). Without this, the SAME text can
+# classify differently across runs, which surfaced as real noise: a live
+# audit against thewordinbits.com flagged 5 different bogus languages
+# (AF/CY/DA/FR/IT) on its homepage, but a fresh re-crawl of the identical
+# page moments later found nothing wrong at all. A consulting tool whose
+# findings change if you just run it twice isn't trustworthy — this makes
+# every detect() call in the process (imported here or directly from
+# langdetect elsewhere, e.g. privacy.py) deterministic. Module-level so it
+# runs once at import time, before any request-time detection happens.
+DetectorFactory.seed = 0
+
+# Thresholds for the multi_language_page check specifically — see its
+# comment below for why these are stricter than _detect's own 20-char floor.
+_MULTI_LANG_BLOCK_MIN_LEN = 40
+_MULTI_LANG_MIN_BLOCK_OCCURRENCES = 2
 
 # Same locale-in-path convention the original analyzer script used, e.g.
 # /es/, /fr-FR/ — kept as a compact code list rather than a full BCP-47
@@ -99,10 +118,32 @@ def run(pages: List[CrawledPage], page_ids: Dict[str, str], audit: SiteAudit) ->
             ))
 
         # 2. Multi-language page — individual text blocks disagree with the
-        # page's own dominant detected language.
-        block_langs = {_detect(b) for b in page.text_blocks}
-        block_langs.discard(None)
-        other_langs = block_langs - ({page_lang} if page_lang else set())
+        # page's own dominant detected language. Guards against noise
+        # beyond the seeded/deterministic detector above: a higher length
+        # floor than _detect's own 20-char minimum (nav labels, buttons,
+        # and short menu items are exactly the blocks language detection
+        # is least reliable on), and requiring the SAME other language to
+        # show up in at least 2 DISTINCT blocks — a real secondary-language
+        # section naturally spans multiple different sentences, whereas a
+        # single stray misclassification is noise, not content. Distinct,
+        # not a raw count: many nav-heavy themes render the same menu
+        # twice in the DOM (a visible desktop nav plus a hidden mobile
+        # copy), which would otherwise double-count one misclassified
+        # block into looking like two independent occurrences.
+        block_langs_by_text: Dict[str, str] = {}
+        for b in page.text_blocks:
+            if len(b.strip()) < _MULTI_LANG_BLOCK_MIN_LEN:
+                continue
+            lang = _detect(b)
+            if lang:
+                block_langs_by_text[b] = lang
+        lang_distinct_counts: Dict[str, int] = {}
+        for lang in block_langs_by_text.values():
+            lang_distinct_counts[lang] = lang_distinct_counts.get(lang, 0) + 1
+        other_langs = {
+            lang for lang, count in lang_distinct_counts.items()
+            if lang != page_lang and count >= _MULTI_LANG_MIN_BLOCK_OCCURRENCES
+        }
         if other_langs:
             findings.append(SiteAuditFinding(
                 audit_id=audit.id, page_id=page_id, check=SiteAuditCheck.MIXED_LOCALE,

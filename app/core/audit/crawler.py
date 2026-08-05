@@ -86,6 +86,26 @@ class CrawledLink:
 _MAX_RESOURCES_PER_PAGE = 12
 _MAX_RESOURCE_BYTES = 2_000_000
 
+# Vendor/plugin CSS the site owner didn't write and can't reasonably
+# rewrite — a real audit against thewordinbits.com traced its
+# text_expansion and rtl_readiness findings to exactly these: WordPress
+# core's bundled MediaElement.js player CSS and plugin-shipped libraries
+# (a photo gallery's jQuery scrollbar/select widgets), not anything in the
+# site's own theme. WordPress-specific paths (/wp-includes/,
+# /wp-content/plugins/) are a no-op on other platforms, so this only ever
+# narrows results, never silently hides a real finding elsewhere. The
+# filename patterns catch the same handful of extremely common libraries
+# (MediaElement, Select2, Slick, Owl Carousel, Font Awesome, Swiper,
+# Bootstrap, jQuery UI, Magnific Popup, mCustomScrollbar) regardless of
+# which CMS or hand-rolled site bundles them.
+_VENDOR_CSS_URL_RE = re.compile(
+    r"/wp-includes/|/wp-content/plugins/|"
+    r"mediaelement|select2|slick(?:\.min)?\.css|owl\.carousel|font-?awesome|"
+    r"swiper(?:-bundle)?(?:\.min)?\.css|bootstrap(?:\.min)?\.css|"
+    r"jquery-ui|magnific-popup|mcustomscrollbar",
+    re.IGNORECASE,
+)
+
 
 @dataclass
 class CrawledPage:
@@ -261,7 +281,10 @@ async def _crawl_one_page(browser, url: str) -> Optional[CrawledPage]:
         data = await page.evaluate(_EXTRACT_JS)
 
         stylesheet_texts = {}
-        for css_url in data.get("stylesheetUrls", [])[:_MAX_RESOURCES_PER_PAGE]:
+        own_stylesheet_urls = [
+            u for u in data.get("stylesheetUrls", []) if not _VENDOR_CSS_URL_RE.search(u)
+        ]
+        for css_url in own_stylesheet_urls[:_MAX_RESOURCES_PER_PAGE]:
             text = await _fetch_resource_text(page.context, css_url)
             if text:
                 stylesheet_texts[css_url] = text

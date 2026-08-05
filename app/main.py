@@ -130,7 +130,21 @@ async def spa_fallback(full_path: str):
     order, so every router and the /assets mount above are tried first —
     this only catches what nothing else matched. In dev, Vite's own SPA
     fallback (port 5173) serves these paths instead; this route only matters
-    once frontend/dist/ is built and served from here."""
+    once frontend/dist/ is built and served from here.
+
+    Files Vite copies verbatim from frontend/public/ (the logo, favicon,
+    etc.) land at the ROOT of frontend/dist/, not under /assets/ — only
+    hashed build output goes there. Without this check, a request for e.g.
+    /wordinbits-logo.png matched nothing above and fell all the way through
+    to unconditionally returning index.html, so the <img> tag silently got
+    an HTML document instead of image bytes. Resolved and re-checked against
+    FRONTEND_DIST's own resolved path first — full_path is attacker-controlled
+    input, and a naive FRONTEND_DIST / full_path join would let a "../../"
+    segment escape the intended directory."""
+    dist_root = FRONTEND_DIST.resolve()
+    candidate = (dist_root / full_path).resolve()
+    if candidate.is_relative_to(dist_root) and candidate.is_file():
+        return FileResponse(candidate)
     dist_index = FRONTEND_DIST / "index.html"
     if dist_index.exists():
         return FileResponse(dist_index)

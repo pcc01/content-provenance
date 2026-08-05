@@ -58,6 +58,7 @@ export function PublicAuditLanding() {
   const [auditId, setAuditId] = useState<string | null>(null);
   const [findings, setFindings] = useState<SiteAuditFinding[] | null>(null);
   const [pagesCrawled, setPagesCrawled] = useState(0);
+  const [blocked, setBlocked] = useState(false);
 
   const emailValid = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim());
   const canSubmit = url.trim().length > 3 && emailValid;
@@ -66,6 +67,7 @@ export function PublicAuditLanding() {
     if (!canSubmit) return;
     setStage("running");
     setError(null);
+    setBlocked(false);
     try {
       const audit = await api.createAuditRun({
         root_url: url.trim(), primary_language: primaryLanguage, requester_email: email.trim(),
@@ -73,6 +75,7 @@ export function PublicAuditLanding() {
       });
       if (audit.status === "failed") {
         setError(audit.error || "We couldn't reach that site — double-check the URL and try again.");
+        setBlocked(audit.blocked);
         setStage("error");
         return;
       }
@@ -189,7 +192,41 @@ export function PublicAuditLanding() {
           </div>
         )}
 
-        {stage === "error" && (
+        {stage === "error" && blocked && (
+          <div style={{ textAlign: "center", padding: "64px 0" }}>
+            <h2 style={{ ...heading, fontSize: 26, marginBottom: 12, color: COLORS.primary }}>
+              Your site's security blocked our automated check
+            </h2>
+            <p style={{ ...body, fontSize: 16, marginBottom: 16, maxWidth: 520, marginLeft: "auto", marginRight: "auto" }}>
+              That's actually a good sign, not a bad one — bot protection like this is exactly the
+              kind of thing we assess. We've saved your details, and Paul will take a personal look
+              and follow up directly with what he finds.
+            </p>
+            <p style={{ ...body, fontSize: 13, color: "#8a8477", marginBottom: 28 }}>{error}</p>
+            <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
+              <a
+                href="https://thewordinbits.com/contact-elementor/"
+                style={{
+                  padding: "10px 24px", borderRadius: 3, textDecoration: "none",
+                  background: COLORS.primary, color: COLORS.cream, fontFamily: '"IBM Plex Sans", sans-serif', fontWeight: 600,
+                }}
+              >
+                Get in touch now
+              </a>
+              <button
+                onClick={() => setStage("form")}
+                style={{
+                  padding: "10px 24px", border: `1px solid ${COLORS.primary}`, borderRadius: 3, cursor: "pointer",
+                  background: "transparent", color: COLORS.primary, fontFamily: '"IBM Plex Sans", sans-serif', fontWeight: 600,
+                }}
+              >
+                Try another URL
+              </button>
+            </div>
+          </div>
+        )}
+
+        {stage === "error" && !blocked && (
           <div style={{ textAlign: "center", padding: "80px 0" }}>
             <h2 style={{ ...heading, fontSize: 26, marginBottom: 12, color: "#c0392b" }}>Something went wrong</h2>
             <p style={{ ...body, marginBottom: 24 }}>{error}</p>

@@ -402,6 +402,7 @@ async def test_audit_run_fails_when_robots_txt_blocks_root(client, robots_blocke
     assert audit["status"] == "failed"
     assert audit["pages_crawled"] == 0
     assert "robots.txt" in audit["error"]
+    assert audit["blocked"] is True
 
 
 @pytest.mark.asyncio
@@ -414,3 +415,14 @@ async def test_audit_run_fails_on_bot_challenge_page(client, bot_challenge_serve
     audit = r.json()
     assert audit["status"] == "failed"
     assert "bot-detection" in audit["error"]
+    assert audit["blocked"] is True
+
+
+@pytest.mark.asyncio
+async def test_audit_run_non_blocked_failure_leaves_blocked_false(client):
+    r = await client.post("/api/v1/audit/runs", json={
+        "root_url": "file:///etc/passwd", "primary_language": "en", "requester_email": "reviewer@example.com",
+    })
+    audit = r.json()
+    assert audit["status"] == "failed"
+    assert audit["blocked"] is False

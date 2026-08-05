@@ -267,6 +267,7 @@ export interface SiteAudit {
   finished_at: string | null;
   pages_crawled: number;
   error: string | null;
+  blocked: boolean;
 }
 
 export interface SiteAuditPage {

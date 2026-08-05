@@ -736,7 +736,7 @@ class PostgresRepository:
                 status=audit.status.value, requester_email=audit.requester_email,
                 triggered_by=audit.triggered_by,
                 started_at=audit.started_at, finished_at=audit.finished_at,
-                pages_crawled=audit.pages_crawled, error=audit.error,
+                pages_crawled=audit.pages_crawled, error=audit.error, blocked=audit.blocked,
             ))
             await session.commit()
         return audit
@@ -744,7 +744,7 @@ class PostgresRepository:
     async def update_site_audit(
         self, audit_id: str, status: Optional[SiteAuditStatus] = None,
         finished_at: Optional[datetime] = None, pages_crawled: Optional[int] = None,
-        error: Optional[str] = None,
+        error: Optional[str] = None, blocked: Optional[bool] = None,
     ) -> None:
         async with self._session_factory() as session:
             row = await session.get(SiteAuditRow, audit_id)
@@ -758,6 +758,8 @@ class PostgresRepository:
                 row.pages_crawled = pages_crawled
             if error is not None:
                 row.error = error
+            if blocked is not None:
+                row.blocked = blocked
             await session.commit()
 
     async def get_site_audit(self, audit_id: str) -> Optional[SiteAudit]:
@@ -1151,7 +1153,7 @@ def _row_to_site_audit(row: SiteAuditRow) -> SiteAudit:
         status=SiteAuditStatus(row.status), requester_email=row.requester_email,
         triggered_by=row.triggered_by,
         started_at=row.started_at, finished_at=row.finished_at,
-        pages_crawled=row.pages_crawled, error=row.error,
+        pages_crawled=row.pages_crawled, error=row.error, blocked=row.blocked,
     )
 
 

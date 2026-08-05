@@ -159,7 +159,9 @@ export function AuditPage({ onReviewPage }: Props) {
                 <div style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {r.root_url}
                 </div>
-                <div style={{ color: "#6b7280" }}>{r.status} · {new Date(r.started_at).toLocaleString()}</div>
+                <div style={{ color: "#6b7280" }}>
+                  {r.status}{r.blocked ? " · 🔒 blocked — follow up manually" : ""} · {new Date(r.started_at).toLocaleString()}
+                </div>
                 {r.requester_email && (
                   <div style={{ color: "#9ca3af", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {r.requester_email}

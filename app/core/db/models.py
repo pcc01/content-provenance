@@ -403,6 +403,7 @@ class SiteAuditRow(Base):
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     pages_crawled: Mapped[int] = mapped_column(Integer, default=0)
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    blocked: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class SiteAuditPageRow(Base):

@@ -456,6 +456,14 @@ class SiteAudit(BaseModel):
     finished_at: Optional[datetime] = None
     pages_crawled: int = 0
     error: Optional[str] = None
+    # True when `error` is specifically "the target site blocked automated
+    # crawling" (robots.txt disallow, bot-detection/CAPTCHA interstitial —
+    # see runner.py) rather than a bad URL or network failure. The public
+    # landing page uses this to show a consultative "we'll follow up
+    # personally" message instead of a flat error for a visitor curious
+    # enough to submit their site — a real, actionable UX distinction the
+    # error STRING alone shouldn't be pattern-matched for.
+    blocked: bool = False
 
 
 class SiteAuditPage(BaseModel):

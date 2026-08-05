@@ -47,11 +47,21 @@ async def run_audit(audit: SiteAudit) -> SiteAudit:
     try:
         crawled_pages = await crawl_site(audit.root_url, max_pages=audit.max_pages)
     except PageFetchError as e:
+        # 403 from crawl_site only ever means one thing here: the root
+        # url's robots.txt disallowed us (see crawler.py's up-front check).
+        # A bad scheme (400) or a genuine load failure (502, timeout/DNS/
+        # network) are different in kind — a URL problem or transient
+        # issue, not the site actively fencing off automated access — so
+        # `blocked` (which drives the public page's consultative framing)
+        # is deliberately narrower than "any failure."
+        was_blocked = e.status_code == 403
         await db.update_site_audit(
-            audit.id, status=SiteAuditStatus.FAILED, finished_at=datetime.utcnow(), error=str(e),
+            audit.id, status=SiteAuditStatus.FAILED, finished_at=datetime.utcnow(),
+            error=str(e), blocked=was_blocked,
         )
         audit.status = SiteAuditStatus.FAILED
         audit.error = str(e)
+        audit.blocked = was_blocked
         return audit
 
     # A crawl can "succeed" (real HTTP responses, no exception) while
@@ -60,14 +70,16 @@ async def run_audit(audit: SiteAudit) -> SiteAudit:
     # wrong with THAT page, silently producing a clean-looking 0-findings
     # audit that's really "we never saw the real site." Treated the same as
     # any other unreachable-site failure rather than persisting a
-    # misleading result.
+    # misleading result — and also a `blocked` case, same as a robots-403.
     blocked_reason = bot_challenge_reason(crawled_pages)
     if blocked_reason:
         await db.update_site_audit(
-            audit.id, status=SiteAuditStatus.FAILED, finished_at=datetime.utcnow(), error=blocked_reason,
+            audit.id, status=SiteAuditStatus.FAILED, finished_at=datetime.utcnow(),
+            error=blocked_reason, blocked=True,
         )
         audit.status = SiteAuditStatus.FAILED
         audit.error = blocked_reason
+        audit.blocked = True
         return audit
 
     expected_primary = audit.primary_language.split("-")[0].lower()

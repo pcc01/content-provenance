@@ -92,6 +92,10 @@ class SiteAuditCheck(str, Enum):
     COOKIE_CONSENT = "cookie_consent"
     PLACEHOLDER_LEAK = "placeholder_leak"
     LOCALE_FORMAT = "locale_format"
+    TRANSLATION_COVERAGE = "translation_coverage"
+    LOCALE_SWITCHER = "locale_switcher"
+    SEO_METADATA = "seo_metadata"
+    PAYMENT_LOCALIZATION = "payment_localization"
 
 
 class SiteAuditSeverity(str, Enum):

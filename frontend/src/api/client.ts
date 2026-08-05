@@ -249,7 +249,8 @@ export interface BulkApproveResult {
 export type SiteAuditCheck =
   | "mixed_locale" | "rtl_readiness" | "icu_i18n" | "privacy"
   | "text_expansion" | "font_coverage" | "hreflang" | "cookie_consent"
-  | "placeholder_leak" | "locale_format";
+  | "placeholder_leak" | "locale_format" | "translation_coverage"
+  | "locale_switcher" | "seo_metadata" | "payment_localization";
 export type SiteAuditSeverity = "info" | "warning" | "critical";
 export type SiteAuditStatus = "pending" | "running" | "completed" | "failed";
 

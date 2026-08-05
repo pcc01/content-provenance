@@ -10,10 +10,18 @@ compliance certification, just "worth a human look."
 """
 
 import re
-from typing import Dict, List
+from typing import Dict, List, Optional
+from urllib.parse import urlparse
 
+from app.core.audit.checks.mixed_locale import _locale_from_path
 from app.core.audit.crawler import CrawledPage
 from app.models.schemas import SiteAudit, SiteAuditCheck, SiteAuditFinding, SiteAuditSeverity
+
+# Languages written right-to-left — a page genuinely targeting one of
+# these needs <html dir="rtl">, not just RTL-aware CSS (the heuristic
+# check below). A hard, unambiguous pass/fail, unlike the physical-vs-
+# logical-property heuristic — worth reporting separately.
+_RTL_LANGUAGES = {"ar", "fa", "ur", "he"}
 
 _PHYSICAL_PATTERNS = {
     "margin-left": re.compile(r"\bmargin-left\b"),
@@ -44,10 +52,24 @@ _DIR_SUPPORT_RE = re.compile(r"\[dir\s*=|:dir\(")
 _MIN_PHYSICAL_HITS_TO_FLAG = 5
 
 
+def _page_expected_lang(page: CrawledPage, audit_primary: str) -> Optional[str]:
+    return _locale_from_path(urlparse(page.url).path) or (page.html_lang or "").split("-")[0].lower() or audit_primary
+
+
 def run(pages: List[CrawledPage], page_ids: Dict[str, str], audit: SiteAudit) -> List[SiteAuditFinding]:
     findings: List[SiteAuditFinding] = []
+    audit_primary = audit.primary_language.split("-")[0].lower()
 
     for page in pages:
+        expected_lang = _page_expected_lang(page, audit_primary)
+        if expected_lang in _RTL_LANGUAGES and (page.html_dir or "").lower() != "rtl":
+            findings.append(SiteAuditFinding(
+                audit_id=audit.id, page_id=page_ids.get(page.url), check=SiteAuditCheck.RTL_READINESS,
+                finding_type="missing_rtl_dir_attribute", severity=SiteAuditSeverity.WARNING,
+                summary=f"Page targets {expected_lang.upper()} (right-to-left) but <html> has no dir=\"rtl\"",
+                detail={"url": page.url, "expected_lang": expected_lang, "html_dir": page.html_dir},
+            ))
+
         css_texts = list(page.stylesheet_texts.values())
         if not css_texts:
             continue

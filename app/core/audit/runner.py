@@ -12,8 +12,9 @@ from typing import Dict
 from urllib.parse import urlparse
 
 from app.core.audit.checks import (
-    cookie_consent, font_coverage, hreflang, icu_i18n, locale_format,
-    mixed_locale, placeholder_leak, privacy, rtl_readiness, text_expansion,
+    cookie_consent, font_coverage, hreflang, icu_i18n, locale_format, locale_switcher,
+    mixed_locale, payment_localization, placeholder_leak, privacy, rtl_readiness,
+    seo_metadata, text_expansion, translation_coverage,
 )
 from app.core.audit.checks.mixed_locale import _detect, _locale_from_path
 from app.core.audit.crawler import crawl_site
@@ -32,6 +33,10 @@ _CHECK_MODULES = {
     SiteAuditCheck.COOKIE_CONSENT: cookie_consent,
     SiteAuditCheck.PLACEHOLDER_LEAK: placeholder_leak,
     SiteAuditCheck.LOCALE_FORMAT: locale_format,
+    SiteAuditCheck.TRANSLATION_COVERAGE: translation_coverage,
+    SiteAuditCheck.LOCALE_SWITCHER: locale_switcher,
+    SiteAuditCheck.SEO_METADATA: seo_metadata,
+    SiteAuditCheck.PAYMENT_LOCALIZATION: payment_localization,
 }
 
 

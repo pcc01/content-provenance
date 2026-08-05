@@ -17,6 +17,10 @@ const ALL_CHECKS: { id: SiteAuditCheck; label: string }[] = [
   { id: "cookie_consent", label: "Cookie consent" },
   { id: "placeholder_leak", label: "Placeholder leakage" },
   { id: "locale_format", label: "Locale format assumptions" },
+  { id: "translation_coverage", label: "Translation coverage" },
+  { id: "locale_switcher", label: "Locale switcher integrity" },
+  { id: "seo_metadata", label: "SEO metadata parity" },
+  { id: "payment_localization", label: "Payment localization" },
 ];
 
 // Phase 11 — crawls a third-party site (not this system's own translations)

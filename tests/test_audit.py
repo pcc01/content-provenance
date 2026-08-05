@@ -67,6 +67,7 @@ _DE_PAGE_HTML = """<!DOCTYPE html>
       <option>KS</option><option>KY</option><option>LA</option><option>ME</option>
     </select>
   </form>
+  <a href="/de-de/checkout.html">Kasse</a>
 </body>
 </html>
 """
@@ -86,13 +87,43 @@ _AR_PAGE_HTML = """<!DOCTYPE html>
 """
 
 # Lives at /fr/page.html (URL suggests French) but the content is plain
-# English — this is the page_language_mismatch fixture.
+# English — this is the page_language_mismatch fixture. Also carries an
+# English meta description and a mismatched og:locale, for seo_metadata;
+# and a "Francais version"/"Deutsche Version"/"Arabic version" set of
+# switcher-shaped links back on the home page (see _INDEX_HTML) that all
+# land somewhere other than this page's own equivalent — locale_switcher's
+# fixture doesn't need dedicated markup here, just needs this page (and
+# the DE/AR pages below) to exist as crawlable targets.
 _FR_PATH_ENGLISH_CONTENT_HTML = """<!DOCTYPE html>
 <html lang="en">
-<head><title>Mislabeled Page</title></head>
+<head>
+<title>Mislabeled Page</title>
+<meta name="description" content="This is a plain English description that should not appear on a French-targeted page for testing.">
+<meta property="og:locale" content="en_US">
+</head>
 <body>
   <h1>This page pretends to be French but is written entirely in English</h1>
   <p>Despite living under a French locale path, every sentence on this page is in plain English for testing purposes.</p>
+</body>
+</html>
+"""
+
+# Checkout-style page under /de-de/ — checkout-shaped URL, USD-only
+# pricing, and an inline script mentioning Stripe with no localized
+# provider signature (Klarna/Adyen/SEPA/...), for payment_localization.
+# Linked from _DE_PAGE_HTML so the crawler discovers it. The inline
+# script (not an external src=) keeps this fixture network-independent —
+# same trick _INDEX_HTML already uses for the i18next signature.
+_DE_CHECKOUT_HTML = """<!DOCTYPE html>
+<html lang="de-DE">
+<head><title>Kasse</title></head>
+<body>
+  <h1>Zur Kasse gehen und Ihre Bestellung fuer diesen automatisierten Test abschliessen</h1>
+  <p>Ihr Warenkorb: Produkt A $19.99, Produkt B $24.99, Versandkosten $5.00 fuer Ihre heutige Bestellung.</p>
+  <script>
+    // Stripe checkout integration placeholder for payment processing
+    var stripeHandler = null;
+  </script>
 </body>
 </html>
 """
@@ -121,6 +152,7 @@ def audit_fixture_server():
     de_dir = Path(tmpdir) / "de-de"
     de_dir.mkdir()
     (de_dir / "page.html").write_text(_DE_PAGE_HTML, encoding="utf-8")
+    (de_dir / "checkout.html").write_text(_DE_CHECKOUT_HTML, encoding="utf-8")
     ar_dir = Path(tmpdir) / "ar-sa"
     ar_dir.mkdir()
     (ar_dir / "page.html").write_text(_AR_PAGE_HTML, encoding="utf-8")
@@ -143,7 +175,7 @@ async def test_audit_run_finds_every_seeded_issue(client, audit_fixture_server):
     assert r.status_code == 200
     audit = r.json()
     assert audit["status"] == "completed"
-    assert audit["pages_crawled"] == 5
+    assert audit["pages_crawled"] == 6
     assert audit["requester_email"] == "reviewer@example.com"
     audit_id = audit["id"]
 
@@ -164,6 +196,27 @@ async def test_audit_run_finds_every_seeded_issue(client, audit_fixture_server):
     assert "possible_missing_script_font" in types_found
     assert "missing_hreflang_annotations" in types_found
     assert types_found & {"us_centric_postal_code_field", "us_centric_phone_format", "us_state_dropdown_on_non_us_page"}
+    assert "translation_coverage_gap" in types_found
+    assert "locale_switcher_loses_place" in types_found
+    assert "no_locale_switcher_detected" in types_found
+    assert "seo_description_missing" in types_found
+    assert "seo_description_not_localized" in types_found
+    assert "og_locale_mismatch" in types_found
+    assert "missing_rtl_dir_attribute" in types_found
+    assert "usd_only_pricing_on_international_page" in types_found
+    assert "no_region_specific_payment_method" in types_found
+
+    coverage_gap = next(f for f in findings if f["finding_type"] == "translation_coverage_gap")
+    assert coverage_gap["detail"]["primary_page_count"] == 2
+
+    switcher = next(f for f in findings if f["finding_type"] == "locale_switcher_loses_place")
+    assert switcher["detail"]["from_path"] != switcher["detail"]["to_path"]
+
+    seo_mismatch = next(f for f in findings if f["finding_type"] == "seo_description_not_localized")
+    assert seo_mismatch["detail"]["expected_locale"] == "fr"
+
+    rtl_dir = next(f for f in findings if f["finding_type"] == "missing_rtl_dir_attribute")
+    assert rtl_dir["detail"]["expected_lang"] == "ar"
 
     mismatch = next(f for f in findings if f["finding_type"] == "page_language_mismatch")
     assert mismatch["detail"]["expected"] == "fr"
@@ -197,7 +250,7 @@ async def test_audit_run_summary_and_pages(client, audit_fixture_server):
     pages_r = await client.get(f"/api/v1/audit/runs/{audit_id}/pages")
     assert pages_r.status_code == 200
     pages = pages_r.json()
-    assert len(pages) == 5
+    assert len(pages) == 6
     urls = {p["url"] for p in pages}
     assert audit_fixture_server in urls
 

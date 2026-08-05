@@ -43,6 +43,10 @@ const CHECK_BLURBS: { title: string; body: string }[] = [
     title: "Technical Readiness",
     body: "RTL/logical-CSS support, font coverage for non-Latin scripts, hreflang correctness, and hardcoded US-only assumptions in your forms and formatting.",
   },
+  {
+    title: "Localization Completeness",
+    body: "For sites already live in multiple languages: translation coverage gaps, language switchers that lose your place, untranslated SEO metadata, and checkout pages still priced and processed as US-only.",
+  },
 ];
 
 export function PublicAuditLanding() {

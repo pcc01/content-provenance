@@ -58,8 +58,14 @@ _EXTRACT_JS = """
     name: s.name || s.id || '',
     options: Array.from(s.options).map(o => (o.textContent || '').trim()).filter(Boolean),
   }));
+  const descMeta = document.querySelector('meta[name="description"]');
+  const ogLocaleMeta = document.querySelector('meta[property="og:locale"]');
   return {
     htmlLang: document.documentElement.getAttribute('lang'),
+    htmlDir: document.documentElement.getAttribute('dir'),
+    title: document.title || '',
+    metaDescription: descMeta ? (descMeta.content || '').trim() : '',
+    ogLocale: ogLocaleMeta ? (ogLocaleMeta.content || '').trim() : '',
     textBlocks, links, stylesheetUrls, inlineStyles, scriptUrls, inlineScripts, iframeUrls,
     hreflangLinks, formInputs, selects,
   };
@@ -85,6 +91,14 @@ class CrawledPage:
     url: str
     status_code: Optional[int]
     html_lang: Optional[str]
+    # <html dir="...">, for rtl_readiness's hard pass/fail check — distinct
+    # from that module's existing CSS-heuristic signal.
+    html_dir: Optional[str] = None
+    # <title> and <meta name="description">/<meta property="og:locale">,
+    # for seo_metadata — none of this was collected before that check needed it.
+    title: str = ""
+    meta_description: str = ""
+    og_locale: Optional[str] = None
     text_blocks: List[str] = field(default_factory=list)
     links: List[CrawledLink] = field(default_factory=list)
     iframe_urls: List[str] = field(default_factory=list)
@@ -214,6 +228,10 @@ async def _crawl_one_page(browser, url: str) -> Optional[CrawledPage]:
             url=url,
             status_code=response.status if response else None,
             html_lang=data.get("htmlLang"),
+            html_dir=data.get("htmlDir"),
+            title=data.get("title", ""),
+            meta_description=data.get("metaDescription", ""),
+            og_locale=data.get("ogLocale") or None,
             text_blocks=data.get("textBlocks", []),
             links=[
                 CrawledLink(href=link["href"], text=link["text"])

@@ -41,6 +41,10 @@ _CHECK_LABEL = {
     "cookie_consent": "Cookie Consent",
     "placeholder_leak": "Untranslated Placeholder Leakage",
     "locale_format": "Locale Format Assumptions",
+    "translation_coverage": "Translation Coverage",
+    "locale_switcher": "Locale Switcher Integrity",
+    "seo_metadata": "SEO Metadata Parity",
+    "payment_localization": "Payment Localization",
 }
 
 _DETAIL_URL_KEYS = ("url", "from_url", "to_url", "privacy_url", "embed_url")

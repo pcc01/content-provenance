@@ -11,6 +11,16 @@
 
 services:
   app:
+    # Merges with the base file's build.context/dockerfile (map-valued keys
+    # merge by default in Compose, unlike the list-valued ones below that
+    # need !override). Bakes the branded public landing into the frontend
+    # build — see Dockerfile's VITE_PUBLIC_SITE arg and App.tsx's
+    # PUBLIC_SITE branch. Set VITE_PUBLIC_SITE=false in the environment
+    # before `up --build` if this compose file is ever reused for an
+    # internal-only deployment instead.
+    build:
+      args:
+        VITE_PUBLIC_SITE: ${VITE_PUBLIC_SITE:-true}
     environment:
       APP_ENV: production
       CORS_ORIGINS: ${CORS_ORIGINS:-https://audit.thewordinbits.com}

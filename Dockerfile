@@ -12,6 +12,14 @@ WORKDIR /frontend
 COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm ci
 COPY frontend/ ./
+# ARG, not ENV: only needs to exist for this RUN, not persist into the
+# final image. When "true", the built frontend shows ONLY the branded
+# public audit-request landing (pages/PublicAuditLanding.tsx) instead of
+# the internal review/redrive/etc. tool nav — see App.tsx's PUBLIC_SITE
+# branch. Passed via docker-compose.prod.yml's build.args for the public
+# deployment; unset (default "false") for internal/dev builds.
+ARG VITE_PUBLIC_SITE=false
+ENV VITE_PUBLIC_SITE=${VITE_PUBLIC_SITE}
 # Builds frontend/dist/ (Review Shell) + review-sdk/dist/ (overlay.js,
 # harvest.js) in one pass — see frontend/package.json's "build" script.
 RUN npm run build

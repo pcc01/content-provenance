@@ -4,13 +4,30 @@ import { Dashboard } from "./pages/Dashboard";
 import { DocumentsPage } from "./pages/DocumentsPage";
 import { ImageReview } from "./pages/ImageReview";
 import { LiveReviewPage } from "./pages/LiveReviewPage";
+import { PublicAuditLanding } from "./pages/PublicAuditLanding";
 import { RedriveConsole } from "./pages/RedriveConsole";
 import { ReviewPage } from "./pages/ReviewPage";
 import { SearchPage } from "./pages/SearchPage";
 
 type Tab = "review" | "live" | "redrive" | "images" | "documents" | "search" | "dashboard" | "audit";
 
+// A public-facing deployment (audit.thewordinbits.com) bakes VITE_PUBLIC_SITE
+// at build time (see Dockerfile's frontend-build stage) and shows ONLY the
+// branded lead-gen audit landing — none of the internal review/redrive/etc.
+// tooling is meant for a public visitor. The internal build (this repo's
+// own dev/default build) is unaffected — same codebase, one build-time
+// switch, not a second app to maintain.
+const PUBLIC_SITE = import.meta.env.VITE_PUBLIC_SITE === "true";
+
 export default function App() {
+  return PUBLIC_SITE ? <PublicAuditLanding /> : <InternalApp />;
+}
+
+// Split out so App() itself calls no hooks — PUBLIC_SITE is a build-time
+// constant (never changes during the app's lifetime), so branching before
+// hooks would be safe in practice, but keeping App() hook-free entirely
+// avoids relying on that and keeps react-hooks/rules-of-hooks happy.
+function InternalApp() {
   const [tab, setTab] = useState<Tab>("review");
   // Phase 11: lets the Audit tab's "Review this page" button jump straight
   // into fetch-mode review for that URL — a new object on every set() so

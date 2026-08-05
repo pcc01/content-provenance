@@ -12,6 +12,7 @@ page_fetch.py's robots.txt check rather than duplicating it.
 """
 
 import asyncio
+import re
 from dataclasses import dataclass, field
 from collections import deque
 from typing import List, Optional
@@ -132,9 +133,31 @@ async def crawl_site(root_url: str, max_pages: int = 40) -> List[CrawledPage]:
     """BFS same-domain(+subdomain) crawl starting at root_url. Individual
     unreachable/disallowed pages are skipped, not fatal — only a failure to
     load the ROOT page aborts the whole crawl (nothing to report on
-    otherwise)."""
+    otherwise).
+
+    The robots.txt check on the ROOT url specifically is raised here, up
+    front, rather than left to the while loop's per-url check below. Inside
+    the loop, a disallowed url is just silently `continue`d — correct for
+    a sub-page (a few skipped pages isn't fatal), but if it's the root
+    that's disallowed, the queue never gets seeded with any links and the
+    loop exits with an EMPTY pages list and no exception at all. That
+    previously surfaced as a "completed" audit with 0 pages, 0 findings,
+    and no error — indistinguishable from "we checked this site and it's
+    fine," which is actively misleading for a site that was never actually
+    checked. Sites that 403 their own robots.txt to non-browser requests
+    (a common bot-defense pattern, not necessarily a deliberate crawl
+    policy) hit exactly this path — urllib.robotparser treats a 401/403 on
+    robots.txt as disallow-all."""
     if not root_url.startswith(("http://", "https://")):
         raise PageFetchError("Only http:// and https:// URLs are supported.", status_code=400)
+
+    if not await _check_robots_allowed(root_url):
+        raise PageFetchError(
+            f"{root_url} disallows automated crawling per its robots.txt (or the site is "
+            "blocking non-browser requests, e.g. a bot-detection check on /robots.txt itself). "
+            "We can't audit a site we can't access.",
+            status_code=403,
+        )
 
     root_netloc = urlparse(root_url).netloc
     queue = deque([root_url])
@@ -173,6 +196,37 @@ async def crawl_site(root_url: str, max_pages: int = 40) -> List[CrawledPage]:
             await browser.close()
 
     return pages
+
+
+# Titles/opening text of common bot-detection interstitials (Cloudflare,
+# PerimeterX, Akamai, generic CAPTCHA walls, ...). Checked against page
+# TITLES primarily — a real site's <title> essentially never coincidentally
+# matches one of these short, purpose-declared phrases, unlike body text
+# where a false match is more plausible (e.g. an article discussing bot
+# defenses). A crawl that "succeeds" against a challenge page instead of
+# the real site would otherwise silently report a clean 0-findings audit —
+# indistinguishable from an actually-clean site.
+_BOT_CHALLENGE_RE = re.compile(
+    r"just a moment|checking your browser|attention required|verify you are human|"
+    r"verify you're human|are you a robot|captcha challenge|access denied|"
+    r"please enable javascript and cookies|ddos protection by|unusual traffic from your",
+    re.IGNORECASE,
+)
+
+
+def bot_challenge_reason(pages: List[CrawledPage]) -> Optional[str]:
+    """Returns a human-readable reason if the crawl looks like it hit a
+    bot-detection page instead of real content, else None. Title match is
+    the primary, high-confidence signal; an entirely-empty page (0 text
+    blocks) with a very short title is a lower-confidence secondary one —
+    real homepages essentially always have more content than a bare
+    interstitial does."""
+    for page in pages:
+        if _BOT_CHALLENGE_RE.search(page.title or ""):
+            return f"{page.url} returned a bot-detection/CAPTCHA page (title: \"{page.title}\") instead of real content"
+    if pages and all(not p.text_blocks for p in pages):
+        return f"{pages[0].url} returned a page with no readable text content — possibly a bot-detection wall"
+    return None
 
 
 async def _fetch_resource_text(context, url: str) -> Optional[str]:

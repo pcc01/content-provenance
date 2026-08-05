@@ -326,3 +326,91 @@ async def test_audit_run_rejects_non_http_scheme(client):
     audit = r.json()
     assert audit["status"] == "failed"
     assert audit["error"]
+
+
+# A 403 on /robots.txt itself (a common bot-defense pattern, e.g. quizlet.com
+# in production) makes urllib.robotparser treat the WHOLE site as
+# disallowed. Before the fix this silently produced a "completed" audit
+# with 0 pages, 0 findings, and no error — indistinguishable from a
+# genuinely clean site.
+class _RobotsBlockedHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/robots.txt":
+            self.send_response(403)
+            self.end_headers()
+            return
+        body = b"<!DOCTYPE html><html lang='en'><head><title>Home</title></head><body><p>Should never be reached.</p></body></html>"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format, *args):
+        pass
+
+
+# A page served with a 200 (no exception, no robots block) whose title
+# matches a known bot-detection interstitial (Cloudflare's "Just a
+# moment..." here) — the crawl "succeeds" but never saw real content.
+class _BotChallengeHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/robots.txt":
+            self.send_response(404)
+            self.end_headers()
+            return
+        body = (
+            b"<!DOCTYPE html><html lang='en'><head><title>Just a moment...</title></head>"
+            b"<body><p>Checking your browser before accessing this site.</p></body></html>"
+        )
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format, *args):
+        pass
+
+
+@pytest.fixture
+def robots_blocked_server():
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _RobotsBlockedHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{server.server_port}/"
+    server.shutdown()
+
+
+@pytest.fixture
+def bot_challenge_server():
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _BotChallengeHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{server.server_port}/"
+    server.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_audit_run_fails_when_robots_txt_blocks_root(client, robots_blocked_server):
+    r = await client.post("/api/v1/audit/runs", json={
+        "root_url": robots_blocked_server, "primary_language": "en", "requester_email": "reviewer@example.com",
+        "max_pages": 5,
+    })
+    assert r.status_code == 200
+    audit = r.json()
+    assert audit["status"] == "failed"
+    assert audit["pages_crawled"] == 0
+    assert "robots.txt" in audit["error"]
+
+
+@pytest.mark.asyncio
+async def test_audit_run_fails_on_bot_challenge_page(client, bot_challenge_server):
+    r = await client.post("/api/v1/audit/runs", json={
+        "root_url": bot_challenge_server, "primary_language": "en", "requester_email": "reviewer@example.com",
+        "max_pages": 5,
+    })
+    assert r.status_code == 200
+    audit = r.json()
+    assert audit["status"] == "failed"
+    assert "bot-detection" in audit["error"]

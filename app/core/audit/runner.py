@@ -17,7 +17,7 @@ from app.core.audit.checks import (
     seo_metadata, text_expansion, translation_coverage,
 )
 from app.core.audit.checks.mixed_locale import _detect, _locale_from_path
-from app.core.audit.crawler import crawl_site
+from app.core.audit.crawler import bot_challenge_reason, crawl_site
 from app.core.database import get_db
 from app.core.page_fetch import PageFetchError
 from app.models.schemas import SiteAudit, SiteAuditCheck, SiteAuditPage, SiteAuditStatus
@@ -52,6 +52,22 @@ async def run_audit(audit: SiteAudit) -> SiteAudit:
         )
         audit.status = SiteAuditStatus.FAILED
         audit.error = str(e)
+        return audit
+
+    # A crawl can "succeed" (real HTTP responses, no exception) while
+    # actually only ever seeing a bot-detection interstitial instead of the
+    # site's real content — every check would then correctly find nothing
+    # wrong with THAT page, silently producing a clean-looking 0-findings
+    # audit that's really "we never saw the real site." Treated the same as
+    # any other unreachable-site failure rather than persisting a
+    # misleading result.
+    blocked_reason = bot_challenge_reason(crawled_pages)
+    if blocked_reason:
+        await db.update_site_audit(
+            audit.id, status=SiteAuditStatus.FAILED, finished_at=datetime.utcnow(), error=blocked_reason,
+        )
+        audit.status = SiteAuditStatus.FAILED
+        audit.error = blocked_reason
         return audit
 
     expected_primary = audit.primary_language.split("-")[0].lower()

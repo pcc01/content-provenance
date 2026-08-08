@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api } from "../api/client";
+import { PageIntro } from "../components/PageIntro";
 
 // Phase 13/9b.1 — bring legacy vendor content into the system: TMX
 // (translation memory — becomes retrieval context, not live translation
@@ -9,11 +10,13 @@ import { api } from "../api/client";
 export function ImportPage() {
   return (
     <div style={{ padding: 24, maxWidth: 720 }}>
-      <h2 style={{ marginTop: 0 }}>Import</h2>
-      <p style={{ color: "#6b7280" }}>
+      <PageIntro
+        title="Import"
+        requires="pick the section below that matches your file — TMX for translation memory, XLIFF for a TMS/CAT export — and choose a file. Language/vendor fields are optional context, not required to upload."
+      >
         Bring in content from an existing vendor or TMS before creating anything new — TMX seeds
         retrieval context from prior-approved translations, XLIFF brings in live, reviewable units.
-      </p>
+      </PageIntro>
       <TmxImport />
       <div style={{ height: 1, background: "#e5e7eb", margin: "28px 0" }} />
       <XliffImport />

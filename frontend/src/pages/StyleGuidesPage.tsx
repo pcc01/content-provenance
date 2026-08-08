@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type GlossaryTerm, type StyleGuide, type StyleGuideRule } from "../api/client";
+import { PageIntro } from "../components/PageIntro";
 
 // Phase 13 — define the brand voice/terminology rules the graph-based
 // retrieval layer feeds to AI translation and scores translations against.
@@ -91,11 +92,13 @@ export function StyleGuidesPage() {
 
   return (
     <div style={{ padding: 24, maxWidth: 960 }}>
-      <h2 style={{ marginTop: 0 }}>Style Guides &amp; Glossary</h2>
-      <p style={{ color: "#6b7280" }}>
+      <PageIntro
+        title="Style Guides &amp; Glossary"
+        requires="create a style guide (name only is required) using the form on the left. Until one exists, there's nothing for the rest of this workflow to check translations against."
+      >
         Brand voice/tone rules and terminology retrieved automatically before every AI translation
         (see the Retrieval Preview tool) and scored against on every redrive.
-      </p>
+      </PageIntro>
 
       {error && (
         <div style={{ background: "#fef2f2", color: "#b91c1c", padding: 10, borderRadius: 6, marginBottom: 16, fontSize: 13 }}>

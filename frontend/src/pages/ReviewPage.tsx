@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, type TranslationUnit } from "../api/client";
 import { PageFlaggedList } from "../components/PageFlaggedList";
 import { PageHistory } from "../components/PageHistory";
+import { PageIntro } from "../components/PageIntro";
 import { PageNotes } from "../components/PageNotes";
 import { PendingChanges } from "../components/PendingChanges";
 import { ReviewFrame, type ReviewFrameHandle } from "../components/ReviewFrame";
@@ -160,6 +161,15 @@ export function ReviewPage({ initialFetchTarget }: Props = {}) {
         width: 280, borderRight: "1px solid #e5e7eb", padding: 12,
         display: "flex", flexDirection: "column", gap: 12, overflowY: "auto", flexShrink: 0,
       }}>
+        <PageIntro
+          compact
+          title="Review"
+          requires="pick a mode below, fill in its URL (and route/locale), then click 'Load page.'"
+        >
+          The real rendered page, live in an iframe — translated segments get clickable highlight
+          boxes instead of a segment-grid list.
+        </PageIntro>
+
         <div style={{ display: "flex", borderRadius: 6, overflow: "hidden", border: "1px solid #e5e7eb" }}>
           <button
             onClick={() => setMode("cooperative")}

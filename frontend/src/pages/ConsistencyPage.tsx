@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api, type ConsistencyFinding, type ConsistencyResult } from "../api/client";
+import { PageIntro } from "../components/PageIntro";
 
 const FINDING_LABEL: Record<ConsistencyFinding["finding_type"], string> = {
   term_drift: "Terminology drift",
@@ -36,11 +37,13 @@ export function ConsistencyPage() {
 
   return (
     <div style={{ padding: 24, maxWidth: 780 }}>
-      <h2 style={{ marginTop: 0 }}>Cross-Document Consistency</h2>
-      <p style={{ color: "#6b7280" }}>
+      <PageIntro
+        title="Cross-Document Consistency"
+        requires="click 'Run check' below — target language is optional and only narrows the scope, it isn't required to start."
+      >
         Does this term mean the same thing everywhere it's used? Does tone hold steady across
         every unit following the same style rule? Checked by clustering, not a full pairwise scan.
-      </p>
+      </PageIntro>
 
       {error && <div style={{ background: "#fef2f2", color: "#b91c1c", padding: 10, borderRadius: 6, marginBottom: 16, fontSize: 13 }}>{error}</div>}
 

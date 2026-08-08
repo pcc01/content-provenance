@@ -3,6 +3,7 @@ import {
   api, EVALUATE_PROVIDERS, TRANSLATE_PROVIDERS,
   type EvaluateResult, type RedrivePreview, type RedriveRun, type StyleGuide,
 } from "../api/client";
+import { PageIntro } from "../components/PageIntro";
 import { QualityBadge } from "../components/QualityBadge";
 
 export function RedriveConsole() {
@@ -93,11 +94,13 @@ export function RedriveConsole() {
 
   return (
     <div style={{ padding: 24, maxWidth: 720 }}>
-      <h2 style={{ marginTop: 0 }}>Redrive Console</h2>
-      <p style={{ color: "#6b7280" }}>
+      <PageIntro
+        title="Redrive Console"
+        requires="a threshold and target language are already set below — click 'Preview' to see what would redrive without spending anything, or 'Run redrive' to actually do it."
+      >
         Score everything in scope, then redrive whatever falls below the threshold. With human-in-the-loop
         enabled, redrives are proposed but not applied until approved below.
-      </p>
+      </PageIntro>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 20 }}>
         <label style={{ fontSize: 13 }}>
@@ -182,6 +185,8 @@ export function RedriveConsole() {
         <h3 style={{ marginTop: 0, fontSize: 15 }}>Evaluate a single unit</h3>
         <p style={{ color: "#6b7280", fontSize: 13, marginTop: 0 }}>
           Score one unit on demand with a chosen model — independent of the threshold run above.
+          Requires a unit id (copy one from the Review tab, or from a run's results table below
+          once you've run a redrive) — nothing runs without one.
         </p>
         <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
           <label style={{ fontSize: 13 }}>

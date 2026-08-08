@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api } from "../api/client";
+import { PageIntro } from "../components/PageIntro";
 
 interface SearchResult {
   translation_unit_id?: string;
@@ -36,11 +37,13 @@ export function SearchPage() {
 
   return (
     <div style={{ padding: 24, maxWidth: 800 }}>
-      <h2 style={{ marginTop: 0 }}>Search</h2>
-      <p style={{ color: "#6b7280" }}>
+      <PageIntro
+        title="Search"
+        requires="type a query below and press Enter or click Search. Semantic search is on by default — uncheck it for exact keyword (BM25) matching."
+      >
         Semantic (embedding) or keyword (BM25) search over all translated content, via the
         existing Haystack pipeline.
-      </p>
+      </PageIntro>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
         <input

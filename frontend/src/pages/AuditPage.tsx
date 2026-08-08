@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type SiteAudit, type SiteAuditCheck } from "../api/client";
 import { AuditReport } from "../components/AuditReport";
+import { PageIntro } from "../components/PageIntro";
 
 interface Props {
   onReviewPage?: (url: string, locale: string) => void;
@@ -78,11 +79,13 @@ export function AuditPage({ onReviewPage }: Props) {
   return (
     <div style={{ padding: 24, maxWidth: 960, display: "flex", flexDirection: "column", gap: 24 }}>
       <div>
-        <h2 style={{ marginTop: 0 }}>Site Audit</h2>
-        <p style={{ color: "#6b7280", fontSize: 13 }}>
+        <PageIntro
+          title="Site Audit"
+          requires="fill in a Root URL and a valid email below (the report is sent there, and the button stays disabled until both are filled in), then click 'Start audit.'"
+        >
           Crawl a website (not this system's own translations) to find mixed-locale content, pages at risk of
           poor RTL support, ICU/i18n tooling in use, and privacy-policy language mismatches.
-        </p>
+        </PageIntro>
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 12, maxWidth: 480 }}>

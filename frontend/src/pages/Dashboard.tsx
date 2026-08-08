@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type Stats } from "../api/client";
+import { PageIntro } from "../components/PageIntro";
 
 export function Dashboard() {
   const [stats, setStats] = useState<Stats | null>(null);
@@ -10,7 +11,10 @@ export function Dashboard() {
 
   return (
     <div style={{ padding: 24, maxWidth: 720 }}>
-      <h2 style={{ marginTop: 0 }}>Dashboard</h2>
+      <PageIntro title="Dashboard">
+        System-wide totals — translations, deployments, agents, and breakdowns by method and
+        status. No input required; this loads automatically and reflects live data.
+      </PageIntro>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
         <Stat label="Total translations" value={stats.total_translations} />
         <Stat label="Deployments" value={stats.total_deployments} />

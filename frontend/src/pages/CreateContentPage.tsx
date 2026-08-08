@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   api, TRANSLATE_PROVIDERS, type CheckSourceResult, type RetrievePreview, type StyleGuide, type TranslateResponse,
 } from "../api/client";
+import { PageIntro } from "../components/PageIntro";
 
 // Phase 13/9b.5 — the actual start of the Content Creation workflow: write
 // (or paste) new source copy, check it against brand voice BEFORE
@@ -80,11 +81,13 @@ export function CreateContentPage() {
 
   return (
     <div style={{ padding: 24, maxWidth: 760 }}>
-      <h2 style={{ marginTop: 0 }}>Create Content</h2>
-      <p style={{ color: "#6b7280" }}>
+      <PageIntro
+        title="Create Content"
+        requires="type or paste source copy in the box below. Checking voice/tone and previewing retrieval context are optional — Translate is the only required step."
+      >
         Write new copy, check it against brand voice before translation, see what context the AI
         translation would use, then submit it for translation with full provenance.
-      </p>
+      </PageIntro>
 
       {error && (
         <div style={{ background: "#fef2f2", color: "#b91c1c", padding: 10, borderRadius: 6, marginBottom: 16, fontSize: 13 }}>

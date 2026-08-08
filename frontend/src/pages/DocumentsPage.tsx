@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api, type DocumentMeta } from "../api/client";
+import { PageIntro } from "../components/PageIntro";
 
 // Upload a .txt/.md file for Phase 7a in-context review. There's no
 // document list endpoint (out of scope for a first pass, same as
@@ -39,12 +40,14 @@ export function DocumentsPage() {
 
   return (
     <div style={{ padding: 24, maxWidth: 640 }}>
-      <h2 style={{ marginTop: 0 }}>Documents</h2>
-      <p style={{ color: "#6b7280" }}>
+      <PageIntro
+        title="Documents"
+        requires="choose a .txt or .md file at the bottom of this form. Source/target language and method already have sensible defaults — adjust them first only if needed."
+      >
         Upload a plain text (.txt) or Markdown (.md) file. Each paragraph/block becomes its own
         translation unit, translated immediately, and reviewable in-context in the Review tab —
         the document renders as its own page inside this app.
-      </p>
+      </PageIntro>
 
       {error && (
         <div style={{ background: "#fef2f2", color: "#b91c1c", padding: 10, borderRadius: 6, marginBottom: 16, fontSize: 13 }}>

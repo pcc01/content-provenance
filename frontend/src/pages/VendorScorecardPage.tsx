@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, vendorScorecardPdfUrl, type VendorScorecardEntry } from "../api/client";
+import { PageIntro } from "../components/PageIntro";
 
 function fmt(score: number | null): string {
   return score === null ? "—" : score.toFixed(1);
@@ -33,11 +34,11 @@ export function VendorScorecardPage() {
 
   return (
     <div style={{ padding: 24, maxWidth: 840 }}>
-      <h2 style={{ marginTop: 0 }}>Vendor Scorecard</h2>
-      <p style={{ color: "#6b7280" }}>
+      <PageIntro title="Vendor Scorecard">
         Every organization with at least one scored translation — vendors and AI backends
-        ranked on equal footing, best-first.
-      </p>
+        ranked on equal footing, best-first. No input required — loads automatically; use the
+        filter below only to narrow it to one target language.
+      </PageIntro>
 
       <div style={{ display: "flex", gap: 10, alignItems: "flex-end", marginBottom: 16 }}>
         <label style={{ fontSize: 13 }}>

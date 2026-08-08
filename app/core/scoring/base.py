@@ -21,6 +21,8 @@ class ScoreResult(BaseModel):
     raw_response: Optional[str] = None
     deterministic: bool = False
     needs_review: bool = False
+    # Phase 15 — see QualityScore.hard_fail's docstring (app/models/schemas.py)
+    hard_fail: bool = False
 
 
 class QualityScorer(ABC):

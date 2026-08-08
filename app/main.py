@@ -22,7 +22,10 @@ from fastapi.responses import HTMLResponse, FileResponse
 from contextlib import asynccontextmanager
 import uvicorn
 
-from app.api import translations, provenance, search, xliff_export, xliff_import, redrive, images, notes, documents, pages, audit
+from app.api import (
+    translations, provenance, search, xliff_export, xliff_import, redrive, images,
+    notes, documents, pages, audit, style, tm, vendors, consistency, quality,
+)
 from app.core.database import init_db
 from app.core.haystack_pipeline import init_haystack
 
@@ -77,6 +80,14 @@ app.include_router(images.router, prefix="/api/v1/images", tags=["Images"])
 app.include_router(documents.router, prefix="/api/v1/documents", tags=["Documents"])
 app.include_router(pages.router, prefix="/api/v1/pages", tags=["Pages"])
 app.include_router(audit.router, prefix="/api/v1/audit", tags=["Audit"])
+# tm (TMX import) mounted separately from xliff — a distinct legacy vendor
+# format (§9b.1 of docs/graphrag-provenance-proposal.md), not another XLIFF
+# route, so it gets its own prefix rather than sharing /xliff's.
+app.include_router(tm.router, prefix="/api/v1/tm", tags=["Translation Memory"])
+app.include_router(style.router, prefix="/api/v1/style", tags=["Style & Voice"])
+app.include_router(vendors.router, prefix="/api/v1/vendors", tags=["Vendor Scorecard"])
+app.include_router(consistency.router, prefix="/api/v1/consistency", tags=["Consistency"])
+app.include_router(quality.router, prefix="/api/v1/quality", tags=["Automatic Quality Metrics"])
 
 
 # The Review Shell (frontend/) is a Vite+React app now, not a static HTML

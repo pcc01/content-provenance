@@ -5,7 +5,7 @@ from typing import Optional
 from app.core.config import settings
 from app.core.scoring.base import QualityScorer, ScoreResult
 from app.core.scoring.deterministic import deterministic_score
-from app.models.schemas import TranslationUnit
+from app.models.schemas import QualityScore, TranslationUnit
 
 
 class CompositeScorer(QualityScorer):
@@ -43,8 +43,28 @@ def get_scorer(provider: Optional[str] = None) -> QualityScorer:
     elif requested == "ollama":
         from app.core.scoring.ollama_scorer import OllamaQualityScorer
         model_scorer = OllamaQualityScorer()
+    elif requested == "gemini":
+        from app.core.scoring.gemini_scorer import GeminiQualityScorer
+        model_scorer = GeminiQualityScorer()
+    elif requested in ("openai", "lmstudio", "vllm"):
+        # Phase 16 — all three speak the OpenAI-compatible chat API;
+        # only the client config differs (app/core/llm_clients.py).
+        from app.core.llm_clients import OpenAICompatibleClient
+        from app.core.scoring.openai_compatible_scorer import OpenAICompatibleScorer
+        if requested == "openai":
+            if not settings.openai_api_key:
+                raise RuntimeError("OPENAI_API_KEY is required for the openai provider.")
+            client = OpenAICompatibleClient("https://api.openai.com/v1", settings.openai_api_key, settings.openai_model)
+        elif requested == "lmstudio":
+            client = OpenAICompatibleClient(settings.lmstudio_url, "lm-studio", settings.lmstudio_model)
+        else:  # vllm
+            client = OpenAICompatibleClient(settings.vllm_url, "EMPTY", settings.vllm_model)
+        model_scorer = OpenAICompatibleScorer(client, requested)
     else:
-        raise RuntimeError(f"Unknown scoring provider '{requested}' — expected 'claude' or 'ollama'")
+        raise RuntimeError(
+            f"Unknown scoring provider '{requested}' — expected one of "
+            "'claude', 'ollama', 'openai', 'gemini', 'lmstudio', 'vllm'"
+        )
 
     scorer = CompositeScorer(model_scorer, scorer_name=requested)
     if provider is None:

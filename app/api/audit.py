@@ -15,6 +15,7 @@ GET  /api/v1/audit/runs/{id}/export      - plain-text report download
 GET  /api/v1/audit/runs/{id}/report.pdf  - branded PDF report download
 """
 
+import logging
 import re
 from collections import Counter
 from typing import List, Optional
@@ -26,11 +27,13 @@ from pydantic import BaseModel, Field, field_validator
 from app.core.audit.report import generate_pdf_report
 from app.core.audit.runner import run_audit
 from app.core.database import get_db
+from app.core.notifications import notify_audit_completed
 from app.models.schemas import (
     SiteAudit, SiteAuditCheck, SiteAuditFinding, SiteAuditPage, SiteAuditSeverity,
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # Deliberately simple (not RFC 5322): this is a lead-capture gate, not a
 # deliverability guarantee — good enough to reject obvious typos/garbage
@@ -76,7 +79,15 @@ async def create_audit_run(request: AuditRunRequest):
         max_pages=request.max_pages, checks=request.checks, triggered_by=request.triggered_by,
     )
     await db.create_site_audit(audit)
-    return await run_audit(audit)
+    result = await run_audit(audit)
+    # Fire-and-forget lead alert — a customer just ran an audit, so notify
+    # the site owner. Never let a notification failure surface as a 500
+    # for a request that otherwise succeeded.
+    try:
+        notify_audit_completed(result)
+    except Exception:
+        logger.exception("notify_audit_completed raised; audit response unaffected")
+    return result
 
 
 @router.get("/runs", response_model=List[SiteAudit])

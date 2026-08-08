@@ -8,18 +8,33 @@ translation backend, writing a new version and rebuilding provenance.
 """
 
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
+from app.core.config import settings
 from app.core.database import get_db
+from app.core.graph.builder import record_unit_style_context
+from app.core.graph.retrieval import retrieve_style_context
 from app.core.prov_builder import build_provenance_record
 from app.core.redrive.ledger import UsageLedger
+from app.core.scoring.automatic.meteor import compute_meteor
 from app.core.scoring.base import QualityScorer, ScoreResult
 from app.core.scoring.factory import get_scorer
+from app.core.scoring.style_factory import score_unit_style
 from app.core.translation_backends import TranslationBackend, get_translation_backend
 from app.models.schemas import (
-    QualityScore, RedriveOutcome, RedriveRun, RedriveRunItem, RedriveRunStatus,
+    AutomaticMetricScore,
+    QualityScore,
+    RedriveOutcome,
+    RedriveRun,
+    RedriveRunItem,
+    RedriveRunStatus,
+    StyleAdherenceScore,
     TranslationUnit,
 )
+
+
+def _below_threshold(score: Optional[float], threshold: Optional[float]) -> bool:
+    return score is not None and threshold is not None and score < threshold
 
 
 def _provider_label(backend: TranslationBackend) -> str:
@@ -70,10 +85,17 @@ class RedriveEngine:
         scorer_label: str = "unknown",
         redrive_backend: Optional[TranslationBackend] = None,
         redrive_label: Optional[str] = None,
+        style_scorer=None,
     ):
         self.scorer = scorer or get_scorer()
         self.scorer_label = scorer_label
         self.redrive_backend = redrive_backend or get_translation_backend()
+        # None (the default) means _score_unit_style uses whatever
+        # get_style_scorer() resolves to at call time — same lazy-default
+        # pattern as `scorer` above. Overriding it (as tests do) avoids
+        # needing real ANTHROPIC_API_KEY credentials for style_threshold
+        # coverage, mirroring how `scorer` is already injectable.
+        self.style_scorer = style_scorer
         # An explicit label always wins over one derived from the backend —
         # approving/rejecting an item belonging to an existing RedriveRun
         # should use THAT run's own recorded redrive_provider, not whatever
@@ -99,41 +121,67 @@ class RedriveEngine:
             unit_id=unit.id, score=result.score, scorer=scorer_name,
             reasons=result.reasons, errors=result.errors,
             raw_response=result.raw_response, needs_review=result.needs_review,
+            hard_fail=result.hard_fail,
         )
         return await db.save_quality_score(record)
 
-    async def preview(self, scope: Dict[str, Any], threshold: float) -> Dict[str, Any]:
+    async def preview(
+        self, scope: Dict[str, Any], threshold: float,
+        style_threshold: Optional[float] = None, style_guide_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Dry-run forecast: scores everything in scope (writing real
         QualityScore rows — scoring itself is free/side-effect-safe to
         repeat) and reports how many units would be redriven at this
         threshold, mirroring peripateticware's cutoff-preview table, without
-        spending any translation budget."""
+        spending any translation budget. style_threshold, when given, adds
+        the Phase 13 style-adherence axis to the same forecast."""
         db = get_db()
         units = await db.list_units_by_scope(scope)
-        below = 0
+        below = below_style = 0
         total_chars = 0
         for unit in units:
             score_record = await self._score_unit(unit)
-            if score_record.score is not None and score_record.score < threshold:
+            quality_below = _below_threshold(score_record.score, threshold)
+            style_below = False
+            if style_threshold is not None:
+                style_record = await self._score_unit_style(unit, style_guide_id)
+                style_below = _below_threshold(style_record.overall_score, style_threshold)
+                if style_below:
+                    below_style += 1
+            if quality_below:
                 below += 1
+            if quality_below or style_below:
                 total_chars += len(unit.source_text)
-        return {
+        result = {
             "scope_count": len(units),
             "below_threshold": below,
             "estimated_source_chars": total_chars,
             "redrive_provider": self.redrive_label,
         }
+        if style_threshold is not None:
+            result["below_style_threshold"] = below_style
+        return result
+
+    async def _score_unit_style(
+        self, unit: TranslationUnit, style_guide_id: Optional[str],
+    ) -> StyleAdherenceScore:
+        return await score_unit_style(unit, style_guide_id=style_guide_id, scorer=self.style_scorer)
 
     async def _apply_redrive(
         self, unit: TranslationUnit, new_text: str, confidence: Optional[float],
         before_score: Optional[float], reasons_label: str, approved_by: Optional[str] = None,
+        style_guide_id: Optional[str] = None,
     ) -> QualityScore:
         """Writes a redrive to the unit — new version, provenance rebuild,
         stale-cache invalidation, re-score. Shared by the immediate-apply
         path in run() and the human-in-the-loop approve_item() below, so
         "approved later" and "applied immediately" behave identically once
-        the text is actually going live."""
+        the text is actually going live. style_guide_id, when given, also
+        re-scores style adherence on the new text so
+        get_latest_style_adherence_score/provenance reflect the redriven
+        version, not the one it replaced."""
         db = get_db()
+        previous_text = unit.target_text
         unit.target_text = new_text
         unit.confidence_score = confidence
         note = f"Redriven via {self.redrive_label}: previous score {before_score} ({reasons_label})"
@@ -141,12 +189,37 @@ class RedriveEngine:
             note += f" — approved by {approved_by}"
         await db.save_translation_unit(unit, version_source_event="redrive", version_note=note)
 
+        if style_guide_id is not None:
+            await self._score_unit_style(unit, style_guide_id)
+
+        if previous_text:
+            await self._record_meteor_regression(unit, new_text, previous_text)
+
         deps = await db.get_deployments_for_unit(unit.id)
         prov_record = await build_provenance_record(unit, deps)
         await db.save_provenance_record(prov_record)
         await db.delete_xliff(unit.id)  # cached export is now stale
 
         return await self._score_unit(unit)
+
+    async def _record_meteor_regression(
+        self, unit: TranslationUnit, new_text: str, previous_text: str,
+    ) -> None:
+        """Phase 15 — how lexically similar is the new candidate to the
+        version it's replacing, using the prior approved text as a
+        pseudo-reference (see app/core/scoring/automatic/meteor.py).
+        Purely informational: never blocks or reverses a redrive, just
+        records a corroborating signal alongside the LLM-judge score."""
+        db = get_db()
+        score = await compute_meteor(new_text, previous_text)
+        if score is None:
+            return  # nltk not installed — degrade silently, same as embed_text
+        versions = await db.list_translation_unit_versions(unit.id)
+        reference_version_id = versions[-2].id if len(versions) >= 2 else None
+        await db.save_automatic_metric_score(AutomaticMetricScore(
+            unit_id=unit.id, metric="meteor", score=score, raw_score=score / 100,
+            reference_type="previous_version", reference_unit_version_id=reference_version_id,
+        ))
 
     async def run(self, run: RedriveRun) -> RedriveRun:
         db = get_db()
@@ -158,8 +231,26 @@ class RedriveEngine:
         for unit in units:
             score_record = await self._score_unit(unit)
             before_score = score_record.score
+            # Phase 15 — hard_fail (MQM's "any critical error -> automatic
+            # Fail" rule) redrives a unit even if its numeric score is
+            # still above `threshold` — see QualityScore.hard_fail's
+            # docstring (app/models/schemas.py) for why the two are kept
+            # independent rather than folded into one condition.
+            quality_below = _below_threshold(score_record.score, run.threshold) or score_record.hard_fail
 
-            if score_record.score is None or score_record.score >= run.threshold:
+            # Phase 13 — a second, independent threshold axis: style score
+            # below run.style_threshold also triggers a redrive, even when
+            # quality alone would have passed. See RedriveRun.style_threshold's
+            # docstring for why this is opt-in (None = scored but never
+            # itself the reason for a redrive).
+            style_reasons: List[str] = []
+            style_below = False
+            if run.style_threshold is not None:
+                style_record = await self._score_unit_style(unit, run.style_guide_id)
+                style_below = _below_threshold(style_record.overall_score, run.style_threshold)
+                style_reasons = [f"style:{r}" for r in style_record.reasons]
+
+            if not (quality_below or style_below):
                 skipped += 1
                 await db.add_redrive_run_item(RedriveRunItem(
                     run_id=run.id, unit_id=unit.id, before_score=before_score,
@@ -177,9 +268,20 @@ class RedriveEngine:
                 ))
                 continue
 
+            style_prompt_context = None
+            if run.style_guide_id is not None or settings.graph_retrieval_enabled:
+                retrieval = await retrieve_style_context(
+                    unit.source_text, unit.source_language, unit.target_language,
+                    style_guide_id=run.style_guide_id, top_k=settings.graph_retrieval_top_k,
+                )
+                if not retrieval.is_empty:
+                    style_prompt_context = retrieval.as_prompt_context()
+                    await record_unit_style_context(unit.id, retrieval)
+
             try:
                 new_text, confidence = await self.redrive_backend.translate(
                     unit.source_text, unit.source_language, unit.target_language,
+                    style_context=style_prompt_context,
                 )
             except Exception as e:
                 failed += 1
@@ -190,7 +292,8 @@ class RedriveEngine:
                 continue
 
             await self.ledger.record(self.redrive_label, char_count)  # the translate() call already happened
-            reasons_label = ",".join(score_record.reasons) or "low score"
+            hard_fail_reason = ["hard_fail:critical_error"] if score_record.hard_fail else []
+            reasons_label = ",".join(list(score_record.reasons) + hard_fail_reason + style_reasons) or "low score"
 
             if run.require_human_approval:
                 pending_approval += 1
@@ -201,7 +304,10 @@ class RedriveEngine:
                 ))
                 continue
 
-            after_score_record = await self._apply_redrive(unit, new_text, confidence, before_score, reasons_label)
+            after_score_record = await self._apply_redrive(
+                unit, new_text, confidence, before_score, reasons_label,
+                style_guide_id=run.style_guide_id if run.style_threshold is not None else None,
+            )
             redriven += 1
             await db.add_redrive_run_item(RedriveRunItem(
                 run_id=run.id, unit_id=unit.id, before_score=before_score,
@@ -234,9 +340,12 @@ class RedriveEngine:
         if unit is None:
             raise ValueError(f"Translation unit {item.unit_id} not found")
 
+        run = await db.get_redrive_run(item.run_id)
+        style_guide_id = run.style_guide_id if run and run.style_threshold is not None else None
+
         after_score_record = await self._apply_redrive(
             unit, item.proposed_text, unit.confidence_score, item.before_score,
-            reasons_label="approved redrive", approved_by=approved_by,
+            reasons_label="approved redrive", approved_by=approved_by, style_guide_id=style_guide_id,
         )
         updated = await db.update_redrive_run_item(
             item_id, outcome=RedriveOutcome.REDRIVEN, after_score=after_score_record.score,

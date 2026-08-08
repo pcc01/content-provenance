@@ -551,6 +551,249 @@ yet designed — needs its own investigation into PDF text-layer/coordinate
 extraction, PPTX shape/text-frame mapping, and DOCX paragraph/run mapping,
 none of which can reuse the DOM-based overlay the way text/Markdown did.
 
+### pgGraph & Tone/Style/Voice Provenance (Phase 13)
+
+Full evaluation, options considered, and rationale live in
+[`docs/graphrag-provenance-proposal.md`](docs/graphrag-provenance-proposal.md)
+— summary: graph layer is plain relational tables in the existing
+`pgvector/pgvector:pg16` Postgres instance (no Apache AGE, no second
+database — AGE was evaluated as compatible and low-risk but not needed for
+the fixed-hop retrieval shape this phase requires), retrieval is
+Postgres-native hybrid vector + graph (no Neo4j), and the design leans on
+[Barry et al. 2025](https://aclanthology.org/2025.genaik-1.6/)'s
+fact-grounded-retrieval lesson: retrieve small structured rows, not raw
+style-guide prose, both for token cost and for auditability.
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| `graph_nodes` / `graph_edges` tables + recursive-CTE traversal helpers | ✅ | Generalizes the existing `provenance_entities/activities/relations` pattern into a queryable graph — `app/core/db/models.py`, `app/core/db/repository.py` |
+| `style_guides` / `style_guide_rules` / `glossary_terms` / `translation_exemplars` (pgvector-backed) | ✅ | Structured, retrievable facts — not vector-searchable prose chunks. `supersedes_id` self-reference + `get_style_guide_chain`'s `WITH RECURSIVE` demonstrate the §3b variable-length-hop case |
+| Hybrid vector + graph retrieval (`app/core/graph/retrieval.py`) | ✅ | Vector search seeds candidates, graph traversal expands (sibling rules via `style_guide_id`, `preferredOver` glossary alternatives via `graph_edges`). Falls back to locale/keyword filtering when no embedding model is installed (`app/core/graph/embeddings.py`) — retrieval never fails outright |
+| Retrieval wired into AI translation backends before the LLM call | ✅ | `app/api/translations.py`'s create endpoint and the redrive engine's redrive step both retrieve context and pass it into `AnthropicTranslationBackend.translate()`'s new `style_context` param before calling Claude |
+| `ContextRetrieval` PROV activity + `StyleGuide`/`GlossaryTerm` PROV entities | ✅ | Reconstructed from `graph_edges` on every provenance rebuild (not passed as a param) so it survives review/deploy/revert rebuilds the same way version history does — `app/core/prov_builder.py` §4d |
+| `StyleAdherenceScorer` (tone / voice / terminology) | ✅ | MQM-style, mirrors `ClaudeQualityScorer` — `app/core/scoring/style_scorer.py` + `style_base.py`/`style_factory.py`. Also judges source-language drafts (no translation pair needed) for §9b.5 |
+| `style_adherence_scores` table + style score as a second redrive threshold | ✅ | Mirrors `QualityScoreRow`; `RedriveRun.style_threshold` is an independent axis — a unit redrives if EITHER quality or style falls below its threshold — `app/core/redrive/engine.py` |
+| `provx:styleAdherence` PROV activity + human-readable style/glossary brief on export | ✅ | The retrieved rule/term facts already flow through the generic `prov:Entity` notes; `_style_brief_lines()` additionally consolidates them into one plain-English `provx:styleBrief` note so vendor-routed (not just AI-routed) work gets the same grounding — `app/xliff/xliff_service.py` |
+| TMX import (`app/tm/tmx_import.py`, `app/api/tm.py`) | ✅ | Distinct from XLIFF import — seeds `translation_exemplars` from legacy vendor translation memory (`<tu>`/`<tuv>`), tags `ProvenanceAgent.organization` with the vendor via a `vendor:{source_system}` agent |
+| Source-language voice check (`POST /api/v1/style/check-source`) | ✅ | Reuses `StyleAdherenceScorer` locale-parameterized, run source-side before translation |
+| Style guide/rule/glossary CRUD + retrieval-preview API | ✅ | `app/api/style.py` — `GET .../retrieve-preview` exposes retrieval read-only for admin verification |
+| Style Guides admin page (`StyleGuidesPage.tsx`) + hard-fail-aware `QualityBadge` | ✅ | Built in the Review Shell segmentation pass below, not this one — see "Review Shell Segmentation (Content Creation / Quality Review / Audit)" |
+
+Built in dependency order: schema (migrations `0014`-`0018`) → graph
+write-path + query helpers → hybrid retrieval → `ContextRetrieval`
+provenance → `StyleAdherenceScorer` + redrive-threshold wiring → TMX
+import, XLIFF brief, source-side check → API routers. 24 new tests
+(`test_graph.py`, `test_style_scoring.py`, `test_tmx_import.py`,
+`test_style_api.py`), full suite 117/117 passing — verified both against
+`Base.metadata.create_all` (the dev/test path) and against the real
+`alembic upgrade head`/`downgrade -1` migration chain run from a blank
+schema.
+
+### Vendor Scorecard & Cross-Document Consistency (Phase 14)
+
+Fast-follow on Phase 13 — both features read Phase 13's data (vendor-
+tagged scores, populated glossary/style edges) rather than needing new
+ingestion of their own, so they're sequenced after it rather than inside
+it. See `docs/graphrag-provenance-proposal.md` §9b for the product
+scenario (a PMM managing localization vendors) that surfaced these.
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Vendor/agent scorecard (latest quality + style scores, `GROUP BY` `ProvenanceAgent.organization`) | ✅ | `GET /api/v1/vendors/scorecard` — the artifact a PM actually uses in a vendor renegotiation, not per-segment QA. Ranked best-first; averages use each unit's LATEST score only, not its whole scoring history — `app/core/db/repository.py`'s `get_vendor_scorecard` (Postgres `DISTINCT ON`, one query) |
+| Branded scorecard PDF export | ✅ | `GET /api/v1/vendors/scorecard/report.pdf` — reuses the `app/core/audit/report.py` (reportlab) pattern → `app/core/vendors/report.py` |
+| `term_drift` / `term_inconsistency` / `tone_spread` consistency checks | ✅ | **Not** wired into `app/core/audit/`'s `SiteAuditCheck` framework as originally sketched — that subsystem audits crawled THIRD-PARTY site HTML (a different data domain), so this got its own module, `app/core/consistency/checker.py`, operating on this system's own `TranslationUnit`s instead |
+| Sub-quadratic consistency comparison | ✅ | One graph lookup per unit clusters units by shared `GlossaryTerm`/`StyleGuideRule` edges (O(n)); comparison happens only within each cluster (O(k·n) total) — the technique from Barry et al. 2025 (§7 of the proposal doc), never an O(n²) pairwise scan across `scope` |
+| `GET /api/v1/consistency/check` | ✅ | Computed on demand over a `scope` (unit_ids / target_language / source_language / project_id) — same "no persisted run" convention as `GET /redrive/preview`, not a new `SiteAudit`-style run table |
+| `VendorScorecardPage.tsx` + `ConsistencyPage.tsx` | ✅ | Built in the Review Shell segmentation pass below — see "Review Shell Segmentation" |
+
+10 new tests (`test_vendors.py`, `test_consistency.py`), full suite
+127/127 passing.
+
+### MQM / COMET / METEOR Quality Standards (Phase 15)
+
+Full research, source citations, and the primary-source MQM taxonomy data
+live in
+[`docs/quality-evaluation-research.md`](docs/quality-evaluation-research.md)
+— formalizes this project's ad-hoc "MQM-style" scoring against the real
+MQM standard, and adds two non-LLM automatic MT-quality metrics (COMET-Kiwi,
+METEOR) as a third, independent scoring axis. Human-perceived quality
+(tone/voice — MQM) and MT/translation quality (COMET/METEOR) were
+evaluated as two distinct standards per the user's request, alongside a
+review of Alon Lavie's 2021-present publication record (METEOR's
+co-creator, COMET's research lead).
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| 44-item official MQM-Core error taxonomy (7 dimensions) | ✅ | `app/core/scoring/mqm_types.py` — sourced directly from the MQM Council's own `themqm.org/resources/` workbooks (mnemonic Error Type IDs, not invented), CC-licensed |
+| Typed `error_type` + `neutral` severity on `ScoreError` | ✅ | `ClaudeQualityScorer` now returns per-error MQM mnemonic + severity (`app/core/scoring/claude_scorer.py`) instead of a single undifferentiated count — the concrete fix for the "one blended severity bucket" gap the research identified |
+| `hard_fail` — MQM's "any critical error ⇒ automatic Fail" rule | ✅ | Decoupled from the numeric score (`QualityScore.hard_fail`); `RedriveEngine` treats it as an independent redrive trigger alongside the numeric threshold — a unit scoring 75/100 with one critical error redrives regardless |
+| Scoring weights (25/10/3 for critical/major/minor) | ✅ unchanged | Deliberately NOT changed to MQM's literal 25/5/1 defaults — would have silently shifted every existing redrive threshold's behavior; only the taxonomy/hard-fail/neutral additions were in scope |
+| `automatic_metric_scores` table — third scoring axis | ✅ | Mirrors `style_adherence_scores`'s "independent, never blended" pattern; a COMET/METEOR number and a Claude MQM-style number answer different questions even when they render the same |
+| METEOR scorer + redrive regression-check | ✅ | `app/core/scoring/automatic/meteor.py` (pure NLTK, no GPU) — every redrive automatically records a METEOR score comparing the new candidate against the version it replaced, informational only, never blocks a redrive |
+| COMET-Kiwi (reference-free QE) scorer | ✅ code / 📋 not installed | `app/core/scoring/automatic/comet_kiwi.py` — lazy-imports `unbabel-comet` (not installed by default, see requirements.txt) and the gated `wmt22-cometkiwi-da` checkpoint (CC-BY-NC-SA-4.0, free HF login + license click-through, no fee). Adopted under the project's non-commercial/open-source framing — an explicit decision by the project owner, not assumed |
+| `POST /api/v1/quality/comet-score` (batch/offline) | ✅ | Deliberately not on any live-request or redrive path — CPU inference on a transformer-scale model doesn't fit a live-latency budget; admin/QA-sampling use only |
+| `POST /api/v1/quality/meteor-compare`, `GET /api/v1/quality/{unit_id}/automatic` | ✅ | Ad-hoc comparison and score-history endpoints |
+
+**Bug found and fixed along the way:** `QualityScore`/`StyleAdherenceScore`/
+`AutomaticMetricScore`'s "latest score for this unit" queries
+(`get_latest_quality_score`, the vendor scorecard's `DISTINCT ON`, ...)
+had a latent tie-breaking bug — two scores landing in the same clock tick
+(a real scenario: rapid re-scoring during a batch redrive) made "which one
+is latest" ambiguous, and Postgres doesn't guarantee which tied row
+`DISTINCT ON`/`LIMIT 1` returns. Caught by an intermittent test failure
+while validating this phase, not by design. Fixed with a shared
+`_strictly_after_latest` helper (`app/core/db/repository.py`) that nudges
+a colliding timestamp forward by 1 microsecond before insert — same
+reasoning `save_translation_unit` already applies to `TranslationUnitVersion.
+created_at`, now applied consistently across all three scores-over-time
+tables.
+
+**Code-complete but not live-tested:** COMET-Kiwi's actual model inference
+(no multi-GB download attempted in the build/CI environment) — matches
+this codebase's existing convention of never exercising `ClaudeQualityScorer`'s
+real API call in tests either. Its import-guard/graceful-degradation
+behavior IS tested (`test_automatic_metrics.py`).
+
+16 new tests (`test_mqm.py`, `test_automatic_metrics.py`), full suite
+143/143 passing (re-run repeatedly to confirm the timestamp-tie-break fix
+above holds — it was intermittent before the fix, not deterministic).
+`QualityBadge`'s `hard_fail` marker was added in the Review Shell
+segmentation pass below; MQM per-error dimension breakdown and inline
+automatic-metric (METEOR/COMET) display in the segment drawer are still
+not surfaced anywhere in the UI — narrower than the Phase 13/14 gap was,
+but still open.
+
+### Review Shell Segmentation (Content Creation / Quality Review / Audit)
+
+The frontend gap called out in Phases 13-15 above — built as one pass
+rather than three, since the new pages share a navigation restructure.
+The old flat 8-tab bar (Review/Live/Redrive/Images/Documents/Audit/Search/
+Dashboard) is now three top-level segments, each matching an actual phase
+of the work rather than an arbitrary regroup:
+
+- **Content Creation** — Create, Style Guides, Import, Documents. Where
+  content starts its life: define brand voice (Style Guides) before
+  anything else has something to check against, bring in legacy vendor
+  content (Import — TMX and, for the first time, a UI for the
+  previously API-only XLIFF import), then write/check/submit new copy
+  (Create — source-side voice check + retrieval preview + translate, all
+  three of which had zero UI before this pass).
+- **Quality Review** — Review, Live, Redrive (now with a style-threshold
+  axis and a style guide selector), Images, Vendor Scorecard, Consistency,
+  Search, Dashboard.
+- **Audit** — unchanged; a genuinely separate concern (third-party site
+  compliance), not folded into Quality Review.
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Segmented `App.tsx` (3 top-level segments, per-segment sub-nav) | ✅ | Replaces the flat tab bar; same inline-style visual language as every existing page, no new dependency |
+| `CreateContentPage.tsx` | ✅ | Source-side voice check, retrieval preview, and translation submission — none of the three had a UI entry point before (submitting a translation was API-only even in Phase 1) |
+| `StyleGuidesPage.tsx` | ✅ | Guide/rule/glossary CRUD |
+| `ImportPage.tsx` | ✅ | TMX (Phase 13) and XLIFF (Phase 1, never had a UI) side by side |
+| `VendorScorecardPage.tsx`, `ConsistencyPage.tsx` | ✅ | Ranked table + PDF link; findings list |
+| `RedriveConsole.tsx` style-threshold controls | ✅ | Style guide selector + threshold slider, wired into `previewRedrive`/`createRedriveRun` |
+| `QualityBadge` `hard_fail` marker | ✅ | Optional/additive prop — existing call sites unaffected |
+| MQM per-error dimension breakdown, inline automatic-metric display | 📋 | Still not surfaced — see above |
+
+**Bug found and fixed during live smoke-testing, not by design:**
+`new URLSearchParams({key: undefined})` does not drop the key — it calls
+`String(undefined)`, producing the literal query string `key=undefined`,
+which FastAPI then treats as a real (never-matching) filter value instead
+of "omit this filter." Every "blank = show all" filter field across the
+new pages was silently broken by this (caught live on the Consistency
+page: a blank target-language field returned zero results instead of
+everything) — and so was one pre-existing case, `previewRedrive`, that
+predates this pass. Fixed with a `cleanParams()` helper
+(`frontend/src/api/client.ts`) applied at every affected call site, not
+just the newly-discovered one; re-verified live afterward (101 units
+checked, 12 real findings, on the same page that returned zero before the
+fix).
+
+Verified live end-to-end (not just `tsc -b`/`vite build`, which both pass
+clean): Content Creation's check-source/retrieve-preview/translate flow,
+Style Guides' guide-select-and-load, Import's form rendering, Vendor
+Scorecard's ranked live data, Consistency's findings (after the fix
+above), and the Redrive Console's new style controls — all against the
+real backend, not mocked.
+
+### Multi-Provider Translate / Evaluate / Retranslate, incl. Tower+ (Phase 16)
+
+Prior phases hard-wired one translation provider (`TRANSLATION_PROVIDER`)
+and one evaluation provider (`SCORING_PROVIDER`) at process-start via env
+vars. This phase makes every provider selectable **per request, surfaced in
+the UI** — not a restart-to-change setting — and adds six new providers:
+OpenAI, Google Gemini, Microsoft Translator, LMStudio, vLLM, and Tower/
+Tower+ (via the existing Ollama integration, upgraded). Research backing
+the Tower+ decisions lives in
+[`docs/quality-evaluation-research.md` §10](docs/quality-evaluation-research.md).
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| `OpenAITranslationBackend`, `GeminiTranslationBackend`, `MSTranslatorTranslationBackend`, `OllamaTranslationBackend`, `LMStudioTranslationBackend`, `VLLMTranslationBackend` | ✅ | `app/core/translation_backends.py` — 10 providers total now (`mock`, `anthropic`, `openai`, `gemini`, `deepl`, `google`, `mstranslator`, `ollama`, `lmstudio`, `vllm`) |
+| `OpenAICompatibleScorer`, `GeminiQualityScorer` | ✅ | `app/core/scoring/openai_compatible_scorer.py`, `gemini_scorer.py` — 6 scoring providers now (`claude`, `ollama`, `gemini`, `openai`, `lmstudio`, `vllm`); `openai`/`lmstudio`/`vllm` share one `OpenAICompatibleScorer` since they speak the same REST API shape |
+| Shared MQM prompt/parsing contract | ✅ | `app/core/scoring/mqm_prompt.py` — extracted out of `claude_scorer.py` so Claude/OpenAI/Gemini/LMStudio/vLLM all score against the exact same rubric and JSON contract instead of near-duplicate prompts drifting apart |
+| `OpenAICompatibleClient`, `GeminiClient`, `MSTranslatorClient` | ✅ | `app/core/llm_clients.py` — thin raw-`httpx` REST clients, deliberately no new SDK dependencies (matches this codebase's existing `ollama_scorer.py` convention) |
+| `TranslateRequest.provider` | ✅ | Per-translation override; `None` = `settings.translation_provider` |
+| `RedriveRunRequest.scoring_provider` / `.redrive_provider` | ✅ | Independent axes — evaluate with one model, retranslate with another (e.g. Claude judges, a local model redrives) |
+| `POST /api/v1/quality/evaluate` | ✅ | New standalone endpoint — score one unit with a chosen provider on demand, independent of a redrive run; the first-class "evaluate" action the UI needed |
+| `CreateContentPage.tsx` "Translate with" dropdown | ✅ | All 10 translate providers, NMT-only ones (Google Translate, MS Translator) labeled as such |
+| `RedriveConsole.tsx` "Evaluate with" / "Retranslate with" dropdowns + standalone per-unit evaluate panel | ✅ | Two independent dropdowns (not one) so evaluate/retranslate models can differ; the standalone panel calls `POST /quality/evaluate` directly |
+
+**Tower / Tower+ research (§10), and what was adopted:**
+- Confirmed this project's Ollama scorer already was a port of a
+  TowerInstruct-via-Ollama approach from peripateticware — the task's
+  starting premise, verified from the code's own comments and default model
+  string.
+- Found a real, independent bug while tracing the prompt template: the
+  Ollama scorer (and, before this phase, no Ollama translation backend
+  existed at all) used `/api/generate` with hand-rolled Mistral/Llama-2-style
+  `[INST]...[/INST]` tags, but TowerInstruct is documented to expect ChatML,
+  and Tower+'s three sizes span two unrelated base-model families (Gemma 2,
+  Qwen 2.5) with no shared template to hand-roll correctly at all. Fixed by
+  switching to Ollama's `/api/chat` endpoint everywhere (`ollama_scorer.py`
+  and the new `OllamaTranslationBackend`), which applies whichever chat
+  template is embedded in the loaded GGUF instead of guessing.
+- Adopted `Tower-Plus-9B` (CC-BY-NC-SA-4.0, 5.76GB Q4_K_M, confirmed GGUF at
+  `mradermacher/Tower-Plus-9B-GGUF`) as the new default for **both**
+  `ollama_translation_model` and `ollama_qe_model`, replacing
+  `TowerInstruct-7B-v0.1` — a real, if self-reported, competitive WMT24++
+  translation track record and a lighter footprint than this project's
+  already-adopted COMET-Kiwi checkpoint.
+- Deliberately did **not** upgrade Tower's evaluation output from coarse
+  pass/fail (`ScoreResult(score=40 or 100, ...)`) to typed MQM errors —
+  §10.2 found Tower's training data mixes MQM-style and DA-style evaluation
+  examples with no confirmed output schema, so parsing structure out of its
+  free text would build on an unconfirmed contract. Tower's evaluation mode
+  is positioned as a free/local *fallback for the Claude scorer's role*, not
+  a peer of it or of COMET-Kiwi (different category of signal — see §10.5).
+- Deliberately did **not** add `Tower-Plus-72B` — 47.4GB of 4-bit weights
+  alone is incompatible with this project's "no GPU infra assumed" posture,
+  same reasoning Phase 15 already applied to COMET-Kiwi's largest variants.
+
+**Scope deliberately cut, stated plainly:** style/tone/voice scoring
+(`app/core/scoring/style_factory.py`) remains Claude-only — multi-provider
+support was scoped to the main quality/MQM scorer and translation backends
+only, not extended to style scoring in this pass.
+
+**Code-complete but not live-tested against real external endpoints:**
+OpenAI, Gemini, MS Translator, LMStudio, and vLLM all require credentials or
+a locally running server this environment doesn't have — same "code
+complete, not live-tested" honesty convention as Phase 15's COMET-Kiwi.
+Every provider's *graceful-degradation* path (unknown provider, missing
+credentials) IS tested and passing; `MockTranslationBackend`'s round trip
+and the deterministic-floor short-circuit are the only paths exercised
+end-to-end without a real API key.
+
+17 new tests (`test_multiprovider.py`) — registry completeness for both
+factories, "explicit provider always builds fresh" for both, credential
+graceful-degradation for anthropic/deepl/openai/gemini/mstranslator, and the
+new `/quality/evaluate` endpoint's 200/404/400 paths. Full suite 160/160
+passing (143 prior + 17 new). Frontend verified via `tsc -b --force` and
+`npm run build`, both clean; not yet re-verified live in the browser the way
+the Phase 13-15 segmentation pass was (no live API keys/local model servers
+available to drive an actual translate-with-OpenAI or evaluate-with-Gemini
+click-through in this environment).
+
 ---
 
 ## v1.2 — Suggested (Not Yet Built)

@@ -25,14 +25,35 @@ This system answers the key provenance questions for every piece of translated c
 
 Beyond tracking provenance, the system runs a **threshold-quality redrive
 loop**: score every translation (deterministic checks, falling back to a
-pluggable Claude/Ollama scorer), automatically resend anything below a
-threshold for retranslation, and record the whole thing — new version, new
-provenance, `wasRevisionOf` link back to what it replaced — with an optional
+pluggable model scorer), automatically resend anything below a threshold for
+retranslation, and record the whole thing — new version, new provenance,
+`wasRevisionOf` link back to what it replaced — with an optional
 human-in-the-loop gate before any redrive actually goes live. Reviewing that
 content happens in-context: the **Review Shell** overlays the real rendered
 page with clickable highlight boxes instead of a segment-grid TMS view (see
 [Run the review environment](#run-the-review-environment-review-shell)
 below).
+
+On top of that: **brand voice/tone/terminology adherence** is tracked as its
+own scoring axis alongside translation quality, grounded by a **pgGraph**
+retrieval layer (style guides, glossary terms, and prior-translation
+exemplars, hybrid vector+graph) that feeds context into AI translation
+*before* it happens rather than only scoring after the fact; **MQM/COMET/
+METEOR** formalize what "quality" means (a real 44-error-type taxonomy, a
+trained reference-free QE regression model, and a lexical regression check)
+instead of one ad-hoc number; and **every translate/evaluate/retranslate
+step is multi-provider** — OpenAI, Anthropic Claude, Google Gemini, Google
+Translate, Microsoft Translator, Ollama (including Unbabel's Tower/Tower+),
+LMStudio, and vLLM are all selectable per request, not just at process
+startup. The Review Shell is segmented into three workflows matching how the
+work actually happens: **Content Creation** (define voice, import legacy
+content, write/check/translate new copy), **Quality Review** (review,
+redrive, vendor scorecard, cross-document consistency), and **Audit**
+(third-party site i18n/compliance review, a separate concern). See
+[`ROADMAP.md`](ROADMAP.md) for the full phase-by-phase build history and
+[`docs/quality-evaluation-research.md`](docs/quality-evaluation-research.md)
+/ [`docs/graphrag-provenance-proposal.md`](docs/graphrag-provenance-proposal.md)
+for the research behind these decisions.
 
 ---
 
@@ -139,8 +160,8 @@ This is the core design decision: **every XLIFF `<unit>` is a self-contained pro
 ### Installation
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/ai-translation-provenance.git
-cd ai-translation-provenance
+git clone https://github.com/pcc01/content-provenance.git
+cd content-provenance
 
 # Create and activate virtual environment
 python -m venv .venv
@@ -344,11 +365,80 @@ QE-scorer → threshold → MT-fallback-chain pipeline.
 Scoring runs deterministic free checks first (untranslated/garbage/placeholder
 issues, wrong script, HTML tag/number mismatches — ported from
 peripateticware's `qa_review_llamacpp.py`), falling through to a configured
-model scorer (`SCORING_PROVIDER=claude` or `ollama`) only for pairs those
-don't resolve. Set `require_human_approval: true` on a run to have redrives
-proposed but not applied until a reviewer calls the approve/reject endpoints
-— useful for organizations that want AI-driven changes gated by a human even
-when the score/threshold decision itself is automated.
+model scorer (any of the six [evaluation backends](#translation--evaluation-backends)
+above) only for pairs those don't resolve. `scoring_provider` (the "evaluate"
+model) and `redrive_provider` (the "retranslate" model) are independent — you
+can evaluate with one model and redrive with a different one. Set
+`require_human_approval: true` on a run to have redrives proposed but not
+applied until a reviewer calls the approve/reject endpoints — useful for
+organizations that want AI-driven changes gated by a human even when the
+score/threshold decision itself is automated.
+
+### Style Guides, Glossary & Voice Check (pgGraph retrieval)
+
+Structured brand-voice facts that ground AI translation *before* it happens
+— retrieved via `app/core/graph/retrieval.py`'s hybrid vector+graph query
+(pgvector similarity + plain relational graph traversal, not a dedicated
+graph database — see
+[`docs/graphrag-provenance-proposal.md`](docs/graphrag-provenance-proposal.md)
+for why) — rather than only scoring a translation after the fact.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST`/`GET` | `/api/v1/style/guides` | Create / list style guides (name, version, locale, voice description, tone attributes) |
+| `GET`  | `/api/v1/style/guides/{id}` | A single guide |
+| `GET`  | `/api/v1/style/guides/{id}/chain` | Walk the `supersedes_id` chain back to the oldest ancestor |
+| `POST`/`GET` | `/api/v1/style/guides/{id}/rules` | Create / list tone, voice, terminology, or formatting rules under a guide |
+| `POST`/`GET` | `/api/v1/style/glossary-terms` | Create / list glossary terms (do-not-translate, preferred-term linking) |
+| `GET`  | `/api/v1/style/retrieve-preview` | What the retrieval layer would hand an AI translation for this source text — inspect the context before translating |
+| `POST` | `/api/v1/style/check-source` | Score a draft against tone/voice rules **before** translation — catches off-brand copy at its cheapest point to fix |
+
+`POST /api/v1/translations/` and the redrive engine both call the same
+retrieval layer automatically when a `style_guide_id` is supplied — rules,
+glossary terms, and prior-translation exemplars are woven into the AI
+translation prompt, not just checked afterward.
+
+### Quality & Evaluation (MQM / COMET / METEOR)
+
+Formalizes "quality" against real external standards instead of one ad-hoc
+number — full research and primary-source citations in
+[`docs/quality-evaluation-research.md`](docs/quality-evaluation-research.md).
+Three independent, never-blended axes: an LLM-judge scored against a real
+44-error-type **MQM-Core** taxonomy (`app/core/scoring/mqm_types.py`,
+typed `error_type` + severity per error, `hard_fail` on any critical error),
+**COMET-Kiwi** (a trained reference-free QE regression model, not a
+generative judge), and **METEOR** (a lexical regression check comparing a
+redrive candidate against the version it replaces).
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/v1/quality/evaluate` | Score one unit with a chosen [evaluation provider](#translation--evaluation-backends) on demand — independent of a redrive run |
+| `POST` | `/api/v1/quality/meteor-compare` | Ad-hoc METEOR score between any two strings |
+| `GET`  | `/api/v1/quality/{unit_id}/automatic` | A unit's automatic-metric (COMET/METEOR) score history |
+| `POST` | `/api/v1/quality/comet-score` | Batch, offline/admin-triggered COMET-Kiwi scoring — deliberately not on any live-request path (CPU inference on a transformer-scale model doesn't fit a live-latency budget) |
+
+COMET-Kiwi requires `unbabel-comet` (not installed by default — multi-GB,
+CC-BY-NC-SA-4.0 gated checkpoint, see `requirements.txt` and
+`app/core/scoring/automatic/comet_kiwi.py`) and degrades gracefully
+(`503`, not a crash) when it isn't.
+
+### Vendor Scorecard & Cross-Document Consistency
+
+Reads Phase 13's style/quality data from a second angle: not "is this one
+unit good," but "which vendor's work is trending worse" and "does this term
+get translated three different ways across the corpus."
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET`  | `/api/v1/vendors/scorecard` | Ranked table — quality/style/tone/voice/terminology averages per vendor organization (from `ProvenanceAgent.organization`), latest score per unit only |
+| `GET`  | `/api/v1/vendors/scorecard/report.pdf` | Branded PDF export of the same table |
+| `GET`  | `/api/v1/consistency/check` | Term-drift, term-inconsistency, and tone-spread findings across a scope (target/source language, project, or explicit unit list) |
+
+### Translation Memory (TMX) Import
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/v1/tm/import` | Ingest a TMX 1.4 export — creates `TranslationExemplar` rows (retrieval context, not `TranslationUnit`s) tagged with the vendor's identity, logged in the same ingest ledger as XLIFF import/export |
 
 ### Image Assets
 
@@ -532,16 +622,75 @@ Entity(Translation) ◄── wasGeneratedBy ───┘
 
 ---
 
-## Translation Backends
+## Translation & Evaluation Backends
 
-Configure via `TRANSLATION_PROVIDER` in `.env`:
+Every provider below is selectable **per request** — `TranslateRequest.provider`,
+`RedriveRunRequest.scoring_provider`/`redrive_provider`, and
+`POST /api/v1/quality/evaluate`'s `provider` field all override the `.env`
+default for that one call — not just at process startup, and surfaced
+directly in the Review Shell (Create Content's "Translate with" dropdown,
+Redrive Console's "Evaluate with"/"Retranslate with" dropdowns and standalone
+per-unit evaluate panel). `TRANSLATION_PROVIDER`/`SCORING_PROVIDER` in `.env`
+just set the fallback when a request doesn't pick one.
+
+**Translation** (`app/core/translation_backends.py`):
 
 | Provider | Env var value | Notes |
 |----------|--------------|-------|
 | **Mock** | `mock` | Default. Prefixes text with `[LANG]`. No API key needed. |
-| **Anthropic Claude** | `anthropic` | Requires `ANTHROPIC_API_KEY`. Uses claude-sonnet-4. |
+| **Anthropic Claude** | `anthropic` | Requires `ANTHROPIC_API_KEY`. |
+| **OpenAI** | `openai` | Requires `OPENAI_API_KEY`. `OPENAI_MODEL` (default `gpt-4o`). |
+| **Google Gemini** | `gemini` | Requires `GEMINI_API_KEY`. `GEMINI_MODEL` (default `gemini-2.0-flash`). |
 | **DeepL** | `deepl` | Requires `DEEPL_API_KEY`. Install: `pip install deepl` |
-| **Google Translate** | `google` | Requires `GOOGLE_APPLICATION_CREDENTIALS`. |
+| **Google Translate** | `google` | Requires `GOOGLE_APPLICATION_CREDENTIALS`. Pure NMT — no style/voice instruction-following. |
+| **Microsoft Translator** | `mstranslator` | Requires `MS_TRANSLATOR_KEY` (Azure Cognitive Services). Pure NMT, same caveat as Google Translate. |
+| **Ollama** (incl. Tower/Tower+) | `ollama` | Local, no API key. Default model is Unbabel's `Tower-Plus-9B` GGUF (`OLLAMA_TRANSLATION_MODEL`) — see below. |
+| **LMStudio** | `lmstudio` | Local OpenAI-compatible server, no real API key. `LMSTUDIO_URL`/`LMSTUDIO_MODEL`. |
+| **vLLM** | `vllm` | Local OpenAI-compatible server (`--api-server` mode). `VLLM_URL`/`VLLM_MODEL`. |
+
+**Evaluation / quality scoring** (`app/core/scoring/factory.py` — the LLM-judge
+layer behind the redrive threshold loop and `POST /quality/evaluate`; runs
+*after* `deterministic.py`'s free floor-checks, which resolve obvious
+untranslated/garbage/placeholder-broken pairs without any model call at all):
+
+| Provider | Env var value | Notes |
+|----------|--------------|-------|
+| **Claude** | `claude` | Requires `ANTHROPIC_API_KEY`. MQM-style structured JSON (typed `error_type` + severity per error, `hard_fail` on any critical error). |
+| **OpenAI** | `openai` | Requires `OPENAI_API_KEY`. Same MQM prompt/parsing contract as Claude (`app/core/scoring/mqm_prompt.py`). |
+| **Google Gemini** | `gemini` | Requires `GEMINI_API_KEY`. Same MQM contract. |
+| **Ollama** (incl. Tower/Tower+) | `ollama` | Local. Coarse pass/fail only (score 40 or 100) — Tower's free-text evaluation output isn't parsed into typed MQM errors; see below. |
+| **LMStudio** | `lmstudio` | Local. Same MQM contract as OpenAI/Gemini/Claude. |
+| **vLLM** | `vllm` | Local. Same MQM contract. |
+
+OpenAI/LMStudio/vLLM share one `OpenAICompatibleClient` (`app/core/llm_clients.py`)
+since all three speak the same `/v1/chat/completions` shape — no per-provider
+SDK dependencies were added for any of the six new providers above; they're
+all thin `httpx` REST clients.
+
+### Tower / Tower+ (Unbabel)
+
+`ollama` defaults to Unbabel's **Tower-Plus-9B** (`hf.co/mradermacher/Tower-Plus-9B-GGUF:Q4_K_M`,
+CC-BY-NC-SA-4.0, ~5.76GB Q4_K_M) for *both* the translation and evaluation
+roles — a translation-specialized, self-hostable model with a real (if
+self-reported) competitive WMT24++ track record, and a lighter footprint
+than this project's own COMET-Kiwi checkpoint. Its evaluation output is
+deliberately kept coarse (pass/fail, not typed MQM errors) — Tower's
+training data mixes MQM-style and DA-style evaluation examples with no
+confirmed output schema, so it's positioned as a free/local fallback for the
+Claude/OpenAI/Gemini scorer role, not a peer of it or of COMET-Kiwi. Talks
+to Ollama via `/api/chat` (not `/api/generate` with a hand-rolled prompt) so
+Ollama applies whichever chat template is baked into the loaded GGUF — Tower+'s
+three sizes span two unrelated base-model families (Gemma 2, Qwen 2.5) with
+no one template to hand-roll correctly. Full research — license-by-checkpoint
+verification, benchmark comparisons against COMET/XCOMET, and what was
+deliberately *not* adopted (`Tower-Plus-72B`, upgrading evaluation output to
+typed MQM) — is in
+[`docs/quality-evaluation-research.md` §10](docs/quality-evaluation-research.md).
+
+### Automatic (non-LLM) quality metrics
+
+A third, independent scoring axis alongside the LLM-judge above — see
+[Quality & Evaluation](#quality--evaluation-mqm--comet--meteor) below.
 
 ---
 
@@ -574,7 +723,7 @@ cd frontend/demo-target && npx tsc -b
 ```
 content-provenance/
 ├── alembic/                        # Schema migrations (source of truth for the DB schema)
-│   └── versions/                   # 0001_initial … 0011_site_audits
+│   └── versions/                   # 0001_initial … 0020_automatic_metric_scores
 ├── app/
 │   ├── main.py                     # FastAPI app, lifespan, router registration, serves frontend/dist/
 │   ├── api/
@@ -588,21 +737,38 @@ content-provenance/
 │   │   ├── images.py               # Image asset upload, context-linking, localization
 │   │   ├── documents.py            # Phase 7a: text/Markdown document import + segments
 │   │   ├── pages.py                # Phase 8/9/10: fetch+rewrite review, page history, page-level notes, pending-proposals list
-│   │   └── audit.py                # Phase 11: site i18n/l10n/compliance audit runs + findings
+│   │   ├── audit.py                # Phase 11: site i18n/l10n/compliance audit runs + findings
+│   │   ├── tm.py                   # Phase 13: TMX 1.4 translation-memory import
+│   │   ├── style.py                # Phase 13: style guides, glossary, retrieval preview, source voice check
+│   │   ├── vendors.py              # Phase 14: vendor scorecard + PDF export
+│   │   ├── consistency.py          # Phase 14: cross-document term-drift/tone-spread checks
+│   │   └── quality.py              # Phase 15/16: METEOR/COMET automatic metrics + standalone LLM-judge evaluate endpoint
 │   ├── core/
 │   │   ├── config.py               # Environment-based settings
 │   │   ├── database.py             # Thin public interface (get_db/init_db) over db/repository.py
+│   │   ├── llm_clients.py          # Phase 16: shared OpenAI-compatible / Gemini / MS Translator httpx REST clients
 │   │   ├── db/                     # Postgres persistence layer
 │   │   │   ├── models.py           # SQLAlchemy ORM models
 │   │   │   ├── session.py          # Async engine/session factory
 │   │   │   └── repository.py       # PostgresRepository — all persistence logic
-│   │   ├── scoring/                # Quality scoring — deterministic + pluggable model scorers
+│   │   ├── graph/                  # Phase 13: pgGraph — plain relational nodes/edges (not a graph DB) + hybrid retrieval
+│   │   │   ├── models.py           # graph_nodes / graph_edges access
+│   │   │   └── retrieval.py        # Hybrid vector+graph style/glossary/exemplar context retrieval, pre-translation
+│   │   ├── vendors/                # Phase 14: vendor scorecard aggregation
+│   │   ├── consistency/            # Phase 14: term-drift / term-inconsistency / tone-spread checker
+│   │   ├── scoring/                # Quality scoring — deterministic + pluggable LLM-judge + automatic metrics
 │   │   │   ├── deterministic.py    # Free floor-checks (ported from peripateticware's QE scorer)
+│   │   │   ├── mqm_types.py        # Phase 15: official 44-item MQM-Core error taxonomy (7 dimensions)
+│   │   │   ├── mqm_prompt.py       # Phase 16: shared MQM prompt/parsing contract — Claude/OpenAI/Gemini/LMStudio/vLLM all score against the same rubric
 │   │   │   ├── claude_scorer.py    # Claude-as-judge (MQM-style)
-│   │   │   ├── ollama_scorer.py    # Local Ollama QE model
-│   │   │   └── factory.py          # CompositeScorer selection
+│   │   │   ├── openai_compatible_scorer.py  # Phase 16: shared scorer for OpenAI/LMStudio/vLLM
+│   │   │   ├── gemini_scorer.py    # Phase 16: Google Gemini judge
+│   │   │   ├── ollama_scorer.py    # Local Ollama QE model (Tower/Tower+, coarse pass/fail)
+│   │   │   ├── factory.py          # CompositeScorer selection — 6-provider registry, per-request override
+│   │   │   ├── style_base.py / style_scorer.py / style_factory.py  # Phase 13: tone/voice/terminology adherence scoring (Claude only)
+│   │   │   └── automatic/          # Phase 15: non-LLM metrics — meteor.py (NLTK), comet_kiwi.py (Unbabel wmt22-cometkiwi-da, optional)
 │   │   ├── redrive/                # Threshold-quality redrive engine
-│   │   │   ├── engine.py           # RedriveEngine — score, threshold, redrive, human-in-the-loop
+│   │   │   ├── engine.py           # RedriveEngine — score, threshold, redrive, human-in-the-loop, style-threshold axis
 │   │   │   ├── ledger.py           # DB-backed per-provider usage budget
 │   │   │   └── propose.py          # Phase 10: a human's own draft, filed as an ad-hoc PENDING_APPROVAL item
 │   │   ├── prov_builder.py         # W3C PROV-DM graph builder (text + image), PROV-JSON
@@ -616,18 +782,20 @@ content-provenance/
 │   │   │   ├── data/jurisdictions/ # Phase 12: 9 ported jurisdiction JSON files (GDPR, CCPA, LGPD, ...)
 │   │   │   └── checks/             # mixed_locale, rtl_readiness, icu_i18n, privacy, text_expansion, font_coverage, hreflang, cookie_consent, placeholder_leak, locale_format — pure functions over crawled data
 │   │   ├── haystack_pipeline.py    # Haystack 2.x indexing and search
-│   │   └── translation_backends.py # Pluggable: Mock / Anthropic / DeepL / Google
+│   │   └── translation_backends.py # Phase 16: 10 pluggable providers — Mock/Anthropic/OpenAI/Gemini/DeepL/Google/MS Translator/Ollama/LMStudio/vLLM
 │   ├── models/
-│   │   └── schemas.py              # Pydantic models — PROV, XLIFF, Translation, Deployment, QualityScore, RedriveRun, ImageAsset, ReviewNote…
+│   │   └── schemas.py              # Pydantic models — PROV, XLIFF, Translation, Deployment, QualityScore, RedriveRun, ImageAsset, ReviewNote, StyleGuide, ScoreError…
+│   ├── tm/
+│   │   └── tmx_import.py           # Phase 13: TMX 1.4 parsing -> TranslationExemplar rows
 │   ├── xliff/
 │   │   ├── xliff_service.py        # XLIFF 2.0 generation/parsing with full embedded PROV + version history
 │   │   └── xliff_import.py         # Import logic (create/update units from a parsed XLIFF doc)
 │   └── static/branding/logo.png    # Phase 12: consulting-firm logo used in the PDF audit report
-├── frontend/                       # Review Shell — Vite + React + TypeScript (replaces the old static dashboard)
+├── frontend/                       # Review Shell — Vite + React + TypeScript, segmented into Content Creation / Quality Review / Audit
 │   ├── src/
 │   │   ├── api/client.ts           # Typed fetch wrapper for the whole API
-│   │   ├── components/             # ReviewFrame, SegmentDrawer, PageFlaggedList, PageHistory, PageNotes, PendingChanges, AuditReport, ProvenancePanel, QualityBadge, VersionHistory, NotesThread
-│   │   └── pages/                  # ReviewPage, LiveReviewPage, RedriveConsole, ImageReview, DocumentsPage, DocumentViewer, AuditPage, SearchPage, Dashboard
+│   │   ├── components/             # ReviewFrame, SegmentDrawer, PageFlaggedList, PageHistory, PageNotes, PendingChanges, AuditReport, ProvenancePanel, QualityBadge (hard_fail marker), VersionHistory, NotesThread
+│   │   └── pages/                  # ReviewPage, LiveReviewPage, RedriveConsole (+ provider dropdowns), ImageReview, DocumentsPage, DocumentViewer, AuditPage, SearchPage, Dashboard, CreateContentPage, StyleGuidesPage, ImportPage, VendorScorecardPage, ConsistencyPage
 │   ├── review-sdk/                 # The in-context overlay injected into a cooperative target app, or extracted for Phase 10's extension
 │   │   ├── overlay.ts              # Highlight boxes, score/pending coloring, pluggable transport (postMessage or chrome.runtime)
 │   │   ├── harvest.ts              # Phase 10: shared harvest/rewrite DOM walk — compiled once, used by both Playwright and the extension
@@ -644,7 +812,9 @@ content-provenance/
 │   │   └── popup.html / popup.ts   # Toolbar popup — target language, start/stop, mini notes panel
 │   └── demo-target/                # Minimal fixture app the Review Shell iframes for local verification
 ├── docs/
-│   └── architecture.svg            # System architecture diagram
+│   ├── architecture.svg            # System architecture diagram
+│   ├── graphrag-provenance-proposal.md    # Phase 13: pgGraph vs. Apache AGE evaluation, GraphRAG retrieval design
+│   └── quality-evaluation-research.md     # Phase 15/16: MQM/COMET/METEOR/Tower research, primary-source license verification
 ├── tests/
 │   ├── conftest.py                 # pytest fixtures, async client, per-session schema reset
 │   ├── test_provenance.py          # Unit tests (models, XLIFF, PROV builder, DB)
@@ -655,7 +825,14 @@ content-provenance/
 │   ├── test_pages.py               # Page fetch/harvest/render + history/diff/as_of tests (real headless-browser render)
 │   ├── test_revert.py              # Version revert API tests
 │   ├── test_propose.py             # Phase 10: human-drafted proposal -> pending -> approve/reject tests
-│   └── test_audit.py               # Phase 11/12: all 10 checks + PDF export against a local fixture site
+│   ├── test_audit.py               # Phase 11/12: all 10 checks + PDF export against a local fixture site
+│   ├── test_tmx_import.py          # Phase 13: TMX import
+│   ├── test_style_api.py / test_style_scoring.py  # Phase 13: style guide/glossary CRUD, tone/voice scoring
+│   ├── test_graph.py               # Phase 13: pgGraph retrieval
+│   ├── test_vendors.py / test_consistency.py       # Phase 14: vendor scorecard, cross-document consistency
+│   ├── test_mqm.py / test_automatic_metrics.py     # Phase 15: MQM taxonomy, hard_fail, METEOR/COMET-Kiwi
+│   ├── test_multiprovider.py       # Phase 16: provider-registry graceful degradation, standalone evaluate endpoint
+│   └── test_notifications.py
 ├── .gitignore
 ├── CONTRIBUTING.md
 ├── Dockerfile

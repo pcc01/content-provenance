@@ -246,6 +246,126 @@ async def build_provenance_record(
                 "informant": qa_activity.id,
             })
 
+    # ── 4d. Context Retrieval (Phase 13 — GraphRAG style/voice context) ──────
+    # Read back from graph_edges rather than taking retrieval results as a
+    # parameter: like everything else in this rebuild-from-scratch function,
+    # provenance has to reconstruct correctly on ANY rebuild (review, deploy,
+    # revert, ...), not just the one call site that originally ran
+    # retrieval — see app/core/graph/builder.record_unit_style_context,
+    # called once retrieval context is actually used for a translation.
+    unit_node = await db.get_graph_node("Unit", unit.id)
+    if unit_node is not None:
+        rule_neighbors = await db.list_neighbors(unit_node.id, edge_type="appliedRule", direction="out")
+        term_neighbors = await db.list_neighbors(unit_node.id, edge_type="usedTerm", direction="out")
+        style_entities: List[ProvenanceEntity] = []
+        for node in rule_neighbors:
+            rule = await db.get_style_guide_rule(node.ref_id)
+            if rule:
+                style_entities.append(ProvenanceEntity(
+                    id=f"entity:style-rule:{rule.id}",
+                    entity_type="StyleGuideRule",
+                    generated_at=rule.created_at,
+                    attributes={
+                        "prov:type": "provx:StyleGuideRule",
+                        "provx:ruleType": rule.rule_type.value,
+                        "provx:ruleText": rule.rule_text[:200],
+                        "provx:severity": rule.severity.value,
+                    },
+                ))
+        for node in term_neighbors:
+            term = await db.get_glossary_term(node.ref_id)
+            if term:
+                style_entities.append(ProvenanceEntity(
+                    id=f"entity:glossary-term:{term.id}",
+                    entity_type="GlossaryTerm",
+                    generated_at=term.created_at,
+                    attributes={
+                        "prov:type": "provx:GlossaryTerm",
+                        "provx:sourceTerm": term.source_term,
+                        "provx:targetTerm": term.target_term or "",
+                        "provx:doNotTranslate": str(term.do_not_translate),
+                    },
+                ))
+
+        if style_entities:
+            entities.extend(style_entities)
+            retrieval_agent = await db.get_or_create_agent(
+                name="graph-retrieval", agent_type="SoftwareAgent",
+                metadata={"role": "style_context_retrieval"},
+            )
+            if retrieval_agent not in agents:
+                agents.append(retrieval_agent)
+
+            retrieval_activity = ProvenanceActivity(
+                id=f"activity:context-retrieval:{unit.id}",
+                activity_type="ContextRetrieval",
+                started_at=unit.translated_at or datetime.utcnow(),
+                ended_at=unit.translated_at,
+                agent_id=retrieval_agent.id,
+                used_entity_ids=[e.id for e in style_entities],
+                metadata={
+                    "prov:type": "provx:ContextRetrievalActivity",
+                    "provx:factCount": str(len(style_entities)),
+                },
+            )
+            activities.append(retrieval_activity)
+            relations.append({
+                "type": "wasAssociatedWith", "activity": retrieval_activity.id, "agent": retrieval_agent.id,
+            })
+            for e in style_entities:
+                relations.append({"type": "used", "activity": retrieval_activity.id, "entity": e.id})
+            # The formal PROV link answering "why did the model choose this
+            # tone" — the translation activity was INFORMED BY whatever
+            # style/glossary context it was given.
+            relations.append({
+                "type": "wasInformedBy",
+                "informed": translation_activity.id,
+                "informant": retrieval_activity.id,
+            })
+
+    # ── 4e. Style Adherence Assessment (Phase 13) ─────────────────────────────
+    # Same shape as 4c's QualityAssessment — a separate Activity so it's
+    # clear WHO/WHAT judged tone/voice/terminology adherence, distinct from
+    # both the Translation activity and the accuracy-focused QA one.
+    latest_style_score = await db.get_latest_style_adherence_score(unit.id)
+    if latest_style_score is not None:
+        style_scorer_agent = await db.get_or_create_agent(
+            name=f"style-scorer:{latest_style_score.scorer}", agent_type="SoftwareAgent",
+            metadata={"role": "style_adherence_scorer"},
+        )
+        if style_scorer_agent not in agents:
+            agents.append(style_scorer_agent)
+
+        style_qa_activity = ProvenanceActivity(
+            id=f"activity:style-qa:{latest_style_score.id}",
+            activity_type="StyleAdherenceAssessment",
+            started_at=latest_style_score.scored_at,
+            ended_at=latest_style_score.scored_at,
+            agent_id=style_scorer_agent.id,
+            used_entity_ids=[translation_entity.id],
+            metadata={
+                "prov:type": "provx:StyleAdherenceAssessmentActivity",
+                "provx:overallScore": (
+                    str(latest_style_score.overall_score) if latest_style_score.overall_score is not None else None
+                ),
+                "provx:toneScore": (
+                    str(latest_style_score.tone_score) if latest_style_score.tone_score is not None else None
+                ),
+                "provx:voiceScore": (
+                    str(latest_style_score.voice_score) if latest_style_score.voice_score is not None else None
+                ),
+                "provx:terminologyScore": (
+                    str(latest_style_score.terminology_score)
+                    if latest_style_score.terminology_score is not None else None
+                ),
+            },
+        )
+        activities.append(style_qa_activity)
+        relations.append({"type": "used", "activity": style_qa_activity.id, "entity": translation_entity.id})
+        relations.append({
+            "type": "wasAssociatedWith", "activity": style_qa_activity.id, "agent": style_scorer_agent.id,
+        })
+
     # ── 5. Review (if applicable) ─────────────────────────────────────────────
     if unit.reviewed_by_agent_id:
         reviewer_agent = await db.get_agent(unit.reviewed_by_agent_id)

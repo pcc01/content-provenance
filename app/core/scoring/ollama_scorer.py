@@ -3,6 +3,17 @@ Local Ollama QE scorer — mirrors peripateticware's TowerInstruct-via-Ollama
 approach (frontend/scripts/qa_review_llamacpp.py / localization_qa_crawler.py):
 ask a local model to list translation errors; "NO ERRORS FOUND" -> clean.
 
+Uses Ollama's /api/chat endpoint (Phase 16), not /api/generate with a
+hand-rolled prompt string — this project's original /api/generate call
+wrapped its instruction in Mistral/Llama-2-chat-style `[INST]...[/INST]`
+tags, but TowerInstruct is documented to expect ChatML, and Tower+ (the
+current default, see app/core/config.py's ollama_qe_model) spans two
+different base-model families (Gemma 2, Qwen 2.5) with no shared chat
+template at all — see docs/quality-evaluation-research.md §10 for how this
+mismatch was found. /api/chat sidesteps the whole problem: Ollama applies
+whichever template is embedded in the GGUF itself, so this file no longer
+needs to know or guess which one that is.
+
 Resilience pattern ported from that crawler: a local model can stall on a
 single generation (cold-loading weights, GC pause, brief contention) even
 after a successful preflight check elsewhere, so one slow/failed call
@@ -30,14 +41,14 @@ def _lang_name(code: str) -> str:
     return code.upper()
 
 
-def _build_prompt(source: str, target: str, lang_name: str) -> str:
+def _build_user_message(source: str, target: str, lang_name: str) -> str:
     return (
-        f"[INST] Identify all translation errors and grammatical mistakes in the "
+        f"Identify all translation errors and grammatical mistakes in the "
         f"following target text, which was translated from English to {lang_name}.\n"
         f'Source: "{source}"\n'
         f'Target: "{target}"\n'
         f"Output format: List the error, location, and severity. If there are no "
-        f"errors, respond with exactly: NO ERRORS FOUND. [/INST]"
+        f"errors, respond with exactly: NO ERRORS FOUND."
     )
 
 
@@ -45,8 +56,8 @@ async def preflight_check(ollama_url: str, model: str, timeout: int = 120) -> bo
     async with httpx.AsyncClient() as client:
         try:
             resp = await client.post(
-                f"{ollama_url}/api/generate",
-                json={"model": model, "prompt": "[INST] Say OK. [/INST]", "stream": False},
+                f"{ollama_url}/api/chat",
+                json={"model": model, "messages": [{"role": "user", "content": "Say OK."}], "stream": False},
                 timeout=timeout,
             )
             resp.raise_for_status()
@@ -60,24 +71,28 @@ class OllamaQualityScorer(QualityScorer):
         self.ollama_url = ollama_url or settings.ollama_url
         self.model = model or settings.ollama_qe_model
 
-    async def _generate(self, prompt: str, timeout: int = 180) -> str:
+    async def _chat(self, user_message: str, timeout: int = 180) -> str:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                f"{self.ollama_url}/api/generate",
-                json={"model": self.model, "prompt": prompt, "stream": False},
+                f"{self.ollama_url}/api/chat",
+                json={
+                    "model": self.model,
+                    "messages": [{"role": "user", "content": user_message}],
+                    "stream": False,
+                },
                 timeout=timeout,
             )
             resp.raise_for_status()
-            return resp.json().get("response", "").strip()
+            return resp.json().get("message", {}).get("content", "").strip()
 
     async def score(self, unit: TranslationUnit) -> ScoreResult:
         lang_name = _lang_name(unit.target_language)
-        prompt = _build_prompt(unit.source_text, unit.target_text or "", lang_name)
+        user_message = _build_user_message(unit.source_text, unit.target_text or "", lang_name)
         try:
-            verdict = await self._generate(prompt)
+            verdict = await self._chat(user_message)
         except httpx.TimeoutException:
             try:
-                verdict = await self._generate(prompt, timeout=400)
+                verdict = await self._chat(user_message, timeout=400)
             except httpx.HTTPError as e:
                 return ScoreResult(score=None, reasons=["evaluator_error"], raw_response=str(e), needs_review=True)
         except httpx.HTTPError as e:

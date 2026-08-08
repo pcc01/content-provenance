@@ -24,6 +24,7 @@ services:
     environment:
       APP_ENV: production
       CORS_ORIGINS: ${CORS_ORIGINS:-https://audit.thewordinbits.com}
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:-https://audit.thewordinbits.com}
     # `!override` REPLACES the base list; a plain [] MERGES with the base
     # list (Compose's default for list-valued keys), which would silently
     # keep the dev bind-mounts (./app, ./frontend) active here too — prod

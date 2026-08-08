@@ -22,36 +22,126 @@ rewrite. Two additions beyond the original contract:
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.db.models import (
-    AgentRow, DeploymentRecordRow, DocumentRow, ImageAssetRow, ImageContextLinkRow,
-    ImageTranslationUnitRow, IngestEventRow, PageSnapshotRow, ProviderUsageLedgerRow,
-    ProvenanceActivityRow, ProvenanceBundleRow, ProvenanceEntityRow,
-    ProvenanceRelationRow, QualityScoreRow, RedriveRunItemRow, RedriveRunRow,
-    ReviewNoteRow, SiteAuditFindingRow, SiteAuditPageRow, SiteAuditRow,
-    TranslationProjectRow, TranslationUnitRow,
-    TranslationUnitVersionRow, XliffDocumentRow,
+    AgentRow,
+    AutomaticMetricScoreRow,
+    DeploymentRecordRow,
+    DocumentRow,
+    GlossaryTermRow,
+    GraphEdgeRow,
+    GraphNodeRow,
+    ImageAssetRow,
+    ImageContextLinkRow,
+    ImageTranslationUnitRow,
+    IngestEventRow,
+    PageSnapshotRow,
+    ProvenanceActivityRow,
+    ProvenanceBundleRow,
+    ProvenanceEntityRow,
+    ProvenanceRelationRow,
+    ProviderUsageLedgerRow,
+    QualityScoreRow,
+    RedriveRunItemRow,
+    RedriveRunRow,
+    ReviewNoteRow,
+    SiteAuditFindingRow,
+    SiteAuditPageRow,
+    SiteAuditRow,
+    StyleAdherenceScoreRow,
+    StyleGuideRow,
+    StyleGuideRuleRow,
+    TranslationExemplarRow,
+    TranslationProjectRow,
+    TranslationUnitRow,
+    TranslationUnitVersionRow,
+    XliffDocumentRow,
 )
 from app.models.schemas import (
-    DeploymentContext, DeploymentRecord, Document, DocumentFormat, ImageAsset,
-    ImageAssetKind, ImageContextLink, ImageTranslationUnit, IngestDirection,
-    IngestEvent, PageSnapshot, ProvenanceActivity, ProvenanceAgent, ProvenanceEntity,
-    ProvenanceRecord, QualityScore, RedriveOutcome, RedriveRun, RedriveRunItem,
-    RedriveRunStatus, ReviewNote, ScoreError, SiteAudit, SiteAuditCheck,
-    SiteAuditFinding, SiteAuditPage, SiteAuditSeverity, SiteAuditStatus,
-    TranslationMethod, TranslationProject, TranslationStatus, TranslationUnit,
+    AutomaticMetricScore,
+    DeploymentContext,
+    DeploymentRecord,
+    Document,
+    DocumentFormat,
+    ExemplarOrigin,
+    GlossaryTerm,
+    GraphEdge,
+    GraphNode,
+    ImageAsset,
+    ImageAssetKind,
+    ImageContextLink,
+    ImageTranslationUnit,
+    IngestDirection,
+    IngestEvent,
+    PageSnapshot,
+    ProvenanceActivity,
+    ProvenanceAgent,
+    ProvenanceEntity,
+    ProvenanceRecord,
+    QualityScore,
+    RedriveOutcome,
+    RedriveRun,
+    RedriveRunItem,
+    RedriveRunStatus,
+    ReviewNote,
+    ScoreError,
+    SiteAudit,
+    SiteAuditCheck,
+    SiteAuditFinding,
+    SiteAuditPage,
+    SiteAuditSeverity,
+    SiteAuditStatus,
+    StyleAdherenceScore,
+    StyleGuide,
+    StyleGuideRule,
+    StyleRuleSeverity,
+    StyleRuleType,
+    TranslationExemplar,
+    TranslationMethod,
+    TranslationProject,
+    TranslationStatus,
+    TranslationUnit,
     TranslationUnitVersion,
+    VendorScorecardEntry,
 )
 
 
 class PostgresRepository:
     def __init__(self, session_factory: async_sessionmaker):
         self._session_factory = session_factory
+
+    @staticmethod
+    async def _strictly_after_latest(
+        session, model, unit_id_col, unit_id: str, candidate: datetime, *extra_filters,
+    ) -> datetime:
+        """Guarantees `candidate` sorts strictly after every existing
+        `scored_at` for this unit — two scores recorded within the same
+        clock tick (e.g. a rapid batch redrive re-score, or Windows'
+        occasionally-coarse timer resolution) would otherwise tie in
+        `ORDER BY scored_at DESC`, and Postgres doesn't guarantee which
+        tied row `DISTINCT ON`/`LIMIT 1` picks — silently corrupting every
+        "latest score for this unit" read (get_latest_quality_score, the
+        vendor scorecard's DISTINCT ON, ...). Same reasoning
+        save_translation_unit already applies to TranslationUnitVersion's
+        created_at; applied here to every scores-over-time table
+        (quality_scores, style_adherence_scores, automatic_metric_scores)
+        since they all share this exact query shape."""
+        latest = (
+            await session.execute(
+                select(model.scored_at)
+                .where(unit_id_col == unit_id, *extra_filters)
+                .order_by(model.scored_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if latest is not None and candidate <= latest:
+            return latest + timedelta(microseconds=1)
+        return candidate
 
     # ── Translation Units ───────────────────────────────────────────────
 
@@ -840,12 +930,15 @@ class PostgresRepository:
 
     async def save_quality_score(self, result: QualityScore) -> QualityScore:
         async with self._session_factory() as session:
+            result.scored_at = await self._strictly_after_latest(
+                session, QualityScoreRow, QualityScoreRow.unit_id, result.unit_id, result.scored_at,
+            )
             session.add(QualityScoreRow(
                 id=result.id, unit_id=result.unit_id, version_id=result.version_id,
                 score=result.score, scorer=result.scorer,
-                reasons=result.reasons, errors=[e.model_dump() for e in result.errors],
+                reasons=result.reasons, errors=[e.model_dump(mode="json") for e in result.errors],
                 raw_response=result.raw_response, needs_review=result.needs_review,
-                scored_at=result.scored_at,
+                hard_fail=result.hard_fail, scored_at=result.scored_at,
             ))
             await session.commit()
         return result
@@ -892,6 +985,7 @@ class PostgresRepository:
         async with self._session_factory() as session:
             session.add(RedriveRunRow(
                 id=run.id, status=run.status.value, threshold=run.threshold,
+                style_threshold=run.style_threshold, style_guide_id=run.style_guide_id,
                 scope=run.scope, scoring_provider=run.scoring_provider,
                 redrive_provider=run.redrive_provider,
                 require_human_approval=run.require_human_approval,
@@ -968,6 +1062,7 @@ class PostgresRepository:
             ).scalars().all()
             return RedriveRun(
                 id=row.id, status=RedriveRunStatus(row.status), threshold=row.threshold,
+                style_threshold=row.style_threshold, style_guide_id=row.style_guide_id,
                 scope=row.scope, scoring_provider=row.scoring_provider,
                 redrive_provider=row.redrive_provider,
                 require_human_approval=row.require_human_approval,
@@ -1030,6 +1125,502 @@ class PostgresRepository:
                 return
             row.used_chars += chars
             await session.commit()
+
+    # ── Phase 13: Style Guides ──────────────────────────────────────────
+
+    async def save_style_guide(self, guide: StyleGuide) -> StyleGuide:
+        async with self._session_factory() as session:
+            row = await session.get(StyleGuideRow, guide.id)
+            if row is None:
+                row = StyleGuideRow(id=guide.id)
+                session.add(row)
+            row.name = guide.name
+            row.version = guide.version
+            row.locale = guide.locale
+            row.voice_description = guide.voice_description
+            row.tone_attributes = guide.tone_attributes
+            row.supersedes_id = guide.supersedes_id
+            row.created_at = guide.created_at
+            row.created_by = guide.created_by
+            row.meta = guide.metadata
+            await session.commit()
+        return guide
+
+    async def get_style_guide(self, guide_id: str) -> Optional[StyleGuide]:
+        async with self._session_factory() as session:
+            row = await session.get(StyleGuideRow, guide_id)
+            return _row_to_style_guide(row) if row else None
+
+    async def list_style_guides(self, locale: Optional[str] = None) -> List[StyleGuide]:
+        async with self._session_factory() as session:
+            stmt = select(StyleGuideRow)
+            if locale:
+                stmt = stmt.where(StyleGuideRow.locale == locale)
+            stmt = stmt.order_by(StyleGuideRow.created_at.desc())
+            rows = (await session.execute(stmt)).scalars().all()
+            return [_row_to_style_guide(r) for r in rows]
+
+    async def get_style_guide_chain(self, style_guide_id: str) -> List[StyleGuide]:
+        """Walks the supersedes_id chain from `style_guide_id` back to the
+        oldest ancestor — the §3b "variable-length hop" example (could be 1
+        hop or 5, depending how many revisions have happened), done with a
+        bounded WITH RECURSIVE rather than N one-at-a-time lookups."""
+        async with self._session_factory() as session:
+            result = await session.execute(
+                text("""
+                    WITH RECURSIVE chain AS (
+                        SELECT * FROM style_guides WHERE id = :start_id
+                        UNION ALL
+                        SELECT sg.* FROM style_guides sg
+                        JOIN chain c ON sg.id = c.supersedes_id
+                    )
+                    SELECT * FROM chain LIMIT 50
+                """),
+                {"start_id": style_guide_id},
+            )
+            rows = result.mappings().all()
+            return [
+                StyleGuide(
+                    id=r["id"], name=r["name"], version=r["version"], locale=r["locale"],
+                    voice_description=r["voice_description"], tone_attributes=r["tone_attributes"] or {},
+                    supersedes_id=r["supersedes_id"], created_at=r["created_at"],
+                    created_by=r["created_by"], metadata=r["metadata"] or {},
+                )
+                for r in rows
+            ]
+
+    # ── Phase 13: Style Guide Rules ─────────────────────────────────────
+
+    async def save_style_guide_rule(
+        self, rule: StyleGuideRule, embedding: Optional[List[float]] = None,
+    ) -> StyleGuideRule:
+        async with self._session_factory() as session:
+            row = await session.get(StyleGuideRuleRow, rule.id)
+            if row is None:
+                row = StyleGuideRuleRow(id=rule.id)
+                session.add(row)
+            row.style_guide_id = rule.style_guide_id
+            row.rule_type = rule.rule_type.value
+            row.rule_text = rule.rule_text
+            row.severity = rule.severity.value
+            row.applies_to_locale = rule.applies_to_locale
+            row.source_term = rule.source_term
+            row.target_term = rule.target_term
+            row.created_at = rule.created_at
+            row.meta = rule.metadata
+            if embedding is not None:
+                row.embedding = embedding
+            await session.commit()
+        return rule
+
+    async def get_style_guide_rule(self, rule_id: str) -> Optional[StyleGuideRule]:
+        async with self._session_factory() as session:
+            row = await session.get(StyleGuideRuleRow, rule_id)
+            return _row_to_style_guide_rule(row) if row else None
+
+    async def list_style_guide_rules(
+        self, style_guide_id: Optional[str] = None, locale: Optional[str] = None, limit: int = 200,
+    ) -> List[StyleGuideRule]:
+        async with self._session_factory() as session:
+            stmt = select(StyleGuideRuleRow)
+            if style_guide_id:
+                stmt = stmt.where(StyleGuideRuleRow.style_guide_id == style_guide_id)
+            if locale:
+                stmt = stmt.where(
+                    (StyleGuideRuleRow.applies_to_locale == locale)
+                    | (StyleGuideRuleRow.applies_to_locale.is_(None))
+                )
+            stmt = stmt.order_by(StyleGuideRuleRow.created_at.desc()).limit(limit)
+            rows = (await session.execute(stmt)).scalars().all()
+            return [_row_to_style_guide_rule(r) for r in rows]
+
+    async def search_style_guide_rules(
+        self, embedding: List[float], locale: Optional[str] = None,
+        style_guide_id: Optional[str] = None, limit: int = 5,
+    ) -> List[StyleGuideRule]:
+        """Vector half of the hybrid retrieval — nearest rules by cosine
+        distance, restricted to rows that actually have an embedding."""
+        async with self._session_factory() as session:
+            stmt = select(StyleGuideRuleRow).where(StyleGuideRuleRow.embedding.isnot(None))
+            if style_guide_id:
+                stmt = stmt.where(StyleGuideRuleRow.style_guide_id == style_guide_id)
+            if locale:
+                stmt = stmt.where(
+                    (StyleGuideRuleRow.applies_to_locale == locale)
+                    | (StyleGuideRuleRow.applies_to_locale.is_(None))
+                )
+            stmt = stmt.order_by(StyleGuideRuleRow.embedding.cosine_distance(embedding)).limit(limit)
+            rows = (await session.execute(stmt)).scalars().all()
+            return [_row_to_style_guide_rule(r) for r in rows]
+
+    # ── Phase 13: Glossary Terms ────────────────────────────────────────
+
+    async def save_glossary_term(
+        self, term: GlossaryTerm, embedding: Optional[List[float]] = None,
+    ) -> GlossaryTerm:
+        async with self._session_factory() as session:
+            row = await session.get(GlossaryTermRow, term.id)
+            if row is None:
+                row = GlossaryTermRow(id=term.id)
+                session.add(row)
+            row.style_guide_id = term.style_guide_id
+            row.source_term = term.source_term
+            row.target_term = term.target_term
+            row.locale = term.locale
+            row.do_not_translate = term.do_not_translate
+            row.notes = term.notes
+            row.created_at = term.created_at
+            row.meta = term.metadata
+            if embedding is not None:
+                row.embedding = embedding
+            await session.commit()
+        return term
+
+    async def get_glossary_term(self, term_id: str) -> Optional[GlossaryTerm]:
+        async with self._session_factory() as session:
+            row = await session.get(GlossaryTermRow, term_id)
+            return _row_to_glossary_term(row) if row else None
+
+    async def list_glossary_terms(
+        self, style_guide_id: Optional[str] = None, locale: Optional[str] = None, limit: int = 200,
+    ) -> List[GlossaryTerm]:
+        async with self._session_factory() as session:
+            stmt = select(GlossaryTermRow)
+            if style_guide_id:
+                stmt = stmt.where(GlossaryTermRow.style_guide_id == style_guide_id)
+            if locale:
+                stmt = stmt.where(
+                    (GlossaryTermRow.locale == locale) | (GlossaryTermRow.locale.is_(None))
+                )
+            stmt = stmt.order_by(GlossaryTermRow.created_at.desc()).limit(limit)
+            rows = (await session.execute(stmt)).scalars().all()
+            return [_row_to_glossary_term(r) for r in rows]
+
+    async def search_glossary_terms(
+        self, embedding: List[float], locale: Optional[str] = None, limit: int = 5,
+    ) -> List[GlossaryTerm]:
+        async with self._session_factory() as session:
+            stmt = select(GlossaryTermRow).where(GlossaryTermRow.embedding.isnot(None))
+            if locale:
+                stmt = stmt.where(
+                    (GlossaryTermRow.locale == locale) | (GlossaryTermRow.locale.is_(None))
+                )
+            stmt = stmt.order_by(GlossaryTermRow.embedding.cosine_distance(embedding)).limit(limit)
+            rows = (await session.execute(stmt)).scalars().all()
+            return [_row_to_glossary_term(r) for r in rows]
+
+    async def find_glossary_terms_mentioned_in(
+        self, text_blob: str, locale: Optional[str] = None, limit: int = 20,
+    ) -> List[GlossaryTerm]:
+        """Keyword fallback that works with or without embeddings — a
+        literal source_term substring match against the given text. Cheap
+        and catches exact terminology mentions embeddings can miss."""
+        async with self._session_factory() as session:
+            stmt = select(GlossaryTermRow)
+            if locale:
+                stmt = stmt.where(
+                    (GlossaryTermRow.locale == locale) | (GlossaryTermRow.locale.is_(None))
+                )
+            rows = (await session.execute(stmt.limit(1000))).scalars().all()
+            lowered = text_blob.lower()
+            matches = [r for r in rows if r.source_term and r.source_term.lower() in lowered]
+            return [_row_to_glossary_term(r) for r in matches[:limit]]
+
+    # ── Phase 13: Translation Exemplars ─────────────────────────────────
+
+    async def save_translation_exemplar(
+        self, exemplar: TranslationExemplar, embedding: Optional[List[float]] = None,
+    ) -> TranslationExemplar:
+        async with self._session_factory() as session:
+            row = TranslationExemplarRow(
+                id=exemplar.id, source_text=exemplar.source_text, target_text=exemplar.target_text,
+                source_language=exemplar.source_language, target_language=exemplar.target_language,
+                origin=exemplar.origin.value, origin_agent_id=exemplar.origin_agent_id,
+                style_guide_id=exemplar.style_guide_id, created_at=exemplar.created_at,
+                meta=exemplar.metadata,
+            )
+            if embedding is not None:
+                row.embedding = embedding
+            session.add(row)
+            await session.commit()
+        return exemplar
+
+    async def search_translation_exemplars(
+        self, embedding: List[float], source_language: str, target_language: str, limit: int = 5,
+    ) -> List[TranslationExemplar]:
+        async with self._session_factory() as session:
+            stmt = (
+                select(TranslationExemplarRow)
+                .where(
+                    TranslationExemplarRow.embedding.isnot(None),
+                    TranslationExemplarRow.source_language == source_language,
+                    TranslationExemplarRow.target_language == target_language,
+                )
+                .order_by(TranslationExemplarRow.embedding.cosine_distance(embedding))
+                .limit(limit)
+            )
+            rows = (await session.execute(stmt)).scalars().all()
+            return [_row_to_translation_exemplar(r) for r in rows]
+
+    async def list_translation_exemplars(
+        self, source_language: Optional[str] = None, target_language: Optional[str] = None,
+        origin: Optional[ExemplarOrigin] = None, limit: int = 100,
+    ) -> List[TranslationExemplar]:
+        async with self._session_factory() as session:
+            stmt = select(TranslationExemplarRow)
+            if source_language:
+                stmt = stmt.where(TranslationExemplarRow.source_language == source_language)
+            if target_language:
+                stmt = stmt.where(TranslationExemplarRow.target_language == target_language)
+            if origin:
+                stmt = stmt.where(TranslationExemplarRow.origin == origin.value)
+            stmt = stmt.order_by(TranslationExemplarRow.created_at.desc()).limit(limit)
+            rows = (await session.execute(stmt)).scalars().all()
+            return [_row_to_translation_exemplar(r) for r in rows]
+
+    # ── Phase 13: Graph (nodes/edges) ───────────────────────────────────
+
+    async def upsert_graph_node(
+        self, node_type: str, ref_table: str, ref_id: str,
+        label: Optional[str] = None, properties: Optional[Dict[str, Any]] = None,
+    ) -> GraphNode:
+        async with self._session_factory() as session:
+            row = (
+                await session.execute(
+                    select(GraphNodeRow).where(
+                        GraphNodeRow.node_type == node_type, GraphNodeRow.ref_id == ref_id,
+                    )
+                )
+            ).scalars().first()
+            if row is None:
+                row = GraphNodeRow(node_type=node_type, ref_table=ref_table, ref_id=ref_id)
+                session.add(row)
+            if label is not None:
+                row.label = label
+            if properties is not None:
+                row.properties = properties
+            await session.commit()
+            return _row_to_graph_node(row)
+
+    async def get_graph_node(self, node_type: str, ref_id: str) -> Optional[GraphNode]:
+        async with self._session_factory() as session:
+            row = (
+                await session.execute(
+                    select(GraphNodeRow).where(
+                        GraphNodeRow.node_type == node_type, GraphNodeRow.ref_id == ref_id,
+                    )
+                )
+            ).scalars().first()
+            return _row_to_graph_node(row) if row else None
+
+    async def upsert_graph_edge(
+        self, src_node_id: str, dst_node_id: str, edge_type: str,
+        properties: Optional[Dict[str, Any]] = None,
+    ) -> GraphEdge:
+        """De-duplicates on (src, dst, edge_type) — re-recording the same
+        relationship (e.g. a unit retrieving the same rule across several
+        translation events) updates the existing edge rather than piling up
+        duplicates, which would otherwise skew Phase 14's clustering counts."""
+        async with self._session_factory() as session:
+            row = (
+                await session.execute(
+                    select(GraphEdgeRow).where(
+                        GraphEdgeRow.src_node_id == src_node_id,
+                        GraphEdgeRow.dst_node_id == dst_node_id,
+                        GraphEdgeRow.edge_type == edge_type,
+                    )
+                )
+            ).scalars().first()
+            if row is None:
+                row = GraphEdgeRow(src_node_id=src_node_id, dst_node_id=dst_node_id, edge_type=edge_type)
+                session.add(row)
+            if properties is not None:
+                row.properties = properties
+            await session.commit()
+            return _row_to_graph_edge(row)
+
+    async def list_neighbors(
+        self, node_id: str, edge_type: Optional[str] = None, direction: str = "out",
+    ) -> List[GraphNode]:
+        """One hop from `node_id`. direction="out" follows src->dst edges
+        (e.g. Unit -> StyleGuideRule); "in" follows dst->src (e.g. from a
+        StyleGuideRule back to every Unit that applied it — the join Phase
+        14's consistency clustering needs)."""
+        async with self._session_factory() as session:
+            if direction == "out":
+                stmt = select(GraphEdgeRow).where(GraphEdgeRow.src_node_id == node_id)
+            else:
+                stmt = select(GraphEdgeRow).where(GraphEdgeRow.dst_node_id == node_id)
+            if edge_type:
+                stmt = stmt.where(GraphEdgeRow.edge_type == edge_type)
+            edges = (await session.execute(stmt)).scalars().all()
+            neighbor_ids = [e.dst_node_id if direction == "out" else e.src_node_id for e in edges]
+            if not neighbor_ids:
+                return []
+            nodes = (
+                await session.execute(select(GraphNodeRow).where(GraphNodeRow.id.in_(neighbor_ids)))
+            ).scalars().all()
+            return [_row_to_graph_node(n) for n in nodes]
+
+    async def link_unit_style_context(
+        self, unit_id: str, rule_ids: List[str], term_ids: List[str],
+    ) -> None:
+        """Records that a translation unit's retrieval context included
+        these rules/terms — the graph_edges Phase 14's consistency
+        clustering groups units by (§7 of the proposal doc)."""
+        unit_node = await self.upsert_graph_node("Unit", "translation_units", unit_id)
+        for rule_id in rule_ids:
+            rule_node = await self.upsert_graph_node("StyleGuideRule", "style_guide_rules", rule_id)
+            await self.upsert_graph_edge(unit_node.id, rule_node.id, "appliedRule")
+        for term_id in term_ids:
+            term_node = await self.upsert_graph_node("GlossaryTerm", "glossary_terms", term_id)
+            await self.upsert_graph_edge(unit_node.id, term_node.id, "usedTerm")
+
+    async def link_glossary_preferred_over(self, term_id: str, alternative_term_id: str) -> None:
+        term_node = await self.upsert_graph_node("GlossaryTerm", "glossary_terms", term_id)
+        alt_node = await self.upsert_graph_node("GlossaryTerm", "glossary_terms", alternative_term_id)
+        await self.upsert_graph_edge(term_node.id, alt_node.id, "preferredOver")
+
+    async def list_glossary_preferred_alternatives(self, term_id: str) -> List[GlossaryTerm]:
+        node = await self.get_graph_node("GlossaryTerm", term_id)
+        if node is None:
+            return []
+        neighbors = await self.list_neighbors(node.id, edge_type="preferredOver", direction="out")
+        terms = []
+        for n in neighbors:
+            term = await self.get_glossary_term(n.ref_id)
+            if term:
+                terms.append(term)
+        return terms
+
+    # ── Phase 13: Style Adherence Scores ────────────────────────────────
+
+    async def save_style_adherence_score(self, score: StyleAdherenceScore) -> StyleAdherenceScore:
+        async with self._session_factory() as session:
+            score.scored_at = await self._strictly_after_latest(
+                session, StyleAdherenceScoreRow, StyleAdherenceScoreRow.unit_id, score.unit_id, score.scored_at,
+            )
+            session.add(StyleAdherenceScoreRow(
+                id=score.id, unit_id=score.unit_id, style_guide_id=score.style_guide_id,
+                tone_score=score.tone_score, voice_score=score.voice_score,
+                terminology_score=score.terminology_score, overall_score=score.overall_score,
+                scorer=score.scorer, reasons=score.reasons, raw_response=score.raw_response,
+                needs_review=score.needs_review, scored_at=score.scored_at,
+            ))
+            await session.commit()
+        return score
+
+    async def get_latest_style_adherence_score(self, unit_id: str) -> Optional[StyleAdherenceScore]:
+        async with self._session_factory() as session:
+            row = (
+                await session.execute(
+                    select(StyleAdherenceScoreRow)
+                    .where(StyleAdherenceScoreRow.unit_id == unit_id)
+                    .order_by(StyleAdherenceScoreRow.scored_at.desc())
+                )
+            ).scalars().first()
+            return _row_to_style_adherence_score(row) if row else None
+
+    # ── Phase 14: Vendor Scorecard ──────────────────────────────────────
+
+    async def get_vendor_scorecard(self, target_language: Optional[str] = None) -> List[VendorScorecardEntry]:
+        """Aggregates each organization's TranslationUnits' LATEST quality
+        and style-adherence scores — "latest per unit" is why this is raw
+        SQL (Postgres `DISTINCT ON`) rather than a plain GROUP BY: a unit
+        can have many quality_scores/style_adherence_scores rows over its
+        history (every redrive/preview re-scores it), and only the most
+        recent one per unit should count toward the average, the same
+        "current version only" rule get_latest_quality_score already
+        applies one unit at a time. Sorted best-first (highest average
+        quality) — the leaderboard framing §9b.2 of the proposal doc calls
+        for, not a worklist."""
+        async with self._session_factory() as session:
+            language_filter = "AND tu.target_language = :target_language" if target_language else ""
+            result = await session.execute(
+                text(f"""
+                    WITH latest_quality AS (
+                        SELECT DISTINCT ON (unit_id) unit_id, score
+                        FROM quality_scores ORDER BY unit_id, scored_at DESC
+                    ),
+                    latest_style AS (
+                        SELECT DISTINCT ON (unit_id) unit_id, tone_score, voice_score,
+                               terminology_score, overall_score
+                        FROM style_adherence_scores ORDER BY unit_id, scored_at DESC
+                    )
+                    SELECT
+                        a.organization AS organization,
+                        COUNT(DISTINCT tu.id) AS unit_count,
+                        AVG(lq.score) AS avg_quality_score,
+                        AVG(ls.overall_score) AS avg_style_score,
+                        AVG(ls.tone_score) AS avg_tone_score,
+                        AVG(ls.voice_score) AS avg_voice_score,
+                        AVG(ls.terminology_score) AS avg_terminology_score
+                    FROM translation_units tu
+                    JOIN provenance_agents a ON a.id = tu.translated_by_agent_id
+                    LEFT JOIN latest_quality lq ON lq.unit_id = tu.id
+                    LEFT JOIN latest_style ls ON ls.unit_id = tu.id
+                    WHERE a.organization IS NOT NULL
+                    {language_filter}
+                    GROUP BY a.organization
+                    ORDER BY avg_quality_score DESC NULLS LAST
+                """),
+                {"target_language": target_language} if target_language else {},
+            )
+            rows = result.mappings().all()
+            return [
+                VendorScorecardEntry(
+                    organization=r["organization"], unit_count=r["unit_count"],
+                    avg_quality_score=r["avg_quality_score"], avg_style_score=r["avg_style_score"],
+                    avg_tone_score=r["avg_tone_score"], avg_voice_score=r["avg_voice_score"],
+                    avg_terminology_score=r["avg_terminology_score"],
+                )
+                for r in rows
+            ]
+
+    # ── Phase 15: Automatic Metric Scores (METEOR / COMET-Kiwi) ─────────
+
+    async def save_automatic_metric_score(self, score: AutomaticMetricScore) -> AutomaticMetricScore:
+        async with self._session_factory() as session:
+            score.scored_at = await self._strictly_after_latest(
+                session, AutomaticMetricScoreRow, AutomaticMetricScoreRow.unit_id, score.unit_id,
+                score.scored_at, AutomaticMetricScoreRow.metric == score.metric,
+            )
+            session.add(AutomaticMetricScoreRow(
+                id=score.id, unit_id=score.unit_id, metric=score.metric,
+                score=score.score, raw_score=score.raw_score,
+                reference_type=score.reference_type,
+                reference_unit_version_id=score.reference_unit_version_id,
+                detail=score.detail, scored_at=score.scored_at,
+            ))
+            await session.commit()
+        return score
+
+    async def get_latest_automatic_metric_score(
+        self, unit_id: str, metric: str,
+    ) -> Optional[AutomaticMetricScore]:
+        async with self._session_factory() as session:
+            row = (
+                await session.execute(
+                    select(AutomaticMetricScoreRow)
+                    .where(
+                        AutomaticMetricScoreRow.unit_id == unit_id,
+                        AutomaticMetricScoreRow.metric == metric,
+                    )
+                    .order_by(AutomaticMetricScoreRow.scored_at.desc())
+                )
+            ).scalars().first()
+            return _row_to_automatic_metric_score(row) if row else None
+
+    async def list_automatic_metric_scores(self, unit_id: str) -> List[AutomaticMetricScore]:
+        async with self._session_factory() as session:
+            rows = (
+                await session.execute(
+                    select(AutomaticMetricScoreRow)
+                    .where(AutomaticMetricScoreRow.unit_id == unit_id)
+                    .order_by(AutomaticMetricScoreRow.scored_at.desc())
+                )
+            ).scalars().all()
+            return [_row_to_automatic_metric_score(r) for r in rows]
 
     # ── Stats ────────────────────────────────────────────────────────────
 
@@ -1127,7 +1718,8 @@ def _row_to_quality_score(row: QualityScoreRow) -> QualityScore:
         id=row.id, unit_id=row.unit_id, version_id=row.version_id, score=row.score,
         scorer=row.scorer, reasons=row.reasons,
         errors=[ScoreError(**e) for e in row.errors],
-        raw_response=row.raw_response, needs_review=row.needs_review, scored_at=row.scored_at,
+        raw_response=row.raw_response, needs_review=row.needs_review,
+        hard_fail=row.hard_fail, scored_at=row.scored_at,
     )
 
 
@@ -1200,6 +1792,74 @@ def _row_to_image_translation_unit(row: ImageTranslationUnitRow) -> ImageTransla
         confidence_score=row.confidence_score, quality_score=row.quality_score,
         status=TranslationStatus(row.status), overlay_text_unit_ids=row.overlay_text_unit_ids,
         prov_entity_id=row.prov_entity_id, metadata=row.meta,
+    )
+
+
+def _row_to_style_guide(row: StyleGuideRow) -> StyleGuide:
+    return StyleGuide(
+        id=row.id, name=row.name, version=row.version, locale=row.locale,
+        voice_description=row.voice_description, tone_attributes=row.tone_attributes,
+        supersedes_id=row.supersedes_id, created_at=row.created_at,
+        created_by=row.created_by, metadata=row.meta,
+    )
+
+
+def _row_to_style_guide_rule(row: StyleGuideRuleRow) -> StyleGuideRule:
+    return StyleGuideRule(
+        id=row.id, style_guide_id=row.style_guide_id, rule_type=StyleRuleType(row.rule_type),
+        rule_text=row.rule_text, severity=StyleRuleSeverity(row.severity),
+        applies_to_locale=row.applies_to_locale, source_term=row.source_term,
+        target_term=row.target_term, created_at=row.created_at, metadata=row.meta,
+    )
+
+
+def _row_to_glossary_term(row: GlossaryTermRow) -> GlossaryTerm:
+    return GlossaryTerm(
+        id=row.id, style_guide_id=row.style_guide_id, source_term=row.source_term,
+        target_term=row.target_term, locale=row.locale, do_not_translate=row.do_not_translate,
+        notes=row.notes, created_at=row.created_at, metadata=row.meta,
+    )
+
+
+def _row_to_translation_exemplar(row: TranslationExemplarRow) -> TranslationExemplar:
+    return TranslationExemplar(
+        id=row.id, source_text=row.source_text, target_text=row.target_text,
+        source_language=row.source_language, target_language=row.target_language,
+        origin=ExemplarOrigin(row.origin), origin_agent_id=row.origin_agent_id,
+        style_guide_id=row.style_guide_id, created_at=row.created_at, metadata=row.meta,
+    )
+
+
+def _row_to_graph_node(row: GraphNodeRow) -> GraphNode:
+    return GraphNode(
+        id=row.id, node_type=row.node_type, ref_table=row.ref_table, ref_id=row.ref_id,
+        label=row.label, properties=row.properties, created_at=row.created_at,
+    )
+
+
+def _row_to_graph_edge(row: GraphEdgeRow) -> GraphEdge:
+    return GraphEdge(
+        id=row.id, src_node_id=row.src_node_id, dst_node_id=row.dst_node_id,
+        edge_type=row.edge_type, properties=row.properties, created_at=row.created_at,
+    )
+
+
+def _row_to_style_adherence_score(row: StyleAdherenceScoreRow) -> StyleAdherenceScore:
+    return StyleAdherenceScore(
+        id=row.id, unit_id=row.unit_id, style_guide_id=row.style_guide_id,
+        tone_score=row.tone_score, voice_score=row.voice_score,
+        terminology_score=row.terminology_score, overall_score=row.overall_score,
+        scorer=row.scorer, reasons=row.reasons, raw_response=row.raw_response,
+        needs_review=row.needs_review, scored_at=row.scored_at,
+    )
+
+
+def _row_to_automatic_metric_score(row: AutomaticMetricScoreRow) -> AutomaticMetricScore:
+    return AutomaticMetricScore(
+        id=row.id, unit_id=row.unit_id, metric=row.metric, score=row.score,
+        raw_score=row.raw_score, reference_type=row.reference_type,
+        reference_unit_version_id=row.reference_unit_version_id,
+        detail=row.detail, scored_at=row.scored_at,
     )
 
 

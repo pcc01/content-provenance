@@ -15,10 +15,24 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
-    Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, Text,
+    JSON,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+# Dimensionality of app.core.config.settings.embedding_model
+# (sentence-transformers/all-MiniLM-L6-v2) — every embedding column below
+# assumes this model. Changing EMBEDDING_MODEL to one with a different
+# output size requires a migration to resize these columns too.
+EMBEDDING_DIM = 384
 
 
 class Base(DeclarativeBase):
@@ -236,6 +250,10 @@ class QualityScoreRow(Base):
     errors: Mapped[list] = mapped_column(JSON, default=list)
     raw_response: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     needs_review: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Phase 15 — MQM's "any critical error -> automatic Fail" rule,
+    # decoupled from the numeric score. See QualityScore.hard_fail's
+    # docstring (app/models/schemas.py).
+    hard_fail: Mapped[bool] = mapped_column(Boolean, default=False)
     scored_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
@@ -245,6 +263,8 @@ class RedriveRunRow(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     status: Mapped[str] = mapped_column(String, default="pending")
     threshold: Mapped[float] = mapped_column(Float)
+    style_threshold: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    style_guide_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     scope: Mapped[dict] = mapped_column(JSON, default=dict)
     scoring_provider: Mapped[str] = mapped_column(String)
     redrive_provider: Mapped[str] = mapped_column(String)
@@ -447,3 +467,171 @@ class IngestEventRow(Base):
     xliff_document_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     unit_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+# ─── Phase 13: pgGraph + tone/style/voice provenance ───────────────────────
+# See docs/graphrag-provenance-proposal.md for the full evaluation and
+# ROADMAP.md's "pgGraph & Tone/Style/Voice Provenance (Phase 13)" for the
+# build plan. Graph layer is plain relational tables (graph_nodes/
+# graph_edges + recursive CTEs) — no Apache AGE, no second database, per
+# that evaluation. StyleGuideRule/GlossaryTerm/TranslationExemplar rows are
+# retrieved directly (structured facts, not raw prose chunks — the
+# FactRAG lesson from Barry et al. 2025) with a pgvector column for the
+# semantic-similarity half of the hybrid retrieval; graph_edges carries the
+# structural half (sibling rules, preferred-over terms, supersedes chains).
+
+class StyleGuideRow(Base):
+    __tablename__ = "style_guides"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String)
+    version: Mapped[str] = mapped_column(String, default="1.0")
+    locale: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)  # None = all locales
+    voice_description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    tone_attributes: Mapped[dict] = mapped_column(JSON, default=dict)  # e.g. {"formality": "casual", "energy": "high"}
+    # Self-referential — the §3b "hop" example: walking this chain finds the
+    # CURRENT guide from any historical one. Nullable; no FK constraint on a
+    # self-referencing table to keep migration order simple (enforced at the
+    # application layer instead, same tradeoff already made elsewhere in
+    # this schema for polymorphic ids like ProvenanceBundleRow's).
+    supersedes_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    meta: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
+
+
+class StyleGuideRuleRow(Base):
+    __tablename__ = "style_guide_rules"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    style_guide_id: Mapped[str] = mapped_column(String, ForeignKey("style_guides.id"), index=True)
+    rule_type: Mapped[str] = mapped_column(String)  # tone | voice | terminology | formatting
+    rule_text: Mapped[str] = mapped_column(Text)
+    severity: Mapped[str] = mapped_column(String, default="minor")  # minor | major | critical
+    applies_to_locale: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    source_term: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    target_term: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    # Null when the embedding model isn't available at write time (see
+    # app/core/graph/embeddings.py) — retrieval falls back to locale/
+    # keyword filtering for rows with no embedding rather than failing.
+    embedding: Mapped[Optional[list]] = mapped_column(Vector(EMBEDDING_DIM), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    meta: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
+
+
+class GlossaryTermRow(Base):
+    __tablename__ = "glossary_terms"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    style_guide_id: Mapped[Optional[str]] = mapped_column(
+        String, ForeignKey("style_guides.id"), nullable=True, index=True
+    )
+    source_term: Mapped[str] = mapped_column(String, index=True)
+    target_term: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    locale: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    do_not_translate: Mapped[bool] = mapped_column(Boolean, default=False)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    embedding: Mapped[Optional[list]] = mapped_column(Vector(EMBEDDING_DIM), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    meta: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
+
+
+class TranslationExemplarRow(Base):
+    """A known-good source/target pair used as retrieval context — seeded
+    from TMX import (vendor TM, §9b.1 of the proposal doc) or from a
+    reviewed/approved TranslationUnit. origin_agent_id carries the vendor's
+    identity via the existing ProvenanceAgent.organization field (see
+    AgentRow) so Phase 14's vendor scorecard can aggregate by it."""
+    __tablename__ = "translation_exemplars"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    source_text: Mapped[str] = mapped_column(Text)
+    target_text: Mapped[str] = mapped_column(Text)
+    source_language: Mapped[str] = mapped_column(String, index=True)
+    target_language: Mapped[str] = mapped_column(String, index=True)
+    origin: Mapped[str] = mapped_column(String, default="vendor")  # vendor | ai | human
+    origin_agent_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    style_guide_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    embedding: Mapped[Optional[list]] = mapped_column(Vector(EMBEDDING_DIM), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    meta: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
+
+
+class GraphNodeRow(Base):
+    """One node per graph-tracked entity. Deliberately NOT a wrapper around
+    every table in this schema — only things that participate in a
+    retrieval/consistency traversal (translation units, style guides/rules,
+    glossary terms, exemplars) get a node; ref_table/ref_id point back at
+    the row that's the actual source of truth, so this table carries no
+    data of its own beyond what's needed to traverse."""
+    __tablename__ = "graph_nodes"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    node_type: Mapped[str] = mapped_column(String, index=True)
+    ref_table: Mapped[str] = mapped_column(String)
+    ref_id: Mapped[str] = mapped_column(String, index=True)
+    label: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    properties: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class GraphEdgeRow(Base):
+    """A typed, directed edge between two graph_nodes. edge_type values in
+    use: appliedRule, usedTerm, partOf, supersedes, preferredOver,
+    exemplifies — see app/core/graph/constants.py."""
+    __tablename__ = "graph_edges"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    src_node_id: Mapped[str] = mapped_column(String, ForeignKey("graph_nodes.id"), index=True)
+    dst_node_id: Mapped[str] = mapped_column(String, ForeignKey("graph_nodes.id"), index=True)
+    edge_type: Mapped[str] = mapped_column(String, index=True)
+    properties: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class AutomaticMetricScoreRow(Base):
+    """Phase 15 — non-LLM automatic MT-quality metrics (METEOR, COMET-Kiwi).
+    Deliberately a THIRD, independent axis alongside quality_scores
+    (LLM-judge, MQM-style) and style_adherence_scores (LLM-judge, tone/
+    voice) — never blended into either, per
+    docs/quality-evaluation-research.md §7.2's recommendation: a METEOR/
+    COMET number and a Claude MQM-style number answer different questions
+    even when they render the same, so keeping them in separate rows (not
+    columns on quality_scores) keeps that distinction visible to every
+    consumer of the data, not just ones that know to ask."""
+    __tablename__ = "automatic_metric_scores"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    unit_id: Mapped[str] = mapped_column(String, ForeignKey("translation_units.id"), index=True)
+    metric: Mapped[str] = mapped_column(String, index=True)  # "meteor" | "comet_kiwi"
+    score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # normalized 0-100
+    raw_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # metric's native scale
+    # What was scored against — METEOR/reference-based COMET need a
+    # reference translation this system doesn't generally have; "previous_
+    # version" means the prior TranslationUnitVersion was used as a
+    # pseudo-reference (see app/core/scoring/automatic/meteor.py), None
+    # means no reference was used (COMET-Kiwi, reference-free QE).
+    reference_type: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    reference_unit_version_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    detail: Mapped[dict] = mapped_column(JSON, default=dict)  # model/checkpoint id, etc.
+    scored_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class StyleAdherenceScoreRow(Base):
+    """The tone/voice/style analogue of QualityScoreRow — same 0-100,
+    lower-is-worse convention, scored against a specific StyleGuide rather
+    than for translation accuracy."""
+    __tablename__ = "style_adherence_scores"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    unit_id: Mapped[str] = mapped_column(String, ForeignKey("translation_units.id"), index=True)
+    style_guide_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    tone_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    voice_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    terminology_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    overall_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    scorer: Mapped[str] = mapped_column(String)
+    reasons: Mapped[list] = mapped_column(JSON, default=list)
+    raw_response: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    needs_review: Mapped[bool] = mapped_column(Boolean, default=False)
+    scored_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

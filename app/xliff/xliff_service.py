@@ -289,6 +289,17 @@ def _build_unit(
         if prov.summary:
             _note(notes, "prov:summary", prov.summary,             f"{PROVX_NS}:summary")
 
+    # ── Style/glossary brief (Phase 13, §9b.3) ────────────────────────────────
+    # The StyleGuideRule/GlossaryTerm entities above are already fully
+    # embedded via the generic prov:Entity loop; this consolidates them
+    # into one plain-English note a vendor's linguist can read directly
+    # without decoding PROV note syntax — so vendor-routed (not just
+    # AI-routed) translation work gets the same style/glossary grounding.
+    if prov:
+        brief_lines = _style_brief_lines(prov)
+        if brief_lines:
+            _note(notes, "style:brief", "; ".join(brief_lines), f"{PROVX_NS}:styleBrief")
+
     # ── Deployment records ────────────────────────────────────────────────────
     for dep in deps:
         dep_val = (
@@ -328,6 +339,27 @@ def _build_unit(
     tgt_el = ET.SubElement(seg, f"{{{XLIFF_NS}}}target")
     tgt_el.set(f"{{{DC_NS}}}language", unit.target_language)
     tgt_el.text = unit.target_text or ""
+
+
+def _style_brief_lines(prov: ProvenanceRecord) -> List[str]:
+    """Phase 13 — renders the ContextRetrieval entities already present in
+    `prov.entities` (see app/core/prov_builder.py's §4d) as plain-English
+    lines instead of PROV note key=value syntax."""
+    lines: List[str] = []
+    for e in prov.entities:
+        if e.entity_type == "StyleGuideRule":
+            rule_type = e.attributes.get("provx:ruleType", "rule")
+            rule_text = e.attributes.get("provx:ruleText", "")
+            lines.append(f"[{rule_type}] {rule_text}")
+        elif e.entity_type == "GlossaryTerm":
+            source_term = e.attributes.get("provx:sourceTerm", "")
+            target_term = e.attributes.get("provx:targetTerm", "")
+            do_not_translate = e.attributes.get("provx:doNotTranslate") == "True"
+            if do_not_translate:
+                lines.append(f"[glossary] Do not translate '{source_term}' — keep as-is")
+            else:
+                lines.append(f"[glossary] '{source_term}' -> '{target_term}'")
+    return lines
 
 
 def _pretty_xml(root: ET.Element) -> str:

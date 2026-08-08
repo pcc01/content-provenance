@@ -16,7 +16,10 @@ from app.models.schemas import (
     TranslateRequest, TranslateResponse, TranslationUnit, DeploymentRecord,
     TranslationMethod, TranslationStatus, DeploymentContext
 )
+from app.core.config import settings
 from app.core.database import get_db
+from app.core.graph.builder import record_unit_style_context
+from app.core.graph.retrieval import retrieve_style_context
 from app.core.prov_builder import build_provenance_record, to_prov_json
 from app.core.haystack_pipeline import index_translation_unit
 from app.core.translation_backends import get_translation_backend
@@ -75,14 +78,28 @@ async def create_translation(request: TranslateRequest):
             organization="Anthropic",
         )
     
-    # ── 2. Translate ──────────────────────────────────────────────────────────
+    # ── 2. Retrieve style/voice/glossary context, then translate ──────────────
+    # Phase 13 — grounds the translation in retrieved context BEFORE it's
+    # produced, rather than only scoring adherence after the fact. See
+    # app/core/graph/retrieval.py and docs/graphrag-provenance-proposal.md §4.
+    style_retrieval = None
+    if request.method in (TranslationMethod.AI, TranslationMethod.HYBRID) and settings.graph_retrieval_enabled:
+        style_retrieval = await retrieve_style_context(
+            request.source_text, request.source_language, request.target_language,
+            style_guide_id=request.style_guide_id, top_k=settings.graph_retrieval_top_k,
+        )
+
     if request.method in (TranslationMethod.AI, TranslationMethod.HYBRID):
-        backend = get_translation_backend()
+        backend = get_translation_backend(request.provider)  # Phase 16 — per-request provider override
         translated_text, confidence = await backend.translate(
             request.source_text,
             request.source_language,
             request.target_language,
             domain=request.domain,
+            style_context=(
+                style_retrieval.as_prompt_context()
+                if style_retrieval and not style_retrieval.is_empty else None
+            ),
         )
     else:
         # Human translation — text would be supplied by a TMS integration
@@ -111,6 +128,13 @@ async def create_translation(request: TranslateRequest):
         }
     )
     await db.save_translation_unit(unit)
+
+    # Phase 13 — persist which style/glossary facts actually informed this
+    # unit as graph_edges, BEFORE the first provenance build below, so the
+    # ContextRetrieval activity (app/core/prov_builder.py) is present from
+    # the very first build rather than needing a second rebuild to appear.
+    if style_retrieval and not style_retrieval.is_empty:
+        await record_unit_style_context(unit.id, style_retrieval)
 
     # ── 4. Record deployment if location provided ─────────────────────────────
     deployments = []

@@ -29,6 +29,22 @@ async function requestForm<T>(path: string, formData: FormData, method = "POST")
   return res.json();
 }
 
+// `new URLSearchParams({a: undefined})` does NOT drop the key — it calls
+// String(undefined), producing the literal query string `a=undefined`,
+// which FastAPI then treats as a real (never-matching) filter value
+// instead of "omit this filter." Every optional-param query-string call
+// below must route through this first, not pass its params object to
+// URLSearchParams directly — caught via live UI testing on the
+// Consistency page (blank "target language" silently returned zero
+// results instead of everything) before it could ship silently broken.
+function cleanParams(params: Record<string, unknown>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== null) out[k] = String(v);
+  }
+  return out;
+}
+
 export function imageFileUrl(imageId: string): string {
   return `${API_BASE}/images/${imageId}/file`;
 }
@@ -130,6 +146,8 @@ export interface RedriveRun {
   id: string;
   status: string;
   threshold: number;
+  style_threshold: number | null;
+  style_guide_id: string | null;
   scope: Record<string, unknown>;
   scoring_provider: string;
   redrive_provider: string;
@@ -143,6 +161,7 @@ export interface RedriveRun {
 export interface RedrivePreview {
   scope_count: number;
   below_threshold: number;
+  below_style_threshold?: number;
   estimated_source_chars: number;
   redrive_provider: string;
 }
@@ -307,7 +326,256 @@ export function auditPdfUrl(auditId: string): string {
   return `${API_BASE}/audit/runs/${auditId}/report.pdf`;
 }
 
+// ── Phase 13: Style Guides / Glossary / Retrieval ───────────────────────────
+
+export interface StyleGuide {
+  id: string;
+  name: string;
+  version: string;
+  locale: string | null;
+  voice_description: string | null;
+  tone_attributes: Record<string, unknown>;
+  supersedes_id: string | null;
+  created_at: string;
+  created_by: string | null;
+}
+
+export interface StyleGuideRule {
+  id: string;
+  style_guide_id: string;
+  rule_type: "tone" | "voice" | "terminology" | "formatting";
+  rule_text: string;
+  severity: "minor" | "major" | "critical";
+  applies_to_locale: string | null;
+  source_term: string | null;
+  target_term: string | null;
+  created_at: string;
+}
+
+export interface GlossaryTerm {
+  id: string;
+  style_guide_id: string | null;
+  source_term: string;
+  target_term: string | null;
+  locale: string | null;
+  do_not_translate: boolean;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface RetrievedFact {
+  kind: "rule" | "term" | "exemplar";
+  id: string;
+  text: string;
+  source: string;
+}
+
+export interface RetrievePreview {
+  rules: RetrievedFact[];
+  terms: RetrievedFact[];
+  exemplars: RetrievedFact[];
+  prompt_context: string;
+}
+
+export interface CheckSourceResult {
+  tone_score: number | null;
+  voice_score: number | null;
+  overall_score: number | null;
+  reasons: string[];
+  style_guide_id: string | null;
+  needs_review: boolean;
+}
+
+// ── Phase 14: Vendor Scorecard / Consistency ────────────────────────────────
+
+export interface VendorScorecardEntry {
+  organization: string;
+  unit_count: number;
+  avg_quality_score: number | null;
+  avg_style_score: number | null;
+  avg_tone_score: number | null;
+  avg_voice_score: number | null;
+  avg_terminology_score: number | null;
+}
+
+export interface ConsistencyFinding {
+  id: string;
+  finding_type: "term_drift" | "term_inconsistency" | "tone_spread";
+  severity: "info" | "warning";
+  summary: string;
+  unit_ids: string[];
+  detail: Record<string, unknown>;
+}
+
+export interface ConsistencyResult {
+  scope: Record<string, unknown>;
+  units_checked: number;
+  findings: ConsistencyFinding[];
+  checked_at: string;
+}
+
+// ── Phase 15: Automatic Quality Metrics ─────────────────────────────────────
+
+export interface AutomaticMetricScore {
+  id: string;
+  unit_id: string;
+  metric: string;
+  score: number | null;
+  raw_score: number | null;
+  reference_type: string | null;
+  scored_at: string;
+}
+
+// ── Phase 16: multi-provider translate / evaluate / retranslate ────────────
+//
+// Two distinct provider vocabularies on the backend, not one: a TRANSLATE
+// provider is anything with a TranslationBackend (app/core/translation_
+// backends.py's _PROVIDER_CLASSES) — includes NMT-only services (Google
+// Translate, MS Translator) that can't evaluate. An EVALUATE provider is
+// anything with a QualityScorer (app/core/scoring/factory.py's get_scorer)
+// — notably "claude", not "anthropic", for the same underlying vendor,
+// because the two factories were named independently. Getting this wrong
+// (e.g. sending "anthropic" to /quality/evaluate) 400s, so the two option
+// lists below are kept deliberately separate rather than merged.
+
+export const TRANSLATE_PROVIDERS: { value: string; label: string }[] = [
+  { value: "", label: "Default (app setting)" },
+  { value: "anthropic", label: "Claude (Anthropic)" },
+  { value: "openai", label: "OpenAI" },
+  { value: "gemini", label: "Google Gemini" },
+  { value: "google", label: "Google Translate (NMT only)" },
+  { value: "deepl", label: "DeepL" },
+  { value: "mstranslator", label: "Microsoft Translator (NMT only)" },
+  { value: "ollama", label: "Ollama — Tower+ (local)" },
+  { value: "lmstudio", label: "LMStudio (local)" },
+  { value: "vllm", label: "vLLM (local)" },
+];
+
+export const EVALUATE_PROVIDERS: { value: string; label: string }[] = [
+  { value: "", label: "Default (app setting)" },
+  { value: "claude", label: "Claude (Anthropic)" },
+  { value: "openai", label: "OpenAI" },
+  { value: "gemini", label: "Google Gemini" },
+  { value: "ollama", label: "Ollama — Tower+ (local)" },
+  { value: "lmstudio", label: "LMStudio (local)" },
+  { value: "vllm", label: "vLLM (local)" },
+];
+
+export interface EvaluateResult {
+  id: string;
+  unit_id: string;
+  score: number | null;
+  scorer: string;
+  reasons: string[];
+  needs_review: boolean;
+  hard_fail: boolean;
+  raw_response: string | null;
+}
+
+export function vendorScorecardPdfUrl(targetLanguage?: string): string {
+  return `${API_BASE}/vendors/scorecard/report.pdf${targetLanguage ? `?target_language=${encodeURIComponent(targetLanguage)}` : ""}`;
+}
+
+// POST /translations/'s response — was never wrapped by the original
+// client (no "create a translation" form existed anywhere in the UI until
+// the Content Creation page), added here alongside the Phase 13 additions
+// that make it worth having a dedicated creation screen for.
+export interface TranslateResponse {
+  translation_unit_id: string;
+  source_text: string;
+  translated_text: string;
+  source_language: string;
+  target_language: string;
+  method: string;
+  confidence_score: number | null;
+  provenance_record_id: string;
+  xliff_document_id: string;
+  status: string;
+  translated_at: string;
+}
+
+const phase13to15Api = {
+  createTranslation: (body: {
+    source_text: string; source_language: string; target_language: string;
+    method?: "ai" | "human" | "hybrid"; context?: string; style_guide_id?: string; domain?: string;
+    provider?: string; // Phase 16 — overrides settings.translation_provider for this call only
+  }) => request<TranslateResponse>("/translations/", { method: "POST", body: JSON.stringify(body) }),
+
+  // ── Style Guides ───────────────────────────────────────────────────────
+  listStyleGuides: (locale?: string) =>
+    request<StyleGuide[]>(`/style/guides${locale ? `?locale=${encodeURIComponent(locale)}` : ""}`),
+  createStyleGuide: (body: {
+    name: string; version?: string; locale?: string; voice_description?: string;
+    tone_attributes?: Record<string, unknown>; supersedes_id?: string; created_by?: string;
+  }) => request<StyleGuide>("/style/guides", { method: "POST", body: JSON.stringify(body) }),
+  getStyleGuideChain: (id: string) => request<StyleGuide[]>(`/style/guides/${id}/chain`),
+
+  listStyleGuideRules: (guideId: string, locale?: string) =>
+    request<StyleGuideRule[]>(`/style/guides/${guideId}/rules${locale ? `?locale=${encodeURIComponent(locale)}` : ""}`),
+  createStyleGuideRule: (guideId: string, body: {
+    rule_type: string; rule_text: string; severity?: string; applies_to_locale?: string;
+    source_term?: string; target_term?: string;
+  }) => request<StyleGuideRule>(`/style/guides/${guideId}/rules`, { method: "POST", body: JSON.stringify(body) }),
+
+  listGlossaryTerms: (params?: { style_guide_id?: string; locale?: string }) =>
+    request<GlossaryTerm[]>(
+      `/style/glossary-terms${params ? `?${new URLSearchParams(cleanParams(params))}` : ""}`,
+    ),
+  createGlossaryTerm: (body: {
+    source_term: string; target_term?: string; locale?: string; do_not_translate?: boolean;
+    notes?: string; style_guide_id?: string; preferred_over_term_ids?: string[];
+  }) => request<GlossaryTerm>("/style/glossary-terms", { method: "POST", body: JSON.stringify(body) }),
+
+  retrievePreview: (params: { text: string; source_language: string; target_language: string; style_guide_id?: string }) =>
+    request<RetrievePreview>(`/style/retrieve-preview?${new URLSearchParams(cleanParams(params))}`),
+  checkSource: (body: { text: string; language: string; style_guide_id?: string }) =>
+    request<CheckSourceResult>("/style/check-source", { method: "POST", body: JSON.stringify(body) }),
+
+  // ── TMX / XLIFF import ────────────────────────────────────────────────
+  importTmx: (file: File, body: { source_language: string; target_language: string; source_system: string; style_guide_id?: string }) => {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("source_language", body.source_language);
+    form.append("target_language", body.target_language);
+    form.append("source_system", body.source_system);
+    if (body.style_guide_id) form.append("style_guide_id", body.style_guide_id);
+    return requestForm<{ imported_count: number; exemplar_ids: string[] }>("/tm/import", form);
+  },
+  importXliff: (file: File, sourceSystem: string) => {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("source_system", sourceSystem);
+    return requestForm<{ imported_count: number; translation_unit_ids: string[] }>("/xliff/import", form);
+  },
+
+  // ── Vendor Scorecard ───────────────────────────────────────────────────
+  getVendorScorecard: (targetLanguage?: string) =>
+    request<VendorScorecardEntry[]>(
+      `/vendors/scorecard${targetLanguage ? `?target_language=${encodeURIComponent(targetLanguage)}` : ""}`,
+    ),
+
+  // ── Consistency ────────────────────────────────────────────────────────
+  checkConsistency: (params: { target_language?: string; source_language?: string; project_id?: string; unit_ids?: string }) =>
+    request<ConsistencyResult>(`/consistency/check?${new URLSearchParams(cleanParams(params))}`),
+
+  // ── Automatic metrics ──────────────────────────────────────────────────
+  meteorCompare: (hypothesis: string, reference: string) =>
+    request<{ score: number | null }>("/quality/meteor-compare", {
+      method: "POST", body: JSON.stringify({ hypothesis, reference }),
+    }),
+  getAutomaticScores: (unitId: string) => request<AutomaticMetricScore[]>(`/quality/${unitId}/automatic`),
+
+  // Phase 16 — standalone "evaluate" action: score one unit with a chosen
+  // LLM-judge provider on demand, independent of a redrive run.
+  evaluateUnit: (unitId: string, provider?: string) =>
+    request<EvaluateResult>("/quality/evaluate", {
+      method: "POST", body: JSON.stringify({ unit_id: unitId, provider: provider || undefined }),
+    }),
+};
+
 export const api = {
+  ...phase13to15Api,
+
   getTranslation: (id: string) => request<TranslationUnit>(`/translations/${id}`),
   getTranslationsBatch: (ids: string[]) =>
     request<(TranslationUnit & { latest_score: number | null; has_pending_proposal: boolean })[]>(
@@ -326,15 +594,25 @@ export const api = {
   resolveNote: (unitId: string, noteId: string, resolved: boolean) =>
     request<ReviewNote>(`/translations/${unitId}/notes/${noteId}/resolve?resolved=${resolved}`, { method: "PUT" }),
 
-  previewRedrive: (params: { threshold: number; target_language?: string }) =>
+  previewRedrive: (params: {
+    threshold: number; style_threshold?: number; style_guide_id?: string; target_language?: string;
+    scoring_provider?: string;
+  }) =>
     request<RedrivePreview>(
-      `/redrive/preview?${new URLSearchParams(params as unknown as Record<string, string>)}`,
+      `/redrive/preview?${new URLSearchParams(cleanParams(params))}`,
     ),
   createRedriveRun: (body: {
     threshold: number;
+    // Phase 13 — independent style-adherence axis; a unit redrives if
+    // EITHER threshold is crossed. undefined/omitted = style is never
+    // itself a reason to redrive (see RedriveRun.style_threshold's
+    // docstring on the backend).
+    style_threshold?: number;
+    style_guide_id?: string;
     scope: Record<string, unknown>;
     require_human_approval?: boolean;
-    scoring_provider?: string;
+    scoring_provider?: string; // the "evaluate" model — see EVALUATE_PROVIDERS
+    redrive_provider?: string; // Phase 16 — the "retranslate" model — see TRANSLATE_PROVIDERS
   }) => request<RedriveRun>("/redrive/runs", { method: "POST", body: JSON.stringify(body) }),
   getRedriveRun: (id: string) => request<RedriveRun>(`/redrive/runs/${id}`),
   approveRedriveItem: (runId: string, itemId: string, actor: string) =>
@@ -346,7 +624,7 @@ export const api = {
       method: "POST", body: JSON.stringify({ actor, reason }),
     }),
   getQueue: (params: { threshold: number; target_language?: string }) =>
-    request<QueueItem[]>(`/redrive/queue?${new URLSearchParams(params as unknown as Record<string, string>)}`),
+    request<QueueItem[]>(`/redrive/queue?${new URLSearchParams(cleanParams(params))}`),
 
   search: (q: string, semantic = false) =>
     request<{ results: unknown[]; total: number }>(
@@ -447,6 +725,6 @@ export const api = {
   getAuditPages: (id: string) => request<SiteAuditPage[]>(`/audit/runs/${id}/pages`),
   getAuditFindings: (id: string, params?: { check?: SiteAuditCheck; severity?: SiteAuditSeverity }) =>
     request<SiteAuditFinding[]>(
-      `/audit/runs/${id}/findings${params ? `?${new URLSearchParams(params as Record<string, string>)}` : ""}`,
+      `/audit/runs/${id}/findings${params ? `?${new URLSearchParams(cleanParams(params))}` : ""}`,
     ),
 };

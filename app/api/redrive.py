@@ -21,6 +21,7 @@ from app.core.database import get_db
 from app.core.redrive.engine import RedriveEngine, _NeverInvokedScorer, build_engine_for_item
 from app.core.redrive.propose import propose_human_translation
 from app.core.scoring.factory import get_scorer
+from app.core.translation_backends import get_translation_backend
 from app.models.schemas import RedriveRun, RedriveRunItem
 
 router = APIRouter()
@@ -28,8 +29,18 @@ router = APIRouter()
 
 class RedriveRunRequest(BaseModel):
     threshold: float = Field(80, ge=0, le=100)
+    # Phase 13 — independent style-adherence threshold axis; None (default)
+    # means style is never itself a reason to redrive. See
+    # RedriveRun.style_threshold's docstring.
+    style_threshold: Optional[float] = Field(None, ge=0, le=100)
+    style_guide_id: Optional[str] = None
     scope: Dict[str, Any] = Field(default_factory=dict)
-    scoring_provider: Optional[str] = None  # defaults to settings.scoring_provider
+    scoring_provider: Optional[str] = None  # defaults to settings.scoring_provider — the "evaluate" model
+    # Phase 16 — which model actually REtranslates a below-threshold unit;
+    # defaults to settings.translation_provider. Independent of
+    # scoring_provider — you can e.g. evaluate with Claude but redrive
+    # with a cheaper/local model, or vice versa.
+    redrive_provider: Optional[str] = None
     require_human_approval: bool = False
     triggered_by: Optional[str] = None
 
@@ -50,10 +61,20 @@ class BulkApproveRequest(BaseModel):
     actor: str
 
 
-def _build_engine(scoring_provider: Optional[str], redrive_label: Optional[str] = None) -> RedriveEngine:
+def _build_engine(
+    scoring_provider: Optional[str], redrive_provider: Optional[str] = None,
+) -> RedriveEngine:
     provider = (scoring_provider or settings.scoring_provider).lower()
     scorer = _NeverInvokedScorer() if provider == "human" else get_scorer(provider)
-    return RedriveEngine(scorer=scorer, scorer_label=provider, redrive_label=redrive_label)
+    # Phase 16 — redrive_provider is now an actual backend selection (not
+    # just a display label): passing it to get_translation_backend()
+    # builds a fresh, correctly-configured instance for that provider,
+    # same "explicit provider always builds fresh" rule get_scorer() and
+    # get_translation_backend() both already follow.
+    redrive_backend = get_translation_backend(redrive_provider) if redrive_provider else None
+    return RedriveEngine(
+        scorer=scorer, scorer_label=provider, redrive_backend=redrive_backend, redrive_label=redrive_provider,
+    )
 
 
 @router.post("/runs", response_model=RedriveRun)
@@ -66,10 +87,11 @@ async def create_redrive_run(request: RedriveRunRequest):
     outcome="pending_approval" and a proposed_text instead of being applied —
     call the approve/reject endpoints below to resolve each one."""
     db = get_db()
-    engine = _build_engine(request.scoring_provider)
+    engine = _build_engine(request.scoring_provider, request.redrive_provider)
 
     run = RedriveRun(
-        threshold=request.threshold, scope=request.scope,
+        threshold=request.threshold, style_threshold=request.style_threshold,
+        style_guide_id=request.style_guide_id, scope=request.scope,
         scoring_provider=engine.scorer_label, redrive_provider=engine.redrive_label,
         require_human_approval=request.require_human_approval,
         triggered_by=request.triggered_by,
@@ -144,20 +166,23 @@ async def propose_redrive(request: ProposeRequest):
 @router.get("/preview")
 async def preview_redrive(
     threshold: float = 80,
+    style_threshold: Optional[float] = None,
+    style_guide_id: Optional[str] = None,
     target_language: Optional[str] = None,
     source_language: Optional[str] = None,
     scoring_provider: Optional[str] = None,
 ):
     """Scores everything in scope and reports how many units this threshold
     would catch — same 'how many keys each cutoff would send' idea as
-    peripateticware's show_report_summary, without spending redrive budget."""
+    peripateticware's show_report_summary, without spending redrive budget.
+    style_threshold adds Phase 13's style-adherence axis to the forecast."""
     scope: Dict[str, Any] = {}
     if target_language:
         scope["target_language"] = target_language
     if source_language:
         scope["source_language"] = source_language
     engine = _build_engine(scoring_provider)
-    return await engine.preview(scope, threshold)
+    return await engine.preview(scope, threshold, style_threshold=style_threshold, style_guide_id=style_guide_id)
 
 
 @router.get("/queue")

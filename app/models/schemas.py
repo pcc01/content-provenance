@@ -3,12 +3,12 @@ Data models for the AI Translation Provenance System.
 Implements W3C PROV-DM concepts: Entity, Activity, Agent, and their relations.
 """
 
-from datetime import datetime
-from typing import Optional, List, Dict, Any
-from enum import Enum
-from pydantic import BaseModel, Field
 import uuid
+from datetime import datetime
+from enum import Enum
+from typing import Any, Dict, List, Optional
 
+from pydantic import BaseModel, Field
 
 # ─── Enumerations ─────────────────────────────────────────────────────────────
 
@@ -114,6 +114,30 @@ class DocumentFormat(str, Enum):
     MARKDOWN = "markdown"
 
 
+class StyleRuleType(str, Enum):
+    """See docs/graphrag-provenance-proposal.md §5 — the axes
+    StyleAdherenceScorer judges a translation against."""
+    TONE = "tone"
+    VOICE = "voice"
+    TERMINOLOGY = "terminology"
+    FORMATTING = "formatting"
+
+
+class StyleRuleSeverity(str, Enum):
+    MINOR = "minor"
+    MAJOR = "major"
+    CRITICAL = "critical"
+
+
+class ExemplarOrigin(str, Enum):
+    """Where a TranslationExemplar came from — origin_agent_id (via
+    ProvenanceAgent.organization) carries the vendor's identity when
+    origin=VENDOR, letting Phase 14's vendor scorecard aggregate by it."""
+    VENDOR = "vendor"
+    AI = "ai"
+    HUMAN = "human"
+
+
 # ─── W3C PROV-DM Core Concepts ───────────────────────────────────────────────
 
 class ProvenanceAgent(BaseModel):
@@ -211,9 +235,33 @@ class TranslationUnitVersion(BaseModel):
     note: Optional[str] = None
 
 
+class ScoreErrorSeverity(str, Enum):
+    """MQM's four severity levels (themqm.org/guidance/values-and-scores/),
+    with their standard penalty multipliers noted for reference —
+    NEUTRAL=0, MINOR=1, MAJOR=5, CRITICAL=25 in MQM's own worked example.
+    This codebase's ClaudeQualityScorer uses its own multipliers
+    (25/10/3 for critical/major/minor — see claude_scorer.py's docstring
+    for why those weren't changed to MQM's literal defaults) but reuses
+    MQM's four-level vocabulary, including NEUTRAL, added in Phase 15."""
+    NEUTRAL = "neutral"
+    MINOR = "minor"
+    MAJOR = "major"
+    CRITICAL = "critical"
+
+
 class ScoreError(BaseModel):
-    severity: str  # critical | major | minor
+    severity: ScoreErrorSeverity
     count: int = 1
+    # Phase 15 — the MQM-Core mnemonic Error Type ID this error belongs to
+    # (see app/core/scoring/mqm_types.py), e.g. "mistranslation",
+    # "term-inconsistency". Optional/free-form string rather than importing
+    # the MQMErrorType enum here — this model shouldn't need to know the
+    # scoring layer's taxonomy module exists, only store whatever string it
+    # returns (same "free-form, no schema coupling" choice already made for
+    # SiteAuditFinding.detail and RedriveRunItem.detail elsewhere in this
+    # file). None means the scorer didn't (or couldn't) classify a type,
+    # matching pre-Phase-15 behavior exactly.
+    error_type: Optional[str] = None
 
 
 class QualityScore(BaseModel):
@@ -230,6 +278,14 @@ class QualityScore(BaseModel):
     errors: List[ScoreError] = Field(default_factory=list)
     raw_response: Optional[str] = None
     needs_review: bool = False
+    # Phase 15 — MQM's "any critical error ⇒ automatic Fail" rule
+    # (themqm.org/guidance/values-and-scores/), decoupled from the numeric
+    # score: a unit with one critical error and nothing else might still
+    # score 75/100 under the additive penalty formula, which reads as
+    # "mostly fine" — hard_fail=True flags it regardless of where the
+    # number lands. See RedriveEngine, which treats this as an additional,
+    # independent redrive trigger alongside the numeric threshold.
+    hard_fail: bool = False
     scored_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -263,6 +319,17 @@ class RedriveRun(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     status: RedriveRunStatus = RedriveRunStatus.PENDING
     threshold: float
+    # Phase 13 — a second, independent threshold axis: a unit redrives if
+    # EITHER its quality score falls below `threshold` OR its style
+    # adherence score falls below `style_threshold`. None (the default)
+    # means style is scored and recorded (when a style guide is in scope)
+    # but never itself triggers a redrive — opt-in, since not every
+    # deployment has style guides configured yet.
+    style_threshold: Optional[float] = None
+    # style_guide_id to score against — falls back to scope["style_guide_id"]
+    # if not set explicitly; None scores against no particular guide (§5's
+    # ClaudeStyleScorer still judges general tone/voice consistency).
+    style_guide_id: Optional[str] = None
     scope: Dict[str, Any] = Field(default_factory=dict)  # e.g. {"target_language": "fr-FR"} or {"unit_ids": [...]}
     scoring_provider: str
     redrive_provider: str
@@ -524,6 +591,212 @@ class ProvenanceRecord(BaseModel):
     summary: Optional[str] = None
 
 
+# ─── Phase 13: pgGraph + tone/style/voice provenance ────────────────────────
+# See docs/graphrag-provenance-proposal.md for the evaluation and
+# ROADMAP.md's Phase 13 entry for the build plan. Embeddings are an
+# internal retrieval-layer detail (app/core/graph/embeddings.py,
+# app/core/db/repository.py) — deliberately not modeled here, so API
+# responses built from these Pydantic models never leak a 384-float vector.
+
+class StyleGuide(BaseModel):
+    """A versioned brand voice/style reference. supersedes_id chains to the
+    guide this one replaces — see StyleGuideRow's docstring for why the
+    chain is a plain nullable id rather than an FK."""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    version: str = "1.0"
+    locale: Optional[str] = None  # None = applies to all locales
+    voice_description: Optional[str] = None
+    tone_attributes: Dict[str, Any] = Field(default_factory=dict)
+    supersedes_id: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_by: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class StyleGuideRule(BaseModel):
+    """A single structured, retrievable fact — not a prose chunk. See §7 of
+    the proposal doc (Barry et al. 2025's FactRAG lesson: retrieve facts
+    like this, not raw style-guide passages)."""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    style_guide_id: str
+    rule_type: StyleRuleType
+    rule_text: str
+    severity: StyleRuleSeverity = StyleRuleSeverity.MINOR
+    applies_to_locale: Optional[str] = None
+    source_term: Optional[str] = None
+    target_term: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class GlossaryTerm(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    style_guide_id: Optional[str] = None
+    source_term: str
+    target_term: Optional[str] = None
+    locale: Optional[str] = None
+    do_not_translate: bool = False
+    notes: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class TranslationExemplar(BaseModel):
+    """A known-good source/target pair used as retrieval context — see
+    TranslationExemplarRow's docstring."""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    source_text: str
+    target_text: str
+    source_language: str
+    target_language: str
+    origin: ExemplarOrigin = ExemplarOrigin.VENDOR
+    origin_agent_id: Optional[str] = None
+    style_guide_id: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class GraphNode(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    node_type: str
+    ref_table: str
+    ref_id: str
+    label: Optional[str] = None
+    properties: Dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class GraphEdge(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    src_node_id: str
+    dst_node_id: str
+    edge_type: str
+    properties: Dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class StyleAdherenceScore(BaseModel):
+    """The tone/voice/style analogue of QualityScore — same 0-100,
+    lower-is-worse convention (see QualityScore's docstring), scored
+    against a specific StyleGuide."""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    unit_id: str
+    style_guide_id: Optional[str] = None
+    tone_score: Optional[float] = Field(None, ge=0.0, le=100.0)
+    voice_score: Optional[float] = Field(None, ge=0.0, le=100.0)
+    terminology_score: Optional[float] = Field(None, ge=0.0, le=100.0)
+    overall_score: Optional[float] = Field(None, ge=0.0, le=100.0)
+    scorer: str
+    reasons: List[str] = Field(default_factory=list)
+    raw_response: Optional[str] = None
+    needs_review: bool = False
+    scored_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ConsistencyFinding(BaseModel):
+    """Phase 14 — one issue surfaced by app/core/consistency/checker.py.
+    finding_type: "term_drift" (a term's associated units don't match its
+    expected rendering — none of them do, a systemic gap) |
+    "term_inconsistency" (SOME units match, some don't — the same term
+    rendered two different ways) | "tone_spread" (tone scores vary widely
+    across units sharing a style rule). Deliberately free-form `detail`
+    (JSON blob), same flexibility SiteAuditFinding.detail already relies
+    on — new finding shapes need no schema change."""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    finding_type: str
+    severity: str = "warning"  # info | warning
+    summary: str
+    unit_ids: List[str] = Field(default_factory=list)
+    detail: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ConsistencyCheckResult(BaseModel):
+    """Read-only, computed-on-demand — not persisted as its own run table
+    (unlike SiteAudit/RedriveRun). Clusters units by shared GlossaryTerm/
+    StyleGuideRule graph_edges and compares only within each cluster — the
+    O(k·n) technique from Barry et al. 2025, §7 of
+    docs/graphrag-provenance-proposal.md — rather than an O(n²) full
+    pairwise scan across `scope`."""
+    scope: Dict[str, Any] = Field(default_factory=dict)
+    units_checked: int = 0
+    findings: List[ConsistencyFinding] = Field(default_factory=list)
+    checked_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class VendorScorecardEntry(BaseModel):
+    """Phase 14 — one row of the vendor/agent scorecard: average quality
+    and style-adherence scores for every TranslationUnit whose
+    translated_by_agent_id belongs to this organization. Covers vendor
+    agents (XLIFF import's `external:{source_system}`, TMX import's
+    `vendor:{source_system}`) and AI agents (e.g. "Anthropic") alike —
+    the point is comparing them on equal footing, not just vendors against
+    each other. See docs/graphrag-provenance-proposal.md §9b.2."""
+    organization: str
+    unit_count: int
+    avg_quality_score: Optional[float] = None
+    avg_style_score: Optional[float] = None
+    avg_tone_score: Optional[float] = None
+    avg_voice_score: Optional[float] = None
+    avg_terminology_score: Optional[float] = None
+
+
+class AutomaticMetricScore(BaseModel):
+    """Phase 15 — see AutomaticMetricScoreRow's docstring
+    (app/core/db/models.py) for why this is a third, independent axis
+    rather than a column on QualityScore or StyleAdherenceScore."""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    unit_id: str
+    metric: str  # "meteor" | "comet_kiwi"
+    score: Optional[float] = Field(None, ge=0.0, le=100.0)
+    raw_score: Optional[float] = None
+    reference_type: Optional[str] = None
+    reference_unit_version_id: Optional[str] = None
+    detail: Dict[str, Any] = Field(default_factory=dict)
+    scored_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class RetrievedFact(BaseModel):
+    """One structured fact returned by the hybrid vector+graph retrieval
+    layer (app/core/graph/retrieval.py) — what actually gets shown to the
+    LLM and recorded on the ContextRetrieval PROV activity, never a raw
+    prose chunk. kind is "rule" | "term" | "exemplar"."""
+    kind: str
+    id: str
+    text: str  # compact, human/LLM-readable rendering of the fact
+    source: str = "graph"  # "vector" | "graph" — how it was found, for provenance detail
+
+
+class StyleContextRetrieval(BaseModel):
+    """Everything retrieve_style_context() found for one source text —
+    passed to the translation backend as prompt context and to
+    prov_builder.py to record the ContextRetrieval activity."""
+    rules: List[RetrievedFact] = Field(default_factory=list)
+    terms: List[RetrievedFact] = Field(default_factory=list)
+    exemplars: List[RetrievedFact] = Field(default_factory=list)
+    style_guide_id: Optional[str] = None
+
+    @property
+    def is_empty(self) -> bool:
+        return not (self.rules or self.terms or self.exemplars)
+
+    def as_prompt_context(self) -> str:
+        """Compact, LLM-facing rendering — small structured facts, not raw
+        passages (the FactRAG token-efficiency lesson, §7 of the proposal
+        doc)."""
+        lines: List[str] = []
+        if self.rules:
+            lines.append("Style/voice/tone rules to follow:")
+            lines.extend(f"- {r.text}" for r in self.rules)
+        if self.terms:
+            lines.append("Glossary terms to use:")
+            lines.extend(f"- {t.text}" for t in self.terms)
+        if self.exemplars:
+            lines.append("Prior approved translations for reference:")
+            lines.extend(f"- {e.text}" for e in self.exemplars)
+        return "\n".join(lines)
+
+
 # ─── API Request/Response Schemas ─────────────────────────────────────────────
 
 class TranslateRequest(BaseModel):
@@ -536,6 +809,13 @@ class TranslateRequest(BaseModel):
     project_id: Optional[str] = None
     domain: Optional[str] = Field(None, example="marketing")
     translator_name: Optional[str] = None       # for human translations
+    # Phase 13 — restricts retrieval to one style guide; None lets
+    # retrieval consider every guide (filtered by locale/similarity only).
+    style_guide_id: Optional[str] = None
+    # Phase 16 — overrides settings.translation_provider for this request
+    # only: "mock" | "anthropic" | "openai" | "gemini" | "deepl" | "google"
+    # | "mstranslator" | "ollama" | "lmstudio" | "vllm". None = app default.
+    provider: Optional[str] = None
 
 
 class TranslateResponse(BaseModel):
@@ -567,3 +847,55 @@ class SearchRequest(BaseModel):
     method: Optional[TranslationMethod] = None
     context: Optional[DeploymentContext] = None
     top_k: int = Field(10, ge=1, le=50)
+
+
+# ─── Phase 13 API request/response schemas ───────────────────────────────────
+
+class CreateStyleGuideRequest(BaseModel):
+    name: str
+    version: str = "1.0"
+    locale: Optional[str] = None
+    voice_description: Optional[str] = None
+    tone_attributes: Dict[str, Any] = Field(default_factory=dict)
+    supersedes_id: Optional[str] = None
+    created_by: Optional[str] = None
+
+
+class CreateStyleGuideRuleRequest(BaseModel):
+    rule_type: StyleRuleType
+    rule_text: str
+    severity: StyleRuleSeverity = StyleRuleSeverity.MINOR
+    applies_to_locale: Optional[str] = None
+    source_term: Optional[str] = None
+    target_term: Optional[str] = None
+
+
+class CreateGlossaryTermRequest(BaseModel):
+    source_term: str
+    target_term: Optional[str] = None
+    locale: Optional[str] = None
+    do_not_translate: bool = False
+    notes: Optional[str] = None
+    style_guide_id: Optional[str] = None
+    # Ids of existing GlossaryTerm rows this term is preferred over (e.g. the
+    # approved "workstation" term over a deprecated "workspace" one) —
+    # wired as preferredOver graph edges at creation time, not stored as a
+    # column (genuinely many-to-many, see GraphEdgeRow's docstring).
+    preferred_over_term_ids: List[str] = Field(default_factory=list)
+
+
+class CheckSourceRequest(BaseModel):
+    """Source-language voice check (§9b.5) — score a draft against a style
+    guide BEFORE translation, not just a translated unit after the fact."""
+    text: str = Field(..., min_length=1, max_length=50000)
+    language: str = Field(..., example="en-US")
+    style_guide_id: Optional[str] = None
+
+
+class CheckSourceResponse(BaseModel):
+    tone_score: Optional[float] = None
+    voice_score: Optional[float] = None
+    overall_score: Optional[float] = None
+    reasons: List[str] = Field(default_factory=list)
+    style_guide_id: Optional[str] = None
+    needs_review: bool = False

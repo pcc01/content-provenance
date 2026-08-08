@@ -8,6 +8,7 @@ regardless of what a previous run (or manual poking via the API) left behind.
 """
 import pytest
 from httpx import AsyncClient, ASGITransport
+from sqlalchemy import text
 
 from app.main import app
 from app.core.database import init_db
@@ -29,6 +30,9 @@ from app.core.db.session import engine
 async def setup_app():
     """Reset the schema and initialize app state once per test session."""
     async with engine.begin() as conn:
+        # Phase 13's embedding columns (pgvector.sqlalchemy.Vector) need the
+        # `vector` extension to exist before create_all compiles them.
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
     await init_db()

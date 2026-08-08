@@ -10,6 +10,8 @@ change their imports; get_db() now returns a PostgresRepository
 
 from typing import Optional
 
+from sqlalchemy import text
+
 from app.core.db.models import Base
 from app.core.db.repository import PostgresRepository
 from app.core.db.session import async_session_factory, engine
@@ -20,6 +22,10 @@ _repo: Optional[PostgresRepository] = None
 async def init_db():
     global _repo
     async with engine.begin() as conn:
+        # Phase 13's embedding columns need this before create_all compiles
+        # them — cheap/idempotent, and Alembic's own 0014 migration runs the
+        # same statement for the real migration path.
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         # Dev convenience: ensures the schema exists even before `alembic
         # upgrade head` has been run. create_all is checkfirst=True by
         # default, so this is a no-op (not a conflict) once Alembic owns

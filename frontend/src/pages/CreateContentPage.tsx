@@ -91,7 +91,11 @@ export function CreateContentPage() {
         requires="type or paste source copy in the box below. Checking voice/tone and previewing retrieval context are optional — Translate is the only required step."
       >
         Write new copy, check it against brand voice before translation, see what context the AI
-        translation would use, then submit it for translation with full provenance.
+        translation would use, then submit it for translation with full provenance. Built for
+        marketing/creative content, not just literal translation — a <strong>transcreation</strong>{" "}
+        (an adaptation that changes wording to preserve intent, tone, and cultural fit rather than
+        translating word-for-word) is tracked and reviewed exactly the same way a literal
+        translation is; nothing here checks the target against the source for similarity.
       </PageIntro>
 
       {error && (

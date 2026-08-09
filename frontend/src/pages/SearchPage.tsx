@@ -17,6 +17,10 @@ export function SearchPage() {
   const [semantic, setSemantic] = useState(true);
   const [results, setResults] = useState<SearchResult[]>([]);
   const [total, setTotal] = useState<number | null>(null);
+  // Phase 17 — the search endpoint always returns indexed_documents/
+  // search_type alongside results; the frontend type just dropped them.
+  const [indexedDocuments, setIndexedDocuments] = useState<number | null>(null);
+  const [searchType, setSearchType] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -28,6 +32,8 @@ export function SearchPage() {
       const res = await api.search(query.trim(), semantic);
       setResults(res.results as SearchResult[]);
       setTotal(res.total);
+      setIndexedDocuments(res.indexed_documents);
+      setSearchType(res.search_type);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -54,10 +60,17 @@ export function SearchPage() {
         />
         <button onClick={runSearch} disabled={busy} style={{ padding: "6px 16px", cursor: "pointer" }}>Search</button>
       </div>
-      <label style={{ fontSize: 12, color: "#6b7280", display: "flex", alignItems: "center", gap: 6, marginBottom: 16 }}>
-        <input type="checkbox" checked={semantic} onChange={(e) => setSemantic(e.target.checked)} />
-        Semantic search (uncheck for BM25 keyword search)
-      </label>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <label style={{ fontSize: 12, color: "#6b7280", display: "flex", alignItems: "center", gap: 6 }}>
+          <input type="checkbox" checked={semantic} onChange={(e) => setSemantic(e.target.checked)} />
+          Semantic search (uncheck for BM25 keyword search)
+        </label>
+        {indexedDocuments !== null && (
+          <span style={{ fontSize: 11, color: "#9ca3af" }}>
+            {indexedDocuments.toLocaleString()} document(s) indexed · last search: {searchType}
+          </span>
+        )}
+      </div>
 
       {error && (
         <div style={{ background: "#fef2f2", color: "#b91c1c", padding: 10, borderRadius: 6, marginBottom: 16, fontSize: 13 }}>

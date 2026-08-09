@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, auditExportUrl, auditPdfUrl, type AuditRunSummary, type SiteAuditFinding } from "../api/client";
+import { api, auditExportUrl, auditPdfUrl, type AuditRunSummary, type SiteAuditFinding, type SiteAuditPage } from "../api/client";
 
 interface Props {
   auditId: string;
@@ -54,14 +54,19 @@ function topSource(f: SiteAuditFinding): string | null {
 export function AuditReport({ auditId, onReviewPage }: Props) {
   const [summary, setSummary] = useState<AuditRunSummary | null>(null);
   const [findings, setFindings] = useState<SiteAuditFinding[] | null>(null);
+  // Phase 17 — GET /audit/runs/{id}/pages existed with zero UI: only
+  // findings were ever shown, never the crawled-page inventory itself
+  // (which pages were visited, what language/status each returned).
+  const [pages, setPages] = useState<SiteAuditPage[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     setSummary(null);
     setFindings(null);
+    setPages(null);
     setError(null);
-    Promise.all([api.getAuditRun(auditId), api.getAuditFindings(auditId)])
-      .then(([s, f]) => { setSummary(s); setFindings(f); })
+    Promise.all([api.getAuditRun(auditId), api.getAuditFindings(auditId), api.getAuditPages(auditId)])
+      .then(([s, f, p]) => { setSummary(s); setFindings(f); setPages(p); })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
   }, [auditId]);
 
@@ -87,6 +92,38 @@ export function AuditReport({ auditId, onReviewPage }: Props) {
           <a href={auditExportUrl(auditId)} download style={{ fontSize: 12 }}>Download report (.txt)</a>
         </div>
       </div>
+
+      {pages && pages.length > 0 && (
+        <details>
+          <summary style={{ cursor: "pointer", fontSize: 13, color: "#6b7280" }}>
+            Pages crawled ({pages.length})
+          </summary>
+          <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse", marginTop: 8 }}>
+            <thead>
+              <tr style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb" }}>
+                <th style={{ padding: "4px 6px" }}>URL</th>
+                <th style={{ padding: "4px 6px" }}>Status</th>
+                <th style={{ padding: "4px 6px" }}>html lang</th>
+                <th style={{ padding: "4px 6px" }}>Expected locale</th>
+                <th style={{ padding: "4px 6px" }}>Detected language</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pages.map((p) => (
+                <tr key={p.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
+                  <td style={{ padding: "4px 6px", wordBreak: "break-all" }}>{p.url}</td>
+                  <td style={{ padding: "4px 6px", color: p.status_code && p.status_code >= 400 ? "#e5484d" : "#6b7280" }}>
+                    {p.status_code ?? "—"}
+                  </td>
+                  <td style={{ padding: "4px 6px", color: "#6b7280" }}>{p.html_lang_attr ?? "—"}</td>
+                  <td style={{ padding: "4px 6px", color: "#6b7280" }}>{p.expected_locale ?? "—"}</td>
+                  <td style={{ padding: "4px 6px", color: "#6b7280" }}>{p.detected_language ?? "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </details>
+      )}
 
       {findings.length === 0 && (
         <div style={{ fontSize: 13, color: "#15803d" }}>No issues found.</div>

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   api, EVALUATE_PROVIDERS, TRANSLATE_PROVIDERS,
-  type EvaluateResult, type RedrivePreview, type RedriveRun, type StyleGuide,
+  type EvaluateResult, type QueueItem, type RedrivePreview, type RedriveRun, type StyleGuide,
 } from "../api/client";
 import { PageIntro } from "../components/PageIntro";
 import { QualityBadge } from "../components/QualityBadge";
@@ -36,6 +36,19 @@ export function RedriveConsole() {
   const [evalProvider, setEvalProvider] = useState("");
   const [evalResult, setEvalResult] = useState<EvaluateResult | null>(null);
   const [evaluating, setEvaluating] = useState(false);
+
+  // Phase 17 — GET /redrive/queue existed with zero UI consumer despite
+  // being described (in its own backend docstring and the README) as
+  // "the review UI's worklist, worst-first." Reuses this page's own
+  // threshold/target-language fields rather than duplicating them.
+  const [worklist, setWorklist] = useState<QueueItem[] | null>(null);
+  const [worklistLoading, setWorklistLoading] = useState(false);
+
+  // Phase 17 — POST /quality/meteor-compare, an ad-hoc tool with zero UI.
+  const [meteorHyp, setMeteorHyp] = useState("");
+  const [meteorRef, setMeteorRef] = useState("");
+  const [meteorScore, setMeteorScore] = useState<number | null | undefined>(undefined);
+  const [meteorBusy, setMeteorBusy] = useState(false);
 
   useEffect(() => { api.listStyleGuides().then(setGuides); }, []);
 
@@ -77,6 +90,31 @@ export function RedriveConsole() {
       setEvalResult(await api.evaluateUnit(evalUnitId.trim(), evalProvider || undefined));
     } finally {
       setEvaluating(false);
+    }
+  }
+
+  async function loadWorklist() {
+    setWorklistLoading(true);
+    try {
+      setWorklist(await api.getQueue({ threshold, target_language: targetLanguage || undefined }));
+    } finally {
+      setWorklistLoading(false);
+    }
+  }
+
+  function sendToEvaluate(unitId: string) {
+    setEvalUnitId(unitId);
+    document.getElementById("evaluate-single-unit")?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
+  async function doMeteorCompare() {
+    if (!meteorHyp.trim() || !meteorRef.trim()) return;
+    setMeteorBusy(true);
+    try {
+      const { score } = await api.meteorCompare(meteorHyp.trim(), meteorRef.trim());
+      setMeteorScore(score);
+    } finally {
+      setMeteorBusy(false);
     }
   }
 
@@ -182,6 +220,49 @@ export function RedriveConsole() {
       )}
 
       <div style={{ marginBottom: 24, padding: 12, background: "#f9fafb", borderRadius: 6 }}>
+        <h3 style={{ marginTop: 0, fontSize: 15 }}>Worklist</h3>
+        <p style={{ color: "#6b7280", fontSize: 13, marginTop: 0 }}>
+          Units already scored below the threshold set above, worst-first — reflects scores already
+          on record, so run Preview or a redrive first if this scope hasn't been scored yet.
+        </p>
+        <button disabled={worklistLoading} onClick={loadWorklist} style={{ padding: "6px 14px", cursor: "pointer" }}>
+          {worklistLoading ? "Loading…" : "Load worklist"}
+        </button>
+        {worklist && (
+          worklist.length === 0 ? (
+            <div style={{ marginTop: 10, fontSize: 13, color: "#9ca3af" }}>Nothing below {threshold} in this scope.</div>
+          ) : (
+            <table style={{ width: "100%", fontSize: 12.5, borderCollapse: "collapse", marginTop: 10 }}>
+              <thead>
+                <tr style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb" }}>
+                  <th style={{ padding: "4px 6px" }}>Score</th>
+                  <th style={{ padding: "4px 6px" }}>Source</th>
+                  <th style={{ padding: "4px 6px" }}>Reasons</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {worklist.map((item) => (
+                  <tr key={item.unit_id} style={{ borderBottom: "1px solid #f3f4f6" }}>
+                    <td style={{ padding: "4px 6px" }}><QualityBadge score={item.score} /></td>
+                    <td style={{ padding: "4px 6px", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {item.source_text}
+                    </td>
+                    <td style={{ padding: "4px 6px", color: "#6b7280" }}>{item.reasons.join(", ")}</td>
+                    <td style={{ padding: "4px 6px" }}>
+                      <button onClick={() => sendToEvaluate(item.unit_id)} style={{ cursor: "pointer", fontSize: 11 }}>
+                        Evaluate ↓
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )
+        )}
+      </div>
+
+      <div id="evaluate-single-unit" style={{ marginBottom: 24, padding: 12, background: "#f9fafb", borderRadius: 6 }}>
         <h3 style={{ marginTop: 0, fontSize: 15 }}>Evaluate a single unit</h3>
         <p style={{ color: "#6b7280", fontSize: 13, marginTop: 0 }}>
           Score one unit on demand with a chosen model — independent of the threshold run above.
@@ -216,6 +297,34 @@ export function RedriveConsole() {
               <div style={{ color: "#6b7280" }}>{evalResult.reasons.join(", ")}</div>
             )}
           </div>
+        )}
+      </div>
+
+      <div style={{ marginBottom: 24, padding: 12, background: "#f9fafb", borderRadius: 6 }}>
+        <h3 style={{ marginTop: 0, fontSize: 15 }}>Compare METEOR</h3>
+        <p style={{ color: "#6b7280", fontSize: 13, marginTop: 0 }}>
+          Ad-hoc lexical comparison between any two strings — the same computation that runs
+          automatically after every redrive, exposed directly (e.g. against a curated reference).
+          Requires both boxes filled in.
+        </p>
+        <div style={{ display: "flex", gap: 10, marginBottom: 8 }}>
+          <textarea value={meteorHyp} onChange={(e) => setMeteorHyp(e.target.value)} rows={2}
+                    placeholder="Candidate text" style={{ flex: 1, fontSize: 13, padding: 6 }} />
+          <textarea value={meteorRef} onChange={(e) => setMeteorRef(e.target.value)} rows={2}
+                    placeholder="Reference text" style={{ flex: 1, fontSize: 13, padding: 6 }} />
+        </div>
+        <button disabled={meteorBusy || !meteorHyp.trim() || !meteorRef.trim()} onClick={doMeteorCompare}
+                style={{ padding: "6px 14px", cursor: "pointer" }}>
+          {meteorBusy ? "Comparing…" : "Compare"}
+        </button>
+        {meteorScore !== undefined && (
+          <span style={{ marginLeft: 12, fontSize: 13 }}>
+            {meteorScore === null ? (
+              <span style={{ color: "#92400e" }}>Unavailable — nltk/wordnet not installed on the server.</span>
+            ) : (
+              <>METEOR: <strong>{meteorScore.toFixed(1)}</strong></>
+            )}
+          </span>
         )}
       </div>
 

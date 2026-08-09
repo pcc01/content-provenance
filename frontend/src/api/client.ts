@@ -49,6 +49,18 @@ export function imageFileUrl(imageId: string): string {
   return `${API_BASE}/images/${imageId}/file`;
 }
 
+// Phase 17 — direct download links (not JSON fetches) for the provenance
+// exports the backend already generates but nothing linked to before now.
+export function xliffDownloadUrl(unitId: string): string {
+  return `${API_BASE}/xliff/${unitId}`;
+}
+export function provJsonDownloadUrl(unitId: string): string {
+  return `${API_BASE}/provenance/${unitId}/prov-json`;
+}
+export function provNDownloadUrl(unitId: string): string {
+  return `${API_BASE}/provenance/${unitId}/prov-n`;
+}
+
 export interface TranslationUnit {
   id: string;
   source_id: string;
@@ -102,6 +114,18 @@ export interface ProvenanceAgent {
   organization: string | null;
 }
 
+export interface DeploymentRecord {
+  id: string;
+  translation_unit_id: string;
+  context: string;
+  location: string;
+  deployed_at: string;
+  deployed_by: string | null;
+  version: string | null;
+  is_active: boolean;
+  retired_at: string | null;
+}
+
 export interface ProvenanceResponse {
   translation_unit_id: string;
   source_text: string;
@@ -115,6 +139,36 @@ export interface ProvenanceResponse {
     agents: ProvenanceAgent[];
     relations: Record<string, string>[];
   };
+  deployments: DeploymentRecord[];
+}
+
+export interface LineageNode {
+  id: string;
+  label: string;
+  type: "entity" | "activity" | "agent";
+}
+
+export interface LineageEdge {
+  from: string;
+  to: string;
+  label: string;
+}
+
+export interface LineageGraph {
+  translation_unit_id: string;
+  nodes: LineageNode[];
+  edges: LineageEdge[];
+  summary: string | null;
+}
+
+export interface IngestEvent {
+  id: string;
+  direction: "in" | "out";
+  format: string;
+  source_system: string | null;
+  xliff_document_id: string | null;
+  unit_count: number;
+  created_at: string;
 }
 
 export interface ReviewNote {
@@ -195,6 +249,14 @@ export interface ImageAsset {
   alt_text: string | null;
   uploaded_at: string;
   uploaded_by: string | null;
+}
+
+export interface ImageContextLink {
+  id: string;
+  image_id: string;
+  translation_unit_id: string;
+  note: string | null;
+  created_at: string;
 }
 
 export interface ImageTranslationUnit {
@@ -548,6 +610,11 @@ const phase13to15Api = {
     return requestForm<{ imported_count: number; translation_unit_ids: string[] }>("/xliff/import", form);
   },
 
+  // Phase 17 — the queryable side of the "everything entering and leaving
+  // the system" XLIFF ledger; every import/export above logs into it.
+  getIngestLog: (limit = 100) => request<IngestEvent[]>(`/xliff/ingest-log?limit=${limit}`),
+  xliffPreview: (unitId: string) => request<{ xliff: string }>(`/xliff/${unitId}/preview`),
+
   // ── Vendor Scorecard ───────────────────────────────────────────────────
   getVendorScorecard: (targetLanguage?: string) =>
     request<VendorScorecardEntry[]>(
@@ -583,6 +650,20 @@ export const api = {
     ),
   getVersions: (id: string) => request<TranslationUnitVersion[]>(`/translations/${id}/versions`),
   getProvenance: (id: string) => request<ProvenanceResponse>(`/provenance/${id}`),
+  getLineage: (id: string) => request<LineageGraph>(`/provenance/${id}/lineage`),
+  getDeployments: (id: string) => request<DeploymentRecord[]>(`/provenance/${id}/deployments`),
+  recordDeployment: (unitId: string, params: {
+    context: string; location: string; deployed_by?: string; version?: string;
+  }) => request<{ message: string }>(
+    `/translations/${unitId}/deploy?${new URLSearchParams(cleanParams(params))}`, { method: "POST" },
+  ),
+  // quality_score is optional context for the record, not a re-score —
+  // the unit's actual score still comes from the scoring providers.
+  markReviewed: (unitId: string, reviewerName: string, qualityScore?: number) =>
+    request<{ message: string; reviewed_by: string; status: string }>(
+      `/translations/${unitId}/review?${new URLSearchParams(cleanParams({ reviewer_name: reviewerName, quality_score: qualityScore }))}`,
+      { method: "PUT" },
+    ),
   getStats: () => request<Stats>("/translations/stats"),
 
   listNotes: (unitId: string) => request<ReviewNote[]>(`/translations/${unitId}/notes`),
@@ -627,7 +708,7 @@ export const api = {
     request<QueueItem[]>(`/redrive/queue?${new URLSearchParams(cleanParams(params))}`),
 
   search: (q: string, semantic = false) =>
-    request<{ results: unknown[]; total: number }>(
+    request<{ results: unknown[]; total: number; indexed_documents: number; search_type: string }>(
       `/search/?${new URLSearchParams({ q, semantic: String(semantic) })}`,
     ),
 
@@ -658,6 +739,17 @@ export const api = {
     return requestForm<ImageTranslationUnit>(`/images/localize/${ituId}/target`, form, "PUT");
   },
   getImageTranslationUnit: (ituId: string) => request<ImageTranslationUnit>(`/images/localize/${ituId}`),
+
+  // Phase 17 — "this screenshot shows this text segment in context," for
+  // the review UI. Distinct from uploadImage's kind="translatable" path
+  // above (a standalone banner/graphic with its own provenance chain).
+  linkImageAsContext: (imageId: string, translationUnitId: string, note?: string) => {
+    const form = new FormData();
+    form.append("translation_unit_id", translationUnitId);
+    if (note) form.append("note", note);
+    return requestForm<ImageContextLink>(`/images/${imageId}/context-link`, form);
+  },
+  getContextImages: (unitId: string) => request<ImageAsset[]>(`/images/context-links/${unitId}`),
 
   importDocument: (
     file: File,

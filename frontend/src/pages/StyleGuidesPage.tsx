@@ -11,6 +11,10 @@ export function StyleGuidesPage() {
   const [selected, setSelected] = useState<StyleGuide | null>(null);
   const [rules, setRules] = useState<StyleGuideRule[]>([]);
   const [terms, setTerms] = useState<GlossaryTerm[]>([]);
+  // Phase 17 — GET /style/guides/{id}/chain existed with zero UI: walks
+  // supersedes_id back to the oldest ancestor, so a reviewer can tell "v3
+  // I'm looking at" from "v3 that replaced v1 last month, not a fresh guide."
+  const [chain, setChain] = useState<StyleGuide[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const [newGuideName, setNewGuideName] = useState("");
@@ -35,12 +39,14 @@ export function StyleGuidesPage() {
     setSelected(guide);
     setError(null);
     try {
-      const [r, t] = await Promise.all([
+      const [r, t, c] = await Promise.all([
         api.listStyleGuideRules(guide.id),
         api.listGlossaryTerms({ style_guide_id: guide.id }),
+        api.getStyleGuideChain(guide.id),
       ]);
       setRules(r);
       setTerms(t);
+      setChain(c);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -144,6 +150,23 @@ export function StyleGuidesPage() {
             <>
               <h3 style={{ marginTop: 0 }}>{selected.name}</h3>
               {selected.voice_description && <p style={{ color: "#374151", fontSize: 13 }}>{selected.voice_description}</p>}
+              {chain.length > 1 && (
+                <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 12 }}>
+                  {/* getStyleGuideChain walks supersedes_id backward FROM the
+                      selected guide, so the array itself is newest → oldest
+                      (found live: rendering it as-is under an "oldest →
+                      newest" label showed v2.0 before v1.0) — reverse it so
+                      the label and the reading order actually agree. */}
+                  Version history: {[...chain].reverse().map((g, i) => (
+                    <span key={g.id}>
+                      {i > 0 && " → "}
+                      <span style={{ fontWeight: g.id === selected.id ? 600 : 400, color: g.id === selected.id ? "#111827" : "#6b7280" }}>
+                        v{g.version}
+                      </span>
+                    </span>
+                  ))} (oldest → newest)
+                </div>
+              )}
 
               <h4 style={{ fontSize: 13, marginBottom: 4 }}>Rules</h4>
               <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse", marginBottom: 12 }}>

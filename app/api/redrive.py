@@ -41,6 +41,11 @@ class RedriveRunRequest(BaseModel):
     # scoring_provider — you can e.g. evaluate with Claude but redrive
     # with a cheaper/local model, or vice versa.
     redrive_provider: Optional[str] = None
+    # Phase 18 — which model to run WITHIN scoring_provider/redrive_provider,
+    # for the local multi-model servers (Ollama/LMStudio/vLLM). Ignored for
+    # every other provider. See GET /api/v1/models/{provider}.
+    scoring_model: Optional[str] = None
+    redrive_model: Optional[str] = None
     require_human_approval: bool = False
     triggered_by: Optional[str] = None
 
@@ -63,15 +68,16 @@ class BulkApproveRequest(BaseModel):
 
 def _build_engine(
     scoring_provider: Optional[str], redrive_provider: Optional[str] = None,
+    scoring_model: Optional[str] = None, redrive_model: Optional[str] = None,
 ) -> RedriveEngine:
     provider = (scoring_provider or settings.scoring_provider).lower()
-    scorer = _NeverInvokedScorer() if provider == "human" else get_scorer(provider)
+    scorer = _NeverInvokedScorer() if provider == "human" else get_scorer(provider, scoring_model)
     # Phase 16 — redrive_provider is now an actual backend selection (not
     # just a display label): passing it to get_translation_backend()
     # builds a fresh, correctly-configured instance for that provider,
     # same "explicit provider always builds fresh" rule get_scorer() and
     # get_translation_backend() both already follow.
-    redrive_backend = get_translation_backend(redrive_provider) if redrive_provider else None
+    redrive_backend = get_translation_backend(redrive_provider, redrive_model) if redrive_provider else None
     return RedriveEngine(
         scorer=scorer, scorer_label=provider, redrive_backend=redrive_backend, redrive_label=redrive_provider,
     )
@@ -87,7 +93,9 @@ async def create_redrive_run(request: RedriveRunRequest):
     outcome="pending_approval" and a proposed_text instead of being applied —
     call the approve/reject endpoints below to resolve each one."""
     db = get_db()
-    engine = _build_engine(request.scoring_provider, request.redrive_provider)
+    engine = _build_engine(
+        request.scoring_provider, request.redrive_provider, request.scoring_model, request.redrive_model,
+    )
 
     run = RedriveRun(
         threshold=request.threshold, style_threshold=request.style_threshold,
@@ -171,6 +179,7 @@ async def preview_redrive(
     target_language: Optional[str] = None,
     source_language: Optional[str] = None,
     scoring_provider: Optional[str] = None,
+    scoring_model: Optional[str] = None,
 ):
     """Scores everything in scope and reports how many units this threshold
     would catch — same 'how many keys each cutoff would send' idea as
@@ -181,7 +190,7 @@ async def preview_redrive(
         scope["target_language"] = target_language
     if source_language:
         scope["source_language"] = source_language
-    engine = _build_engine(scoring_provider)
+    engine = _build_engine(scoring_provider, scoring_model=scoring_model)
     return await engine.preview(scope, threshold, style_threshold=style_threshold, style_guide_id=style_guide_id)
 
 

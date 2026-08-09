@@ -794,6 +794,115 @@ the Phase 13-15 segmentation pass was (no live API keys/local model servers
 available to drive an actual translate-with-OpenAI or evaluate-with-Gemini
 click-through in this environment).
 
+### Closing the Backend-UI Gap (Phase 17)
+
+A systematic audit — every backend route cross-referenced against every
+`api.*` call actually made from the frontend — turned up ten working
+endpoints with zero UI: some had never had a consumer built, one
+(`GET /redrive/queue`) was explicitly *described* as "the review UI's
+worklist" in its own docstring and the README without ever actually being
+wired to one. This phase closes all ten.
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| XLIFF export (download + inline preview) | ✅ | `ProvenancePanel`'s new "Export this unit" section — download links for XLIFF/PROV-JSON/PROV-N plus a lazy-loaded `<details>` preview of the raw XLIFF text. The system's headline deliverable (XLIFF with embedded PROV) had no download button anywhere before this |
+| Deployment recording + history | ✅ | `SegmentDrawer`'s new "Record a deployment" form (write) + `ProvenancePanel`'s deployments list (read) — confirmed live: recording a deployment rebuilds the PROV record's summary sentence in real time |
+| Mark as reviewed | ✅ | `SegmentDrawer`'s new "Mark as reviewed" button — confirmed live: status flips to "reviewed," a `reviewed_at` timestamp appears, and a `Person` agent joins the PROV record's Agents list |
+| Lineage graph + PROV-JSON/PROV-N | ✅ | `ProvenancePanel` — node/edge counts with an expandable edge list; JSON/N remain download-only (raw serialization formats, not meant to render inline) |
+| Image context-linking | ✅ | New `ContextImages.tsx` — upload + link a screenshot to a text segment; `ImageReview.tsx` still only handles the standalone `kind="translatable"` path, this is the other half. Backend chain (upload → link → list) verified directly via curl |
+| Automatic metric (COMET/METEOR) history | ✅ | New `MetricsPanel.tsx`, a 5th SegmentDrawer tab — the only place these scores were ever visible to a reviewer, as distinct from the MQM judge score on `QualityBadge` |
+| Redrive worklist | ✅ | `RedriveConsole`'s new "Worklist" section — worst-first table with a per-row "Evaluate ↓" action that hands the unit id to the existing standalone-evaluate panel below it |
+| Ad-hoc METEOR compare | ✅ | `RedriveConsole`'s new "Compare METEOR" tool |
+| Style guide version chain | ✅ | `StyleGuidesPage` shows a guide's `supersedes_id` history inline when it has one |
+| Audit crawled-page inventory | ✅ | `AuditReport`'s new collapsible "Pages crawled" table (URL/status/html-lang/expected-locale/detected-language) |
+| Search indexed-document count | ✅ | The `/search/` response already returned `indexed_documents`/`search_type`; the frontend type just dropped them — no new endpoint needed |
+
+**Bug found and fixed via live testing, not code review:** `getStyleGuideChain`
+walks `supersedes_id` *backward* from whichever guide you select — so the
+array itself is newest-first. The first version rendered it in that order
+under an "(oldest → newest)" label, which put v2.0 before v1.0 while
+claiming the opposite. Caught by actually clicking through a real
+multi-version guide in the browser, not by reading the code; fixed by
+reversing the array before rendering rather than relabeling, since "oldest
+→ newest" reads better than the alternative.
+
+**Verified live end-to-end**, not just `tsc -b --force`/`npm run build`
+(both clean): opened a real segment in the Review tab and, in order,
+recorded a deployment, marked it reviewed, confirmed both changes
+propagated into the rebuilt PROV summary/Agents/Activities, expanded the
+lineage graph, previewed the raw XLIFF inline, loaded the Redrive
+Console's worklist and used its "Evaluate ↓" handoff, ran the METEOR
+compare tool (70.1, matching a direct `curl` check of the same endpoint),
+walked a real style guide's version chain (where the ordering bug above
+was caught), and expanded a real audit run's crawled-pages table. Context
+image upload+link was verified via a direct `curl` chain (upload → link →
+list) rather than a file-picker click-through, since Chrome's native file
+dialog can't be driven by browser automation. Backend untouched — full
+suite still 160/160.
+
+**Scope note:** context images are read/write on their own now, but the
+*existing* review overlay's "context images render in-page and get their
+own highlight box like any other segment" claim (an `ImageReview.tsx` code
+comment predating this phase) was not independently re-verified — it
+depends on the reviewed page's own DOM already carrying a `data-tu-id`-tagged
+`<img>` for that context image, which no target app in this repo's fixtures
+does yet.
+
+### Model Discovery, Locale Pickers, Analytics, CSV Import, Authenticated Crawl (Phase 18)
+
+Six mostly-independent asks bundled into one pass: live model discovery for
+every multi-model provider, a shared locale picker everywhere a language
+was free-text before, Dashboard promoted to its own top-level Analytics
+segment with actual charts, CSV added to Content Creation's file import,
+and an opt-in authenticated crawl/fetch mode for Audit and Review's Any-URL
+reviewer.
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| `GET /api/v1/models/{provider}` | ✅ | Reads live from the provider — Ollama's `/api/tags`, LMStudio/vLLM/OpenAI's `/v1/models`, Gemini's `/v1beta/models`, Anthropic's Models API — not a hardcoded list. Covers all six providers with more than one selectable model (the three local servers AND Claude/OpenAI/Gemini, each of which ships multiple generations/sizes — a first pass of this scoped it to "local servers only" until corrected mid-build) |
+| `ModelPicker.tsx` | ✅ | Provider dropdown + a second model dropdown that only appears (and only live-fetches) for a discoverable provider; degrades to "Default" with an inline error if discovery fails (missing API key, server not running) rather than blocking the picker |
+| `TranslateRequest.model`, `RedriveRunRequest.scoring_model`/`redrive_model`, `EvaluateRequest.model` | ✅ | Threaded through `get_translation_backend()`/`get_scorer()` down to each backend/scorer's constructor |
+| `LocaleSelect.tsx` + `data/locales.ts` | ✅ | Top 10 most-spoken languages (by total speakers, not market size) pinned above a broader ~35-language list; every free-text language `<input>` across Create Content, Documents, Image Review, Review, Redrive Console, Vendor Scorecard, Consistency, Style Guides, and Audit replaced with it. `variant="language"` for Audit's bare-subtag `primary_language`; `blankLabel` for "blank = all" filter fields |
+| Dashboard → Analytics | ✅ | Promoted out of Quality Review's tab bar into its own 4th top-level segment (`App.tsx`) and renamed — its numbers aggregate across all three other segments, never really belonged nested under just one of them. Added a 4th stat card (Projects, previously fetched but unused) |
+| `BarChart.tsx`, `DonutChart.tsx` | ✅ | Hand-rolled, dependency-free (div-width bars; SVG stroke-dasharray donut) — Analytics had zero charts before this, just numbers and a plain `<ul>` |
+| CSV import | ✅ | `DocumentFormat.CSV`, `_parse_csv_blocks()` — one `TranslationUnit` per row (not blank-line blocks like text/md), taken from an optional `source_column` (defaults to the first column). `DocumentsPage.tsx` accepts `.csv` alongside `.txt`/`.md` |
+| Authenticated crawl/fetch | ✅ | `crawl_site()`/`fetch_and_render()` gained optional `auth_username`/`auth_password` (HTTP Basic Auth) and `auth_cookie` (raw Cookie header), applied via a Playwright `BrowserContext` built once per crawl/fetch. **Anonymous remains the default and is unchanged** — every field omitted reproduces the exact prior behavior. Not a login-form-driving bot: "bring your own already-authenticated session," the standard pattern for this. Deliberately never persisted — accepted on `AuditRunRequest`/`GET /pages/render`'s query params, never written to the `SiteAudit` DB model |
+| CMS push/pull content API | 📋 | Explicitly out of scope for this pass ("later") — logged under v1.2 below, not built |
+
+**Bug found via live testing, not code review:** the model-discovery scope
+above started as "Ollama/LMStudio/vLLM only" — corrected mid-implementation
+once it was pointed out that Claude and OpenAI also ship multiple
+selectable models, not just the three local servers. `_MODEL_OVERRIDABLE`
+and the `/api/v1/models/{provider}` endpoint both cover all six now;
+DeepL/Google Translate/MS Translator remain excluded (genuinely one
+endpoint each, nothing to discover).
+
+**Verified live and via curl, not just typecheck/build:** `GET /api/v1/
+models/ollama` against a real local Ollama instance (returned the actual
+four pulled models); `GET /api/v1/models/deepl` (correctly 400s, no model
+list) and `/models/claude` (correctly 400s, no `ANTHROPIC_API_KEY` set);
+`model` overrides confirmed reaching every one of the six backend/scorer
+constructors directly in Python. CSV import verified end-to-end via curl
+(a 3-row/3-column fixture → 2 `TranslationUnit`s from the `source_text`
+column only, `key`/`notes` correctly ignored). The authenticated-crawl path
+has a dedicated test (`test_audit_run_anonymous_vs_authenticated_crawl`,
+`tests/test_audit.py`) against a real local HTTP-Basic-Auth-gated fixture
+server — anonymous sees a 401, authenticated sees the real 200 page,
+proving the credentials actually reach Playwright's browser context, not
+just that omitting them leaves the existing anonymous path unaffected
+(which the other 22 real-browser Page/Audit tests already covered). Full
+suite 161/161 passing (160 prior + 1 new). Frontend: `tsc -b --force` and
+`npm run build` both clean.
+
+**Discovered while running the app locally, not a code bug:** this repo's
+`docker-compose`-built `content-provenance-app-1` container is a baked
+image with no live-reload — every backend edit in this phase required
+switching to a local `uvicorn --reload` process on the same port instead.
+Worth documenting for the next session: `docker compose up` is fine for
+just running the app, but active backend development should run
+`uvicorn app.main:app --reload --port 8001` directly (per this repo's own
+README) rather than assuming the Docker container picks up edits.
+
 ---
 
 ## v1.2 — Suggested (Not Yet Built)
@@ -809,6 +918,7 @@ _These features were discussed in the design phase but not yet implemented._
 | Transifex API connector | 💡 | |
 | SDL Trados plugin concept | 💡 | CAT tool provenance injection |
 | Non-cooperative review overlay (browser extension / rewriting proxy) | 💡 | For pages we don't control or that block iframing — see Review Environment above |
+| CMS push/pull content API | 💡 | Explicitly flagged during Phase 18 as a near-term need, not built yet: an API for a CMS (WordPress, Contentful, Sanity, ...) to pull translated content out of this system and push source content in, keeping provenance on both legs — distinct from the TMS connectors above (a CMS publishes content, a TMS manages the translation workflow around it; this system currently has neither a push endpoint for a CMS to call nor a webhook to notify one when a redrive changes live content) |
 
 ### AI Act & Regulatory Compliance
 

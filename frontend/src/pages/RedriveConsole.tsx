@@ -1,8 +1,11 @@
 import { useEffect, useState } from "react";
 import {
   api, EVALUATE_PROVIDERS, TRANSLATE_PROVIDERS,
-  type EvaluateResult, type RedrivePreview, type RedriveRun, type StyleGuide,
+  type EvaluateResult, type QueueItem, type RedrivePreview, type RedriveRun, type StyleGuide,
 } from "../api/client";
+import { LocaleSelect } from "../components/LocaleSelect";
+import { ModelPicker } from "../components/ModelPicker";
+import { PageIntro } from "../components/PageIntro";
 import { QualityBadge } from "../components/QualityBadge";
 
 export function RedriveConsole() {
@@ -23,6 +26,9 @@ export function RedriveConsole() {
   // can e.g. evaluate with Claude but redrive with a cheaper/local model.
   const [scoringProvider, setScoringProvider] = useState("");
   const [redriveProvider, setRedriveProvider] = useState("");
+  // Phase 18 — which model WITHIN each provider; "" = provider's own default.
+  const [scoringModel, setScoringModel] = useState("");
+  const [redriveModel, setRedriveModel] = useState("");
   const [preview, setPreview] = useState<RedrivePreview | null>(null);
   const [run, setRun] = useState<RedriveRun | null>(null);
   const [busy, setBusy] = useState(false);
@@ -33,8 +39,22 @@ export function RedriveConsole() {
   // standalone POST /quality/evaluate endpoint).
   const [evalUnitId, setEvalUnitId] = useState("");
   const [evalProvider, setEvalProvider] = useState("");
+  const [evalModel, setEvalModel] = useState("");
   const [evalResult, setEvalResult] = useState<EvaluateResult | null>(null);
   const [evaluating, setEvaluating] = useState(false);
+
+  // Phase 17 — GET /redrive/queue existed with zero UI consumer despite
+  // being described (in its own backend docstring and the README) as
+  // "the review UI's worklist, worst-first." Reuses this page's own
+  // threshold/target-language fields rather than duplicating them.
+  const [worklist, setWorklist] = useState<QueueItem[] | null>(null);
+  const [worklistLoading, setWorklistLoading] = useState(false);
+
+  // Phase 17 — POST /quality/meteor-compare, an ad-hoc tool with zero UI.
+  const [meteorHyp, setMeteorHyp] = useState("");
+  const [meteorRef, setMeteorRef] = useState("");
+  const [meteorScore, setMeteorScore] = useState<number | null | undefined>(undefined);
+  const [meteorBusy, setMeteorBusy] = useState(false);
 
   useEffect(() => { api.listStyleGuides().then(setGuides); }, []);
 
@@ -45,7 +65,7 @@ export function RedriveConsole() {
         threshold, target_language: targetLanguage || undefined,
         style_threshold: styleEnabled ? styleThreshold : undefined,
         style_guide_id: styleEnabled ? (styleGuideId || undefined) : undefined,
-        scoring_provider: scoringProvider || undefined,
+        scoring_provider: scoringProvider || undefined, scoring_model: scoringModel || undefined,
       }));
     } finally {
       setBusy(false);
@@ -62,6 +82,8 @@ export function RedriveConsole() {
         style_guide_id: styleEnabled ? (styleGuideId || undefined) : undefined,
         scoring_provider: scoringProvider || undefined,
         redrive_provider: redriveProvider || undefined,
+        scoring_model: scoringModel || undefined,
+        redrive_model: redriveModel || undefined,
       });
       setRun(result);
     } finally {
@@ -73,9 +95,34 @@ export function RedriveConsole() {
     if (!evalUnitId.trim()) return;
     setEvaluating(true);
     try {
-      setEvalResult(await api.evaluateUnit(evalUnitId.trim(), evalProvider || undefined));
+      setEvalResult(await api.evaluateUnit(evalUnitId.trim(), evalProvider || undefined, evalModel || undefined));
     } finally {
       setEvaluating(false);
+    }
+  }
+
+  async function loadWorklist() {
+    setWorklistLoading(true);
+    try {
+      setWorklist(await api.getQueue({ threshold, target_language: targetLanguage || undefined }));
+    } finally {
+      setWorklistLoading(false);
+    }
+  }
+
+  function sendToEvaluate(unitId: string) {
+    setEvalUnitId(unitId);
+    document.getElementById("evaluate-single-unit")?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
+  async function doMeteorCompare() {
+    if (!meteorHyp.trim() || !meteorRef.trim()) return;
+    setMeteorBusy(true);
+    try {
+      const { score } = await api.meteorCompare(meteorHyp.trim(), meteorRef.trim());
+      setMeteorScore(score);
+    } finally {
+      setMeteorBusy(false);
     }
   }
 
@@ -93,18 +140,16 @@ export function RedriveConsole() {
 
   return (
     <div style={{ padding: 24, maxWidth: 720 }}>
-      <h2 style={{ marginTop: 0 }}>Redrive Console</h2>
-      <p style={{ color: "#6b7280" }}>
+      <PageIntro
+        title="Redrive Console"
+        requires="a threshold and target language are already set below — click 'Preview' to see what would redrive without spending anything, or 'Run redrive' to actually do it."
+      >
         Score everything in scope, then redrive whatever falls below the threshold. With human-in-the-loop
         enabled, redrives are proposed but not applied until approved below.
-      </p>
+      </PageIntro>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 20 }}>
-        <label style={{ fontSize: 13 }}>
-          Target language (blank = all)
-          <input value={targetLanguage} onChange={(e) => setTargetLanguage(e.target.value)}
-                 placeholder="fr-FR" style={{ display: "block", width: 200, marginTop: 4, padding: 4 }} />
-        </label>
+        <LocaleSelect value={targetLanguage} onChange={setTargetLanguage} label="Target language" blankLabel="All languages" width={200} />
         <label style={{ fontSize: 13 }}>
           Threshold: <strong>{threshold}</strong>
           <input type="range" min={0} max={100} value={threshold}
@@ -135,21 +180,15 @@ export function RedriveConsole() {
           <input type="checkbox" checked={requireApproval} onChange={(e) => setRequireApproval(e.target.checked)} />
           Require human approval before applying redrives
         </label>
-        <div style={{ display: "flex", gap: 10 }}>
-          <label style={{ fontSize: 13 }}>
-            Evaluate with
-            <select value={scoringProvider} onChange={(e) => setScoringProvider(e.target.value)}
-                    style={{ display: "block", padding: 4, marginTop: 4, minWidth: 190 }}>
-              {EVALUATE_PROVIDERS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
-            </select>
-          </label>
-          <label style={{ fontSize: 13 }}>
-            Retranslate with
-            <select value={redriveProvider} onChange={(e) => setRedriveProvider(e.target.value)}
-                    style={{ display: "block", padding: 4, marginTop: 4, minWidth: 190 }}>
-              {TRANSLATE_PROVIDERS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
-            </select>
-          </label>
+        <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+          <ModelPicker
+            providers={EVALUATE_PROVIDERS} provider={scoringProvider} model={scoringModel}
+            onProviderChange={setScoringProvider} onModelChange={setScoringModel} label="Evaluate with"
+          />
+          <ModelPicker
+            providers={TRANSLATE_PROVIDERS} provider={redriveProvider} model={redriveModel}
+            onProviderChange={setRedriveProvider} onModelChange={setRedriveModel} label="Retranslate with"
+          />
         </div>
         <label style={{ fontSize: 13 }}>
           Approving/rejecting as
@@ -179,9 +218,54 @@ export function RedriveConsole() {
       )}
 
       <div style={{ marginBottom: 24, padding: 12, background: "#f9fafb", borderRadius: 6 }}>
+        <h3 style={{ marginTop: 0, fontSize: 15 }}>Worklist</h3>
+        <p style={{ color: "#6b7280", fontSize: 13, marginTop: 0 }}>
+          Units already scored below the threshold set above, worst-first — reflects scores already
+          on record, so run Preview or a redrive first if this scope hasn't been scored yet.
+        </p>
+        <button disabled={worklistLoading} onClick={loadWorklist} style={{ padding: "6px 14px", cursor: "pointer" }}>
+          {worklistLoading ? "Loading…" : "Load worklist"}
+        </button>
+        {worklist && (
+          worklist.length === 0 ? (
+            <div style={{ marginTop: 10, fontSize: 13, color: "#9ca3af" }}>Nothing below {threshold} in this scope.</div>
+          ) : (
+            <table style={{ width: "100%", fontSize: 12.5, borderCollapse: "collapse", marginTop: 10 }}>
+              <thead>
+                <tr style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb" }}>
+                  <th style={{ padding: "4px 6px" }}>Score</th>
+                  <th style={{ padding: "4px 6px" }}>Source</th>
+                  <th style={{ padding: "4px 6px" }}>Reasons</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {worklist.map((item) => (
+                  <tr key={item.unit_id} style={{ borderBottom: "1px solid #f3f4f6" }}>
+                    <td style={{ padding: "4px 6px" }}><QualityBadge score={item.score} /></td>
+                    <td style={{ padding: "4px 6px", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {item.source_text}
+                    </td>
+                    <td style={{ padding: "4px 6px", color: "#6b7280" }}>{item.reasons.join(", ")}</td>
+                    <td style={{ padding: "4px 6px" }}>
+                      <button onClick={() => sendToEvaluate(item.unit_id)} style={{ cursor: "pointer", fontSize: 11 }}>
+                        Evaluate ↓
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )
+        )}
+      </div>
+
+      <div id="evaluate-single-unit" style={{ marginBottom: 24, padding: 12, background: "#f9fafb", borderRadius: 6 }}>
         <h3 style={{ marginTop: 0, fontSize: 15 }}>Evaluate a single unit</h3>
         <p style={{ color: "#6b7280", fontSize: 13, marginTop: 0 }}>
           Score one unit on demand with a chosen model — independent of the threshold run above.
+          Requires a unit id (copy one from the Review tab, or from a run's results table below
+          once you've run a redrive) — nothing runs without one.
         </p>
         <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
           <label style={{ fontSize: 13 }}>
@@ -189,13 +273,10 @@ export function RedriveConsole() {
             <input value={evalUnitId} onChange={(e) => setEvalUnitId(e.target.value)}
                    placeholder="unit id" style={{ display: "block", width: 260, marginTop: 4, padding: 4 }} />
           </label>
-          <label style={{ fontSize: 13 }}>
-            Evaluate with
-            <select value={evalProvider} onChange={(e) => setEvalProvider(e.target.value)}
-                    style={{ display: "block", padding: 4, marginTop: 4, minWidth: 190 }}>
-              {EVALUATE_PROVIDERS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
-            </select>
-          </label>
+          <ModelPicker
+            providers={EVALUATE_PROVIDERS} provider={evalProvider} model={evalModel}
+            onProviderChange={setEvalProvider} onModelChange={setEvalModel} label="Evaluate with"
+          />
           <button disabled={evaluating || !evalUnitId.trim()} onClick={doEvaluate} style={{ padding: "6px 14px", cursor: "pointer" }}>
             {evaluating ? "Scoring…" : "Evaluate"}
           </button>
@@ -211,6 +292,34 @@ export function RedriveConsole() {
               <div style={{ color: "#6b7280" }}>{evalResult.reasons.join(", ")}</div>
             )}
           </div>
+        )}
+      </div>
+
+      <div style={{ marginBottom: 24, padding: 12, background: "#f9fafb", borderRadius: 6 }}>
+        <h3 style={{ marginTop: 0, fontSize: 15 }}>Compare METEOR</h3>
+        <p style={{ color: "#6b7280", fontSize: 13, marginTop: 0 }}>
+          Ad-hoc lexical comparison between any two strings — the same computation that runs
+          automatically after every redrive, exposed directly (e.g. against a curated reference).
+          Requires both boxes filled in.
+        </p>
+        <div style={{ display: "flex", gap: 10, marginBottom: 8 }}>
+          <textarea value={meteorHyp} onChange={(e) => setMeteorHyp(e.target.value)} rows={2}
+                    placeholder="Candidate text" style={{ flex: 1, fontSize: 13, padding: 6 }} />
+          <textarea value={meteorRef} onChange={(e) => setMeteorRef(e.target.value)} rows={2}
+                    placeholder="Reference text" style={{ flex: 1, fontSize: 13, padding: 6 }} />
+        </div>
+        <button disabled={meteorBusy || !meteorHyp.trim() || !meteorRef.trim()} onClick={doMeteorCompare}
+                style={{ padding: "6px 14px", cursor: "pointer" }}>
+          {meteorBusy ? "Comparing…" : "Compare"}
+        </button>
+        {meteorScore !== undefined && (
+          <span style={{ marginLeft: 12, fontSize: 13 }}>
+            {meteorScore === null ? (
+              <span style={{ color: "#92400e" }}>Unavailable — nltk/wordnet not installed on the server.</span>
+            ) : (
+              <>METEOR: <strong>{meteorScore.toFixed(1)}</strong></>
+            )}
+          </span>
         )}
       </div>
 

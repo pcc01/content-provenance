@@ -8,7 +8,7 @@ why that's an accepted v1 tradeoff.
 """
 
 from datetime import datetime
-from typing import Dict
+from typing import Dict, Optional
 from urllib.parse import urlparse
 
 from app.core.audit.checks import (
@@ -40,12 +40,21 @@ _CHECK_MODULES = {
 }
 
 
-async def run_audit(audit: SiteAudit) -> SiteAudit:
+async def run_audit(
+    audit: SiteAudit,
+    auth_username: Optional[str] = None, auth_password: Optional[str] = None, auth_cookie: Optional[str] = None,
+) -> SiteAudit:
+    # Phase 18 — optional, per-call only (see crawl_site's docstring);
+    # None/None/None (the default) is the original anonymous crawl,
+    # unchanged.
     db = get_db()
     await db.update_site_audit(audit.id, status=SiteAuditStatus.RUNNING)
 
     try:
-        crawled_pages = await crawl_site(audit.root_url, max_pages=audit.max_pages)
+        crawled_pages = await crawl_site(
+            audit.root_url, max_pages=audit.max_pages,
+            auth_username=auth_username, auth_password=auth_password, auth_cookie=auth_cookie,
+        )
     except PageFetchError as e:
         # 403 from crawl_site only ever means one thing here: the root
         # url's robots.txt disallowed us (see crawler.py's up-front check).

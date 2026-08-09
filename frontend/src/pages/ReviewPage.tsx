@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type TranslationUnit } from "../api/client";
+import { LocaleSelect } from "../components/LocaleSelect";
 import { PageFlaggedList } from "../components/PageFlaggedList";
 import { PageHistory } from "../components/PageHistory";
+import { PageIntro } from "../components/PageIntro";
 import { PageNotes } from "../components/PageNotes";
 import { PendingChanges } from "../components/PendingChanges";
 import { ReviewFrame, type ReviewFrameHandle } from "../components/ReviewFrame";
@@ -43,6 +45,12 @@ export function ReviewPage({ initialFetchTarget }: Props = {}) {
   const [fetchMethod, setFetchMethod] = useState("ai");
   const [forceRefresh, setForceRefresh] = useState(false);
 
+  // Phase 18 — optional authenticated fetch, same "off by default, never
+  // stored" contract as the Audit tab's equivalent fields.
+  const [authUsername, setAuthUsername] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authCookie, setAuthCookie] = useState("");
+
   const [loadedUrl, setLoadedUrl] = useState<string | null>(null);
   const [loadedFetchTarget, setLoadedFetchTarget] = useState<{ url: string; locale: string } | null>(null);
   const [activeAsOf, setActiveAsOf] = useState<string | null>(null);
@@ -71,6 +79,9 @@ export function ReviewPage({ initialFetchTarget }: Props = {}) {
       _t: String(Date.now()),
     });
     if (opts?.refresh) params.set("refresh", "true");
+    if (authUsername) params.set("auth_username", authUsername);
+    if (authPassword) params.set("auth_password", authPassword);
+    if (authCookie) params.set("auth_cookie", authCookie);
     setLoadedUrl(`/api/v1/pages/render?${params.toString()}`);
   }
 
@@ -160,6 +171,15 @@ export function ReviewPage({ initialFetchTarget }: Props = {}) {
         width: 280, borderRight: "1px solid #e5e7eb", padding: 12,
         display: "flex", flexDirection: "column", gap: 12, overflowY: "auto", flexShrink: 0,
       }}>
+        <PageIntro
+          compact
+          title="Review"
+          requires="pick a mode below, fill in its URL (and route/locale), then click 'Load page.'"
+        >
+          The real rendered page, live in an iframe — translated segments get clickable highlight
+          boxes instead of a segment-grid list.
+        </PageIntro>
+
         <div style={{ display: "flex", borderRadius: 6, overflow: "hidden", border: "1px solid #e5e7eb" }}>
           <button
             onClick={() => setMode("cooperative")}
@@ -215,15 +235,7 @@ export function ReviewPage({ initialFetchTarget }: Props = {}) {
                 No SDK tagging required — this fetches, harvests, and rewrites the page server-side.
               </p>
             </div>
-            <div>
-              <label style={{ fontSize: 12, color: "#6b7280", display: "block", marginBottom: 2 }}>
-                Source language
-              </label>
-              <input
-                value={fetchSourceLanguage} onChange={(e) => setFetchSourceLanguage(e.target.value)}
-                style={{ width: "100%", fontSize: 13, padding: 4, boxSizing: "border-box" }}
-              />
-            </div>
+            <LocaleSelect value={fetchSourceLanguage} onChange={setFetchSourceLanguage} label="Source language" width={230} />
             <div>
               <label style={{ fontSize: 12, color: "#6b7280", display: "block", marginBottom: 2 }}>Method</label>
               <select
@@ -239,16 +251,36 @@ export function ReviewPage({ initialFetchTarget }: Props = {}) {
               <input type="checkbox" checked={forceRefresh} onChange={(e) => setForceRefresh(e.target.checked)} />
               Force refresh (re-fetch instead of using the cached copy)
             </label>
+
+            <details>
+              <summary style={{ cursor: "pointer", fontSize: 12, color: "#6b7280" }}>
+                Advanced: fetch as a logged-in user (optional)
+              </summary>
+              <div style={{ marginTop: 6, padding: 8, background: "#f9fafb", borderRadius: 6, display: "flex", flexDirection: "column", gap: 6 }}>
+                <p style={{ fontSize: 11, color: "#9ca3af", margin: 0 }}>
+                  Fetches anonymously by default, unchanged. For pages behind a login, fill in
+                  either option below to use an already-authenticated session for this fetch only
+                  — never stored.
+                </p>
+                <input
+                  value={authUsername} onChange={(e) => setAuthUsername(e.target.value)}
+                  placeholder="Basic auth username" style={{ width: "100%", fontSize: 11, padding: 4, boxSizing: "border-box" }}
+                />
+                <input
+                  type="password" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)}
+                  placeholder="Basic auth password" style={{ width: "100%", fontSize: 11, padding: 4, boxSizing: "border-box" }}
+                />
+                <textarea
+                  value={authCookie} onChange={(e) => setAuthCookie(e.target.value)} rows={2}
+                  placeholder="— or — Cookie header (from a logged-in browser's devtools)"
+                  style={{ width: "100%", fontSize: 11, padding: 4, boxSizing: "border-box", fontFamily: "monospace" }}
+                />
+              </div>
+            </details>
           </>
         )}
 
-        <div>
-          <label style={{ fontSize: 12, color: "#6b7280", display: "block", marginBottom: 2 }}>Locale</label>
-          <input
-            value={locale} onChange={(e) => setLocale(e.target.value)}
-            style={{ width: "100%", fontSize: 13, padding: 4, boxSizing: "border-box" }}
-          />
-        </div>
+        <LocaleSelect value={locale} onChange={setLocale} label="Locale" width={230} />
         <button onClick={loadPage} style={{ padding: "6px 0", cursor: "pointer" }}>Load page</button>
 
         {segmentsError && (

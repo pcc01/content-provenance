@@ -195,7 +195,7 @@ async def test_evaluate_endpoint_scores_and_persists(client, monkeypatch):
     )
     await db.save_translation_unit(unit)
 
-    monkeypatch.setattr("app.api.quality.get_scorer", lambda provider=None: _StubEvaluateScorer())
+    monkeypatch.setattr("app.api.quality.get_scorer", lambda provider=None, model=None: _StubEvaluateScorer())
 
     resp = await client.post("/api/v1/quality/evaluate", json={"unit_id": unit.id, "provider": "claude"})
     assert resp.status_code == 200

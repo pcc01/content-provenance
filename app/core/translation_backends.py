@@ -94,8 +94,14 @@ class MockTranslationBackend(TranslationBackend):
 class AnthropicTranslationBackend(TranslationBackend):
     """
     Uses Claude to perform translation with provenance-aware prompting.
-    Requires ANTHROPIC_API_KEY to be set.
+    Requires ANTHROPIC_API_KEY to be set. `model` overridable per-instance
+    (Phase 18 — GET /api/v1/models/anthropic lists Anthropic's own Models
+    API rather than this hardcoded default going stale as new Claude
+    generations ship).
     """
+
+    def __init__(self, model: Optional[str] = None):
+        self.model = model or "claude-sonnet-4-20250514"
 
     async def translate(self, text, source_lang, target_lang, domain=None, style_context=None):
         try:
@@ -104,7 +110,7 @@ class AnthropicTranslationBackend(TranslationBackend):
             system, user_msg = _chat_translate_prompt(text, source_lang, target_lang, domain, style_context)
 
             message = client.messages.create(
-                model="claude-sonnet-4-20250514",
+                model=self.model,
                 max_tokens=4096,
                 system=system,
                 messages=[{"role": "user", "content": user_msg}],
@@ -127,12 +133,17 @@ class AnthropicTranslationBackend(TranslationBackend):
 
 class OpenAITranslationBackend(TranslationBackend):
     """Requires OPENAI_API_KEY. Same OpenAICompatibleClient LMStudio/vLLM
-    reuse below — just pointed at api.openai.com with a real key."""
+    reuse below — just pointed at api.openai.com with a real key. `model`
+    overridable per-instance — GET /api/v1/models/openai lists what your
+    key actually has access to."""
+
+    def __init__(self, model: Optional[str] = None):
+        self.model = model or settings.openai_model
 
     async def translate(self, text, source_lang, target_lang, domain=None, style_context=None):
         if not settings.openai_api_key:
             raise RuntimeError("OPENAI_API_KEY is required for the openai provider.")
-        client = OpenAICompatibleClient("https://api.openai.com/v1", settings.openai_api_key, settings.openai_model)
+        client = OpenAICompatibleClient("https://api.openai.com/v1", settings.openai_api_key, self.model)
         system, user_msg = _chat_translate_prompt(text, source_lang, target_lang, domain, style_context)
         try:
             translated = await client.chat(system, user_msg, max_tokens=4096)
@@ -146,12 +157,17 @@ class OpenAITranslationBackend(TranslationBackend):
 class GeminiTranslationBackend(TranslationBackend):
     """Requires GEMINI_API_KEY. Distinct from GoogleTranslationBackend
     below (Google Cloud Translation, pure NMT) — this is Gemini the LLM,
-    so it can follow style_context the way NMT services can't."""
+    so it can follow style_context the way NMT services can't. `model`
+    overridable per-instance — GET /api/v1/models/gemini lists what
+    Google's Generative Language API currently serves."""
+
+    def __init__(self, model: Optional[str] = None):
+        self.model = model or settings.gemini_model
 
     async def translate(self, text, source_lang, target_lang, domain=None, style_context=None):
         if not settings.gemini_api_key:
             raise RuntimeError("GEMINI_API_KEY is required for the gemini provider.")
-        client = GeminiClient(settings.gemini_api_key, settings.gemini_model)
+        client = GeminiClient(settings.gemini_api_key, self.model)
         system, user_msg = _chat_translate_prompt(text, source_lang, target_lang, domain, style_context)
         try:
             translated = await client.chat(system, user_msg, max_tokens=4096)
@@ -281,11 +297,15 @@ class OllamaTranslationBackend(TranslationBackend):
 
 class LMStudioTranslationBackend(TranslationBackend):
     """LMStudio's local server speaks the OpenAI /v1/chat/completions API
-    — no real API key needed, `model` is whatever's currently loaded in
-    LMStudio (or its model identifier if multiple are available)."""
+    — no real API key needed. `model` is overridable per-instance (Phase 18
+    — GET /api/v1/models/lmstudio reads what's actually loaded, rather than
+    guessing) and otherwise falls back to settings.lmstudio_model."""
+
+    def __init__(self, model: Optional[str] = None):
+        self.model = model or settings.lmstudio_model
 
     async def translate(self, text, source_lang, target_lang, domain=None, style_context=None):
-        client = OpenAICompatibleClient(settings.lmstudio_url, "lm-studio", settings.lmstudio_model)
+        client = OpenAICompatibleClient(settings.lmstudio_url, "lm-studio", self.model)
         system, user_msg = _chat_translate_prompt(text, source_lang, target_lang, domain, style_context)
         try:
             translated = await client.chat(system, user_msg, max_tokens=4096)
@@ -298,10 +318,14 @@ class LMStudioTranslationBackend(TranslationBackend):
 
 class VLLMTranslationBackend(TranslationBackend):
     """vLLM's `--api-server` mode also speaks the OpenAI-compatible API —
-    same client as LMStudio, different default port/model."""
+    same client as LMStudio, different default port/model. `model`
+    overridable per-instance, same Phase 18 reasoning as LMStudio above."""
+
+    def __init__(self, model: Optional[str] = None):
+        self.model = model or settings.vllm_model
 
     async def translate(self, text, source_lang, target_lang, domain=None, style_context=None):
-        client = OpenAICompatibleClient(settings.vllm_url, "EMPTY", settings.vllm_model)
+        client = OpenAICompatibleClient(settings.vllm_url, "EMPTY", self.model)
         system, user_msg = _chat_translate_prompt(text, source_lang, target_lang, domain, style_context)
         try:
             translated = await client.chat(system, user_msg, max_tokens=4096)
@@ -327,17 +351,30 @@ _PROVIDER_CLASSES = {
 
 _backend_instance: Optional[TranslationBackend] = None
 
+# Phase 18 — every provider that actually offers more than one selectable
+# model: the three local multi-model servers, plus the three hosted LLM
+# vendors (Claude/OpenAI/Gemini each ship multiple model generations/sizes
+# too — not just Ollama/LMStudio/vLLM). `model` is only meaningful (and
+# only accepted by these classes' constructors) for this set. DeepL/Google
+# Translate/MS Translator are pure NMT with exactly one endpoint each —
+# passing `model` for one of those is silently ignored, not an error, so
+# callers don't need to know which providers care.
+_MODEL_OVERRIDABLE = {"anthropic", "openai", "gemini", "ollama", "lmstudio", "vllm"}
 
-def get_translation_backend(provider: Optional[str] = None) -> TranslationBackend:
+
+def get_translation_backend(provider: Optional[str] = None, model: Optional[str] = None) -> TranslationBackend:
     """Returns the configured translation backend. `provider` overrides
     settings.translation_provider (Phase 16 — a specific translate/redrive
     request choosing a different provider than the app default) — passing
     one always builds a fresh instance rather than reusing the cached
-    default, mirroring app/core/scoring/factory.py's get_scorer() exactly."""
+    default, mirroring app/core/scoring/factory.py's get_scorer() exactly.
+    `model` (Phase 18) additionally overrides WHICH model runs within
+    provider, for the local multi-model servers — see GET
+    /api/v1/models/{provider} for how a caller discovers valid values."""
     global _backend_instance
 
     requested = (provider or settings.translation_provider).lower()
-    if provider is None and _backend_instance is not None:
+    if provider is None and model is None and _backend_instance is not None:
         return _backend_instance
 
     cls = _PROVIDER_CLASSES.get(requested)
@@ -350,8 +387,8 @@ def get_translation_backend(provider: Optional[str] = None) -> TranslationBacken
     if requested == "deepl" and not settings.deepl_api_key:
         raise RuntimeError("DEEPL_API_KEY is required for the deepl provider.")
 
-    backend = cls()
-    if provider is None:
+    backend = cls(model=model) if requested in _MODEL_OVERRIDABLE else cls()
+    if provider is None and model is None:
         _backend_instance = backend
         print(f"✓ Translation backend: {backend.__class__.__name__}")
     return backend

@@ -1,8 +1,8 @@
 import { useState } from "react";
+import { AnalyticsPage } from "./pages/AnalyticsPage";
 import { AuditPage } from "./pages/AuditPage";
 import { ConsistencyPage } from "./pages/ConsistencyPage";
 import { CreateContentPage } from "./pages/CreateContentPage";
-import { Dashboard } from "./pages/Dashboard";
 import { DocumentsPage } from "./pages/DocumentsPage";
 import { ImageReview } from "./pages/ImageReview";
 import { ImportPage } from "./pages/ImportPage";
@@ -26,7 +26,7 @@ export default function App() {
   return PUBLIC_SITE ? <PublicAuditLanding /> : <InternalApp />;
 }
 
-// Three segments, matching the actual shape of the work — not an
+// Four segments, matching the actual shape of the work — not an
 // arbitrary regroup of the old flat tab bar:
 //   Content Creation — bring in or write new copy BEFORE it's translated
 //     (style guides define the brand voice everything else checks against,
@@ -40,14 +40,20 @@ export default function App() {
 //     separate concern from this system's own translated content (see
 //     docs/graphrag-provenance-proposal.md's note on why Phase 14's
 //     consistency checks did NOT get folded into this same subsystem).
-type Segment = "create" | "review" | "audit";
+//   Analytics — Phase 18: promoted out of Quality Review's tab bar into
+//     its own top-level segment (renamed from "Dashboard") since its
+//     numbers aggregate across all three other segments, not just Quality
+//     Review — it was only ever nested there because that segment existed
+//     first, not because the data is Quality-Review-specific.
+type Segment = "create" | "review" | "audit" | "analytics";
 type CreateTab = "create" | "style-guides" | "import" | "documents";
-type ReviewTab = "review" | "live" | "redrive" | "images" | "vendors" | "consistency" | "search" | "dashboard";
+type ReviewTab = "review" | "live" | "redrive" | "images" | "vendors" | "consistency" | "search";
 
 const SEGMENTS: [Segment, string][] = [
   ["create", "Content Creation"],
   ["review", "Quality Review"],
   ["audit", "Audit"],
+  ["analytics", "Analytics"],
 ];
 
 const CREATE_TABS: [CreateTab, string][] = [
@@ -65,7 +71,6 @@ const REVIEW_TABS: [ReviewTab, string][] = [
   ["vendors", "Vendor Scorecard"],
   ["consistency", "Consistency"],
   ["search", "Search"],
-  ["dashboard", "Dashboard"],
 ];
 
 function InternalApp() {
@@ -131,11 +136,13 @@ function InternalApp() {
             {reviewTab === "vendors" && <div style={{ overflowY: "auto", height: "100%" }}><VendorScorecardPage /></div>}
             {reviewTab === "consistency" && <div style={{ overflowY: "auto", height: "100%" }}><ConsistencyPage /></div>}
             {reviewTab === "search" && <div style={{ overflowY: "auto", height: "100%" }}><SearchPage /></div>}
-            {reviewTab === "dashboard" && <div style={{ overflowY: "auto", height: "100%" }}><Dashboard /></div>}
           </>
         )}
         {segment === "audit" && (
           <div style={{ overflowY: "auto", height: "100%" }}><AuditPage onReviewPage={reviewPageFromAudit} /></div>
+        )}
+        {segment === "analytics" && (
+          <div style={{ overflowY: "auto", height: "100%" }}><AnalyticsPage /></div>
         )}
       </div>
     </div>

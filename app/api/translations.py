@@ -90,7 +90,7 @@ async def create_translation(request: TranslateRequest):
         )
 
     if request.method in (TranslationMethod.AI, TranslationMethod.HYBRID):
-        backend = get_translation_backend(request.provider)  # Phase 16 — per-request provider override
+        backend = get_translation_backend(request.provider, request.model)  # Phase 16/18 — per-request provider + model override
         translated_text, confidence = await backend.translate(
             request.source_text,
             request.source_language,

@@ -16,7 +16,7 @@ directly rather than pulling in an `ollama` package).
     DeepLTranslationBackend/GoogleTranslationBackend, no evaluate capability.
 """
 
-from typing import Optional
+from typing import List, Optional
 
 import httpx
 
@@ -87,6 +87,86 @@ class GeminiClient:
                 reason = data.get("promptFeedback", {}).get("blockReason", "no candidates returned")
                 raise RuntimeError(f"Gemini returned no output: {reason}")
             return candidates[0]["content"]["parts"][0]["text"].strip()
+
+
+async def list_ollama_models(ollama_url: str, timeout: float = 10.0) -> List[str]:
+    """Phase 18 — GET /api/tags is Ollama's own "what's pulled right now"
+    endpoint (https://github.com/ollama/ollama/blob/main/docs/api.md#list-local-models).
+    Read live rather than hardcoded so the model picker reflects whatever
+    the operator has actually pulled, not a guessed list that goes stale
+    the moment someone runs `ollama pull` for something new."""
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        resp = await client.get(f"{ollama_url.rstrip('/')}/api/tags")
+        resp.raise_for_status()
+        data = resp.json()
+        return sorted(m["name"] for m in data.get("models", []))
+
+
+async def list_openai_compatible_models(base_url: str, api_key: str = "not-needed", timeout: float = 10.0) -> List[str]:
+    """LMStudio and vLLM both implement OpenAI's GET /v1/models — same
+    "read what's actually loaded" reasoning as list_ollama_models above,
+    just a different response shape ({"data": [{"id": ...}, ...]})."""
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        resp = await client.get(
+            f"{base_url.rstrip('/')}/models",
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return sorted(m["id"] for m in data.get("data", []))
+
+
+async def list_openai_models(api_key: str, timeout: float = 10.0) -> List[str]:
+    """OpenAI's own GET /v1/models (https://platform.openai.com/docs/api-reference/models/list)
+    lists everything your key has access to — embeddings, whisper, dall-e,
+    and every gpt/o-series chat model together. Filtered here to just the
+    chat-capable-looking ones (id contains "gpt" or starts with "o") since
+    this is a translate/evaluate model picker, not a general model browser —
+    an imperfect heuristic (OpenAI doesn't tag models by capability in this
+    endpoint), but far better than showing embedding models in a translate
+    dropdown."""
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        resp = await client.get(
+            "https://api.openai.com/v1/models",
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        ids = [m["id"] for m in data.get("data", [])]
+        return sorted(i for i in ids if "gpt" in i or i.startswith("o1") or i.startswith("o3"))
+
+
+async def list_gemini_models(api_key: str, timeout: float = 10.0) -> List[str]:
+    """Google's GET /v1beta/models (https://ai.google.dev/api/models#method:-models.list)
+    — filtered to models that actually support generateContent (the same
+    call GeminiClient.chat makes), since the endpoint also lists
+    embedding/imagen/etc. models this app never calls."""
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        resp = await client.get(
+            "https://generativelanguage.googleapis.com/v1beta/models",
+            params={"key": api_key},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        names = []
+        for m in data.get("models", []):
+            if "generateContent" in (m.get("supportedGenerationMethods") or []):
+                names.append(m["name"].removeprefix("models/"))
+        return sorted(names)
+
+
+async def list_anthropic_models(api_key: str, timeout: float = 10.0) -> List[str]:
+    """Anthropic's Models API (https://docs.anthropic.com/en/api/models-list)
+    — GET /v1/models, the same shape OpenAI's list endpoint uses but with
+    Anthropic's own auth headers."""
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        resp = await client.get(
+            "https://api.anthropic.com/v1/models",
+            headers={"x-api-key": api_key, "anthropic-version": "2023-06-01"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return sorted(m["id"] for m in data.get("data", []))
 
 
 class MSTranslatorClient:

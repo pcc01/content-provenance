@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { api, type SiteAudit, type SiteAuditCheck } from "../api/client";
 import { AuditReport } from "../components/AuditReport";
+import { LocaleSelect } from "../components/LocaleSelect";
+import { PageIntro } from "../components/PageIntro";
 
 interface Props {
   onReviewPage?: (url: string, locale: string) => void;
@@ -38,6 +40,13 @@ export function AuditPage({ onReviewPage }: Props) {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Phase 18 — optional authenticated crawl. Off by default (every field
+  // blank = the original anonymous crawl, unchanged); filling in either
+  // pair sends it for this one run only, never persisted.
+  const [authUsername, setAuthUsername] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authCookie, setAuthCookie] = useState("");
+
   const [runs, setRuns] = useState<SiteAudit[] | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
@@ -65,6 +74,8 @@ export function AuditPage({ onReviewPage }: Props) {
       const audit = await api.createAuditRun({
         root_url: rootUrl, primary_language: primaryLanguage, requester_email: requesterEmail.trim(),
         max_pages: maxPages, checks: Array.from(checks),
+        auth_username: authUsername || undefined, auth_password: authPassword || undefined,
+        auth_cookie: authCookie || undefined,
       });
       reloadRuns();
       setSelectedId(audit.id);
@@ -78,11 +89,13 @@ export function AuditPage({ onReviewPage }: Props) {
   return (
     <div style={{ padding: 24, maxWidth: 960, display: "flex", flexDirection: "column", gap: 24 }}>
       <div>
-        <h2 style={{ marginTop: 0 }}>Site Audit</h2>
-        <p style={{ color: "#6b7280", fontSize: 13 }}>
+        <PageIntro
+          title="Site Audit"
+          requires="fill in a Root URL and a valid email below (the report is sent there, and the button stays disabled until both are filled in), then click 'Start audit.'"
+        >
           Crawl a website (not this system's own translations) to find mixed-locale content, pages at risk of
           poor RTL support, ICU/i18n tooling in use, and privacy-policy language mismatches.
-        </p>
+        </PageIntro>
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 12, maxWidth: 480 }}>
@@ -105,13 +118,7 @@ export function AuditPage({ onReviewPage }: Props) {
             }}
           />
         </label>
-        <label style={{ fontSize: 13 }}>
-          Primary language
-          <input
-            value={primaryLanguage} onChange={(e) => setPrimaryLanguage(e.target.value)}
-            style={{ display: "block", width: 100, marginTop: 4, padding: 4 }}
-          />
-        </label>
+        <LocaleSelect value={primaryLanguage} onChange={setPrimaryLanguage} label="Primary language" variant="language" width={160} />
         <label style={{ fontSize: 13 }}>
           Max pages
           <input
@@ -131,6 +138,40 @@ export function AuditPage({ onReviewPage }: Props) {
             ))}
           </div>
         </div>
+
+        <details>
+          <summary style={{ cursor: "pointer", fontSize: 13, color: "#6b7280" }}>
+            Advanced: crawl as a logged-in user (optional)
+          </summary>
+          <div style={{ marginTop: 8, padding: 10, background: "#f9fafb", borderRadius: 6, display: "flex", flexDirection: "column", gap: 8 }}>
+            <p style={{ fontSize: 12, color: "#6b7280", margin: 0 }}>
+              By default this crawls anonymously, like any visitor without an account — that's
+              unchanged and still what happens if you leave everything below blank. Some sites gate
+              real content behind a login or bot-detection wall; filling in either option below
+              hands that one crawl an already-authenticated session instead of driving the site's
+              own login form. Used for this run only — never stored.
+            </p>
+            <div style={{ display: "flex", gap: 8 }}>
+              <label style={{ fontSize: 12, flex: 1 }}>
+                HTTP Basic Auth username
+                <input value={authUsername} onChange={(e) => setAuthUsername(e.target.value)}
+                       style={{ display: "block", width: "100%", padding: 4, marginTop: 2, boxSizing: "border-box" }} />
+              </label>
+              <label style={{ fontSize: 12, flex: 1 }}>
+                Password
+                <input type="password" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)}
+                       style={{ display: "block", width: "100%", padding: 4, marginTop: 2, boxSizing: "border-box" }} />
+              </label>
+            </div>
+            <label style={{ fontSize: 12 }}>
+              — or — Cookie header (copied from a logged-in browser's devtools)
+              <textarea value={authCookie} onChange={(e) => setAuthCookie(e.target.value)} rows={2}
+                        placeholder="session_id=...; auth_token=..."
+                        style={{ display: "block", width: "100%", padding: 4, marginTop: 2, boxSizing: "border-box", fontFamily: "monospace", fontSize: 11 }} />
+            </label>
+          </div>
+        </details>
+
         <button onClick={startAudit} disabled={running || !rootUrl.trim() || !emailValid} style={{ padding: "6px 0", cursor: "pointer" }}>
           {running ? "Crawling… (this can take a while)" : "Start audit"}
         </button>

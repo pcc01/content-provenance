@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { api, imageFileUrl, type ImageAsset, type ImageTranslationUnit } from "../api/client";
+import { LocaleSelect } from "../components/LocaleSelect";
+import { PageIntro } from "../components/PageIntro";
 
 // Standalone translatable image assets (banners etc.) — NOT embedded in a
 // live page, so they don't get an in-context overlay box the way text
@@ -94,12 +96,14 @@ export function ImageReview() {
 
   return (
     <div style={{ padding: 24, maxWidth: 800 }}>
-      <h2 style={{ marginTop: 0 }}>Image Review</h2>
-      <p style={{ color: "#6b7280" }}>
+      <PageIntro
+        title="Image Review"
+        requires="upload a source image in step 1 below (or look up an existing image translation unit by id above) — step 2 only appears once a source image exists."
+      >
         Standalone translatable images (banners, graphics) — upload a source image, localize it,
         and review both versions with their provenance. Context screenshots linked to a text
         segment appear inline in the Review tab instead.
-      </p>
+      </PageIntro>
 
       {error && (
         <div style={{ background: "#fef2f2", color: "#b91c1c", padding: 10, borderRadius: 6, marginBottom: 16, fontSize: 13 }}>
@@ -127,14 +131,8 @@ export function ImageReview() {
         <section style={{ marginBottom: 24 }}>
           <h3>2. Localize</h3>
           <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: 320 }}>
-            <label style={{ fontSize: 13 }}>
-              Source language
-              <input value={sourceLanguage} onChange={(e) => setSourceLanguage(e.target.value)} style={{ display: "block", width: "100%", padding: 4 }} />
-            </label>
-            <label style={{ fontSize: 13 }}>
-              Target language
-              <input value={targetLanguage} onChange={(e) => setTargetLanguage(e.target.value)} style={{ display: "block", width: "100%", padding: 4 }} />
-            </label>
+            <LocaleSelect value={sourceLanguage} onChange={setSourceLanguage} label="Source language" width={280} />
+            <LocaleSelect value={targetLanguage} onChange={setTargetLanguage} label="Target language" width={280} />
             <label style={{ fontSize: 13 }}>
               Method
               <select value={method} onChange={(e) => setMethod(e.target.value)} style={{ display: "block", width: "100%", padding: 4 }}>

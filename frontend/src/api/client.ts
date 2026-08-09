@@ -49,6 +49,18 @@ export function imageFileUrl(imageId: string): string {
   return `${API_BASE}/images/${imageId}/file`;
 }
 
+// Phase 17 — direct download links (not JSON fetches) for the provenance
+// exports the backend already generates but nothing linked to before now.
+export function xliffDownloadUrl(unitId: string): string {
+  return `${API_BASE}/xliff/${unitId}`;
+}
+export function provJsonDownloadUrl(unitId: string): string {
+  return `${API_BASE}/provenance/${unitId}/prov-json`;
+}
+export function provNDownloadUrl(unitId: string): string {
+  return `${API_BASE}/provenance/${unitId}/prov-n`;
+}
+
 export interface TranslationUnit {
   id: string;
   source_id: string;
@@ -102,6 +114,18 @@ export interface ProvenanceAgent {
   organization: string | null;
 }
 
+export interface DeploymentRecord {
+  id: string;
+  translation_unit_id: string;
+  context: string;
+  location: string;
+  deployed_at: string;
+  deployed_by: string | null;
+  version: string | null;
+  is_active: boolean;
+  retired_at: string | null;
+}
+
 export interface ProvenanceResponse {
   translation_unit_id: string;
   source_text: string;
@@ -115,6 +139,36 @@ export interface ProvenanceResponse {
     agents: ProvenanceAgent[];
     relations: Record<string, string>[];
   };
+  deployments: DeploymentRecord[];
+}
+
+export interface LineageNode {
+  id: string;
+  label: string;
+  type: "entity" | "activity" | "agent";
+}
+
+export interface LineageEdge {
+  from: string;
+  to: string;
+  label: string;
+}
+
+export interface LineageGraph {
+  translation_unit_id: string;
+  nodes: LineageNode[];
+  edges: LineageEdge[];
+  summary: string | null;
+}
+
+export interface IngestEvent {
+  id: string;
+  direction: "in" | "out";
+  format: string;
+  source_system: string | null;
+  xliff_document_id: string | null;
+  unit_count: number;
+  created_at: string;
 }
 
 export interface ReviewNote {
@@ -197,6 +251,14 @@ export interface ImageAsset {
   uploaded_by: string | null;
 }
 
+export interface ImageContextLink {
+  id: string;
+  image_id: string;
+  translation_unit_id: string;
+  note: string | null;
+  created_at: string;
+}
+
 export interface ImageTranslationUnit {
   id: string;
   source_image_id: string;
@@ -214,7 +276,7 @@ export interface DocumentMeta {
   id: string;
   title: string;
   original_filename: string | null;
-  format: "text" | "markdown";
+  format: "text" | "markdown" | "csv";
   source_language: string;
   created_at: string;
   uploaded_by: string | null;
@@ -472,6 +534,23 @@ export interface EvaluateResult {
   raw_response: string | null;
 }
 
+// ── Phase 18: model discovery ───────────────────────────────────────────────
+//
+// Every provider that actually offers more than one selectable model —
+// the three local multi-model servers PLUS the three hosted vendors
+// (Claude/OpenAI/Gemini each ship multiple generations/sizes too, not
+// just Ollama/LMStudio/vLLM). DeepL/Google Translate/MS Translator are
+// pure single-endpoint NMT — no model to pick, so they're excluded and
+// ModelPicker.tsx never shows a model dropdown for them.
+export const MODEL_DISCOVERABLE_PROVIDERS = new Set([
+  "anthropic", "claude", "openai", "gemini", "ollama", "lmstudio", "vllm",
+]);
+
+export interface ModelListResponse {
+  provider: string;
+  models: string[];
+}
+
 export function vendorScorecardPdfUrl(targetLanguage?: string): string {
   return `${API_BASE}/vendors/scorecard/report.pdf${targetLanguage ? `?target_language=${encodeURIComponent(targetLanguage)}` : ""}`;
 }
@@ -499,7 +578,12 @@ const phase13to15Api = {
     source_text: string; source_language: string; target_language: string;
     method?: "ai" | "human" | "hybrid"; context?: string; style_guide_id?: string; domain?: string;
     provider?: string; // Phase 16 — overrides settings.translation_provider for this call only
+    model?: string; // Phase 18 — which model within provider (see MODEL_DISCOVERABLE_PROVIDERS)
   }) => request<TranslateResponse>("/translations/", { method: "POST", body: JSON.stringify(body) }),
+
+  // Phase 18 — live "what's actually available" for a given provider; see
+  // MODEL_DISCOVERABLE_PROVIDERS for which ones have anything to list.
+  getModels: (provider: string) => request<ModelListResponse>(`/models/${provider}`),
 
   // ── Style Guides ───────────────────────────────────────────────────────
   listStyleGuides: (locale?: string) =>
@@ -548,6 +632,11 @@ const phase13to15Api = {
     return requestForm<{ imported_count: number; translation_unit_ids: string[] }>("/xliff/import", form);
   },
 
+  // Phase 17 — the queryable side of the "everything entering and leaving
+  // the system" XLIFF ledger; every import/export above logs into it.
+  getIngestLog: (limit = 100) => request<IngestEvent[]>(`/xliff/ingest-log?limit=${limit}`),
+  xliffPreview: (unitId: string) => request<{ xliff: string }>(`/xliff/${unitId}/preview`),
+
   // ── Vendor Scorecard ───────────────────────────────────────────────────
   getVendorScorecard: (targetLanguage?: string) =>
     request<VendorScorecardEntry[]>(
@@ -567,9 +656,9 @@ const phase13to15Api = {
 
   // Phase 16 — standalone "evaluate" action: score one unit with a chosen
   // LLM-judge provider on demand, independent of a redrive run.
-  evaluateUnit: (unitId: string, provider?: string) =>
+  evaluateUnit: (unitId: string, provider?: string, model?: string) =>
     request<EvaluateResult>("/quality/evaluate", {
-      method: "POST", body: JSON.stringify({ unit_id: unitId, provider: provider || undefined }),
+      method: "POST", body: JSON.stringify({ unit_id: unitId, provider: provider || undefined, model: model || undefined }),
     }),
 };
 
@@ -583,6 +672,20 @@ export const api = {
     ),
   getVersions: (id: string) => request<TranslationUnitVersion[]>(`/translations/${id}/versions`),
   getProvenance: (id: string) => request<ProvenanceResponse>(`/provenance/${id}`),
+  getLineage: (id: string) => request<LineageGraph>(`/provenance/${id}/lineage`),
+  getDeployments: (id: string) => request<DeploymentRecord[]>(`/provenance/${id}/deployments`),
+  recordDeployment: (unitId: string, params: {
+    context: string; location: string; deployed_by?: string; version?: string;
+  }) => request<{ message: string }>(
+    `/translations/${unitId}/deploy?${new URLSearchParams(cleanParams(params))}`, { method: "POST" },
+  ),
+  // quality_score is optional context for the record, not a re-score —
+  // the unit's actual score still comes from the scoring providers.
+  markReviewed: (unitId: string, reviewerName: string, qualityScore?: number) =>
+    request<{ message: string; reviewed_by: string; status: string }>(
+      `/translations/${unitId}/review?${new URLSearchParams(cleanParams({ reviewer_name: reviewerName, quality_score: qualityScore }))}`,
+      { method: "PUT" },
+    ),
   getStats: () => request<Stats>("/translations/stats"),
 
   listNotes: (unitId: string) => request<ReviewNote[]>(`/translations/${unitId}/notes`),
@@ -596,7 +699,7 @@ export const api = {
 
   previewRedrive: (params: {
     threshold: number; style_threshold?: number; style_guide_id?: string; target_language?: string;
-    scoring_provider?: string;
+    scoring_provider?: string; scoring_model?: string;
   }) =>
     request<RedrivePreview>(
       `/redrive/preview?${new URLSearchParams(cleanParams(params))}`,
@@ -613,6 +716,8 @@ export const api = {
     require_human_approval?: boolean;
     scoring_provider?: string; // the "evaluate" model — see EVALUATE_PROVIDERS
     redrive_provider?: string; // Phase 16 — the "retranslate" model — see TRANSLATE_PROVIDERS
+    scoring_model?: string; // Phase 18 — which model within scoring_provider
+    redrive_model?: string; // Phase 18 — which model within redrive_provider
   }) => request<RedriveRun>("/redrive/runs", { method: "POST", body: JSON.stringify(body) }),
   getRedriveRun: (id: string) => request<RedriveRun>(`/redrive/runs/${id}`),
   approveRedriveItem: (runId: string, itemId: string, actor: string) =>
@@ -627,7 +732,7 @@ export const api = {
     request<QueueItem[]>(`/redrive/queue?${new URLSearchParams(cleanParams(params))}`),
 
   search: (q: string, semantic = false) =>
-    request<{ results: unknown[]; total: number }>(
+    request<{ results: unknown[]; total: number; indexed_documents: number; search_type: string }>(
       `/search/?${new URLSearchParams({ q, semantic: String(semantic) })}`,
     ),
 
@@ -659,9 +764,23 @@ export const api = {
   },
   getImageTranslationUnit: (ituId: string) => request<ImageTranslationUnit>(`/images/localize/${ituId}`),
 
+  // Phase 17 — "this screenshot shows this text segment in context," for
+  // the review UI. Distinct from uploadImage's kind="translatable" path
+  // above (a standalone banner/graphic with its own provenance chain).
+  linkImageAsContext: (imageId: string, translationUnitId: string, note?: string) => {
+    const form = new FormData();
+    form.append("translation_unit_id", translationUnitId);
+    if (note) form.append("note", note);
+    return requestForm<ImageContextLink>(`/images/${imageId}/context-link`, form);
+  },
+  getContextImages: (unitId: string) => request<ImageAsset[]>(`/images/context-links/${unitId}`),
+
   importDocument: (
     file: File,
-    body: { source_language: string; target_language: string; method: string; title?: string },
+    body: {
+      source_language: string; target_language: string; method: string; title?: string;
+      source_column?: string; // Phase 18 — CSV only: which column holds the source text
+    },
   ) => {
     const form = new FormData();
     form.append("file", file);
@@ -669,6 +788,7 @@ export const api = {
     form.append("target_language", body.target_language);
     form.append("method", body.method);
     if (body.title) form.append("title", body.title);
+    if (body.source_column) form.append("source_column", body.source_column);
     return requestForm<DocumentMeta>("/documents/import", form);
   },
   getDocument: (documentId: string) => request<DocumentMeta>(`/documents/${documentId}`),
@@ -719,6 +839,11 @@ export const api = {
   createAuditRun: (body: {
     root_url: string; primary_language: string; requester_email: string; max_pages?: number;
     checks?: SiteAuditCheck[]; triggered_by?: string;
+    // Phase 18 — optional, per-run only, never stored: "bring your own
+    // authenticated session" for sites that gate content behind a login
+    // or bot-detection wall. Anonymous crawling (all three omitted) is
+    // unchanged and remains the default.
+    auth_username?: string; auth_password?: string; auth_cookie?: string;
   }) => request<SiteAudit>("/audit/runs", { method: "POST", body: JSON.stringify(body) }),
   listAuditRuns: () => request<SiteAudit[]>("/audit/runs"),
   getAuditRun: (id: string) => request<AuditRunSummary>(`/audit/runs/${id}`),

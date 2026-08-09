@@ -8,6 +8,8 @@ Only called for pairs app/core/scoring/deterministic.py's free checks didn't
 already resolve (see factory.py's CompositeScorer).
 """
 
+from typing import Optional
+
 from app.core.config import settings
 from app.core.scoring.base import QualityScorer, ScoreResult
 from app.core.scoring.mqm_prompt import SYSTEM_PROMPT, build_user_message, parse_mqm_response
@@ -15,8 +17,12 @@ from app.models.schemas import TranslationUnit
 
 
 class ClaudeQualityScorer(QualityScorer):
-    def __init__(self, model: str = "claude-sonnet-4-20250514"):
-        self.model = model
+    # Phase 18 — model overridable per-instance (GET /api/v1/models/claude
+    # lists Anthropic's own Models API); None still falls back to this
+    # default rather than erroring, since get_scorer() always passes
+    # `model=` explicitly (None when the caller didn't ask for one).
+    def __init__(self, model: Optional[str] = None):
+        self.model = model or "claude-sonnet-4-20250514"
 
     async def score(self, unit: TranslationUnit) -> ScoreResult:
         try:

@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type GlossaryTerm, type StyleGuide, type StyleGuideRule } from "../api/client";
+import { LocaleSelect } from "../components/LocaleSelect";
+import { PageIntro } from "../components/PageIntro";
 
 // Phase 13 — define the brand voice/terminology rules the graph-based
 // retrieval layer feeds to AI translation and scores translations against.
@@ -10,6 +12,10 @@ export function StyleGuidesPage() {
   const [selected, setSelected] = useState<StyleGuide | null>(null);
   const [rules, setRules] = useState<StyleGuideRule[]>([]);
   const [terms, setTerms] = useState<GlossaryTerm[]>([]);
+  // Phase 17 — GET /style/guides/{id}/chain existed with zero UI: walks
+  // supersedes_id back to the oldest ancestor, so a reviewer can tell "v3
+  // I'm looking at" from "v3 that replaced v1 last month, not a fresh guide."
+  const [chain, setChain] = useState<StyleGuide[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const [newGuideName, setNewGuideName] = useState("");
@@ -34,12 +40,14 @@ export function StyleGuidesPage() {
     setSelected(guide);
     setError(null);
     try {
-      const [r, t] = await Promise.all([
+      const [r, t, c] = await Promise.all([
         api.listStyleGuideRules(guide.id),
         api.listGlossaryTerms({ style_guide_id: guide.id }),
+        api.getStyleGuideChain(guide.id),
       ]);
       setRules(r);
       setTerms(t);
+      setChain(c);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -91,11 +99,13 @@ export function StyleGuidesPage() {
 
   return (
     <div style={{ padding: 24, maxWidth: 960 }}>
-      <h2 style={{ marginTop: 0 }}>Style Guides &amp; Glossary</h2>
-      <p style={{ color: "#6b7280" }}>
+      <PageIntro
+        title="Style Guides &amp; Glossary"
+        requires="create a style guide (name only is required) using the form on the left. Until one exists, there's nothing for the rest of this workflow to check translations against."
+      >
         Brand voice/tone rules and terminology retrieved automatically before every AI translation
         (see the Retrieval Preview tool) and scored against on every redrive.
-      </p>
+      </PageIntro>
 
       {error && (
         <div style={{ background: "#fef2f2", color: "#b91c1c", padding: 10, borderRadius: 6, marginBottom: 16, fontSize: 13 }}>
@@ -126,8 +136,7 @@ export function StyleGuidesPage() {
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             <input placeholder="Name" value={newGuideName} onChange={(e) => setNewGuideName(e.target.value)}
                    style={{ padding: 4, fontSize: 13 }} />
-            <input placeholder="Locale (blank = all)" value={newGuideLocale} onChange={(e) => setNewGuideLocale(e.target.value)}
-                   style={{ padding: 4, fontSize: 13 }} />
+            <LocaleSelect value={newGuideLocale} onChange={setNewGuideLocale} label="Locale" blankLabel="All locales" width={200} />
             <textarea placeholder="Voice description" value={newGuideVoice} onChange={(e) => setNewGuideVoice(e.target.value)}
                       rows={3} style={{ padding: 4, fontSize: 13 }} />
             <button onClick={createGuide} style={{ padding: "6px 10px", cursor: "pointer" }}>Create guide</button>
@@ -141,6 +150,23 @@ export function StyleGuidesPage() {
             <>
               <h3 style={{ marginTop: 0 }}>{selected.name}</h3>
               {selected.voice_description && <p style={{ color: "#374151", fontSize: 13 }}>{selected.voice_description}</p>}
+              {chain.length > 1 && (
+                <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 12 }}>
+                  {/* getStyleGuideChain walks supersedes_id backward FROM the
+                      selected guide, so the array itself is newest → oldest
+                      (found live: rendering it as-is under an "oldest →
+                      newest" label showed v2.0 before v1.0) — reverse it so
+                      the label and the reading order actually agree. */}
+                  Version history: {[...chain].reverse().map((g, i) => (
+                    <span key={g.id}>
+                      {i > 0 && " → "}
+                      <span style={{ fontWeight: g.id === selected.id ? 600 : 400, color: g.id === selected.id ? "#111827" : "#6b7280" }}>
+                        v{g.version}
+                      </span>
+                    </span>
+                  ))} (oldest → newest)
+                </div>
+              )}
 
               <h4 style={{ fontSize: 13, marginBottom: 4 }}>Rules</h4>
               <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse", marginBottom: 12 }}>
@@ -165,8 +191,7 @@ export function StyleGuidesPage() {
                 </select>
                 <input placeholder="Rule text" value={newRuleText} onChange={(e) => setNewRuleText(e.target.value)}
                        style={{ flex: 1, padding: 4, fontSize: 12 }} />
-                <input placeholder="Locale" value={newRuleLocale} onChange={(e) => setNewRuleLocale(e.target.value)}
-                       style={{ width: 80, padding: 4, fontSize: 12 }} />
+                <LocaleSelect value={newRuleLocale} onChange={setNewRuleLocale} blankLabel="All locales" width={110} />
                 <button onClick={addRule} style={{ padding: "4px 10px", cursor: "pointer", fontSize: 12 }}>Add</button>
               </div>
 

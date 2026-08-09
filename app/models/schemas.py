@@ -112,6 +112,11 @@ class ImageAssetKind(str, Enum):
 class DocumentFormat(str, Enum):
     TEXT = "text"
     MARKDOWN = "markdown"
+    # Phase 18 — one TranslationUnit per row (see app/api/documents.py's
+    # _parse_csv_blocks), not one per blank-line-delimited block like
+    # TEXT/MARKDOWN — a CSV export's rows are already the natural segment
+    # boundary, e.g. a CMS's "string key, English text" export.
+    CSV = "csv"
 
 
 class StyleRuleType(str, Enum):
@@ -816,6 +821,12 @@ class TranslateRequest(BaseModel):
     # only: "mock" | "anthropic" | "openai" | "gemini" | "deepl" | "google"
     # | "mstranslator" | "ollama" | "lmstudio" | "vllm". None = app default.
     provider: Optional[str] = None
+    # Phase 18 — which model to run WITHIN provider, for the three local
+    # servers that host more than one (Ollama/LMStudio/vLLM) — discovered
+    # live via GET /api/v1/models/{provider}, not a fixed list. Ignored by
+    # every other provider (OpenAI/Gemini/Anthropic/DeepL/Google/MS
+    # Translator each have exactly one configured model, no picker needed).
+    model: Optional[str] = None
 
 
 class TranslateResponse(BaseModel):

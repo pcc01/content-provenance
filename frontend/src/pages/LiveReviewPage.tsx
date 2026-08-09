@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type TranslationUnit } from "../api/client";
 import { PageFlaggedList } from "../components/PageFlaggedList";
+import { PageIntro } from "../components/PageIntro";
 import { SegmentDrawer } from "../components/SegmentDrawer";
 
 type Segment = TranslationUnit & { latest_score: number | null };
@@ -56,11 +57,14 @@ export function LiveReviewPage() {
         width: 280, borderRight: "1px solid #e5e7eb", padding: 12,
         display: "flex", flexDirection: "column", gap: 12, overflowY: "auto", flexShrink: 0,
       }}>
-        <p style={{ fontSize: 12, color: "#6b7280", margin: 0 }}>
-          Install the browser extension (<code>frontend/extension/</code>, <code>npm run build:extension</code>),
-          open the tab you want to review, and click "Start reviewing this tab" in its popup.
-          Segments appear here once the extension harvests the page.
-        </p>
+        <PageIntro
+          compact
+          title="Live Review"
+          requires={<>install the browser extension (<code>frontend/extension/</code>, <code>npm run build:extension</code>), open the tab you want to review, and click "Start reviewing this tab" in its popup.</>}
+        >
+          Reviews a real browser tab's live session — your actual cookies and login, not an
+          anonymous fetch. Segments appear here once the extension harvests the page.
+        </PageIntro>
         <div style={{ fontSize: 12, color: connected ? "#15803d" : "#9ca3af" }}>
           {connected ? "● Connected to a reviewed tab" : "○ Waiting for the extension…"}
         </div>

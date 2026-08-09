@@ -276,7 +276,7 @@ export interface DocumentMeta {
   id: string;
   title: string;
   original_filename: string | null;
-  format: "text" | "markdown";
+  format: "text" | "markdown" | "csv";
   source_language: string;
   created_at: string;
   uploaded_by: string | null;
@@ -534,6 +534,23 @@ export interface EvaluateResult {
   raw_response: string | null;
 }
 
+// ── Phase 18: model discovery ───────────────────────────────────────────────
+//
+// Every provider that actually offers more than one selectable model —
+// the three local multi-model servers PLUS the three hosted vendors
+// (Claude/OpenAI/Gemini each ship multiple generations/sizes too, not
+// just Ollama/LMStudio/vLLM). DeepL/Google Translate/MS Translator are
+// pure single-endpoint NMT — no model to pick, so they're excluded and
+// ModelPicker.tsx never shows a model dropdown for them.
+export const MODEL_DISCOVERABLE_PROVIDERS = new Set([
+  "anthropic", "claude", "openai", "gemini", "ollama", "lmstudio", "vllm",
+]);
+
+export interface ModelListResponse {
+  provider: string;
+  models: string[];
+}
+
 export function vendorScorecardPdfUrl(targetLanguage?: string): string {
   return `${API_BASE}/vendors/scorecard/report.pdf${targetLanguage ? `?target_language=${encodeURIComponent(targetLanguage)}` : ""}`;
 }
@@ -561,7 +578,12 @@ const phase13to15Api = {
     source_text: string; source_language: string; target_language: string;
     method?: "ai" | "human" | "hybrid"; context?: string; style_guide_id?: string; domain?: string;
     provider?: string; // Phase 16 — overrides settings.translation_provider for this call only
+    model?: string; // Phase 18 — which model within provider (see MODEL_DISCOVERABLE_PROVIDERS)
   }) => request<TranslateResponse>("/translations/", { method: "POST", body: JSON.stringify(body) }),
+
+  // Phase 18 — live "what's actually available" for a given provider; see
+  // MODEL_DISCOVERABLE_PROVIDERS for which ones have anything to list.
+  getModels: (provider: string) => request<ModelListResponse>(`/models/${provider}`),
 
   // ── Style Guides ───────────────────────────────────────────────────────
   listStyleGuides: (locale?: string) =>
@@ -634,9 +656,9 @@ const phase13to15Api = {
 
   // Phase 16 — standalone "evaluate" action: score one unit with a chosen
   // LLM-judge provider on demand, independent of a redrive run.
-  evaluateUnit: (unitId: string, provider?: string) =>
+  evaluateUnit: (unitId: string, provider?: string, model?: string) =>
     request<EvaluateResult>("/quality/evaluate", {
-      method: "POST", body: JSON.stringify({ unit_id: unitId, provider: provider || undefined }),
+      method: "POST", body: JSON.stringify({ unit_id: unitId, provider: provider || undefined, model: model || undefined }),
     }),
 };
 
@@ -677,7 +699,7 @@ export const api = {
 
   previewRedrive: (params: {
     threshold: number; style_threshold?: number; style_guide_id?: string; target_language?: string;
-    scoring_provider?: string;
+    scoring_provider?: string; scoring_model?: string;
   }) =>
     request<RedrivePreview>(
       `/redrive/preview?${new URLSearchParams(cleanParams(params))}`,
@@ -694,6 +716,8 @@ export const api = {
     require_human_approval?: boolean;
     scoring_provider?: string; // the "evaluate" model — see EVALUATE_PROVIDERS
     redrive_provider?: string; // Phase 16 — the "retranslate" model — see TRANSLATE_PROVIDERS
+    scoring_model?: string; // Phase 18 — which model within scoring_provider
+    redrive_model?: string; // Phase 18 — which model within redrive_provider
   }) => request<RedriveRun>("/redrive/runs", { method: "POST", body: JSON.stringify(body) }),
   getRedriveRun: (id: string) => request<RedriveRun>(`/redrive/runs/${id}`),
   approveRedriveItem: (runId: string, itemId: string, actor: string) =>
@@ -753,7 +777,10 @@ export const api = {
 
   importDocument: (
     file: File,
-    body: { source_language: string; target_language: string; method: string; title?: string },
+    body: {
+      source_language: string; target_language: string; method: string; title?: string;
+      source_column?: string; // Phase 18 — CSV only: which column holds the source text
+    },
   ) => {
     const form = new FormData();
     form.append("file", file);
@@ -761,6 +788,7 @@ export const api = {
     form.append("target_language", body.target_language);
     form.append("method", body.method);
     if (body.title) form.append("title", body.title);
+    if (body.source_column) form.append("source_column", body.source_column);
     return requestForm<DocumentMeta>("/documents/import", form);
   },
   getDocument: (documentId: string) => request<DocumentMeta>(`/documents/${documentId}`),
@@ -811,6 +839,11 @@ export const api = {
   createAuditRun: (body: {
     root_url: string; primary_language: string; requester_email: string; max_pages?: number;
     checks?: SiteAuditCheck[]; triggered_by?: string;
+    // Phase 18 — optional, per-run only, never stored: "bring your own
+    // authenticated session" for sites that gate content behind a login
+    // or bot-detection wall. Anonymous crawling (all three omitted) is
+    // unchanged and remains the default.
+    auth_username?: string; auth_password?: string; auth_cookie?: string;
   }) => request<SiteAudit>("/audit/runs", { method: "POST", body: JSON.stringify(body) }),
   listAuditRuns: () => request<SiteAudit[]>("/audit/runs"),
   getAuditRun: (id: string) => request<AuditRunSummary>(`/audit/runs/${id}`),

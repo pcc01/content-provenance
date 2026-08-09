@@ -3,6 +3,8 @@ import {
   api, EVALUATE_PROVIDERS, TRANSLATE_PROVIDERS,
   type EvaluateResult, type QueueItem, type RedrivePreview, type RedriveRun, type StyleGuide,
 } from "../api/client";
+import { LocaleSelect } from "../components/LocaleSelect";
+import { ModelPicker } from "../components/ModelPicker";
 import { PageIntro } from "../components/PageIntro";
 import { QualityBadge } from "../components/QualityBadge";
 
@@ -24,6 +26,9 @@ export function RedriveConsole() {
   // can e.g. evaluate with Claude but redrive with a cheaper/local model.
   const [scoringProvider, setScoringProvider] = useState("");
   const [redriveProvider, setRedriveProvider] = useState("");
+  // Phase 18 — which model WITHIN each provider; "" = provider's own default.
+  const [scoringModel, setScoringModel] = useState("");
+  const [redriveModel, setRedriveModel] = useState("");
   const [preview, setPreview] = useState<RedrivePreview | null>(null);
   const [run, setRun] = useState<RedriveRun | null>(null);
   const [busy, setBusy] = useState(false);
@@ -34,6 +39,7 @@ export function RedriveConsole() {
   // standalone POST /quality/evaluate endpoint).
   const [evalUnitId, setEvalUnitId] = useState("");
   const [evalProvider, setEvalProvider] = useState("");
+  const [evalModel, setEvalModel] = useState("");
   const [evalResult, setEvalResult] = useState<EvaluateResult | null>(null);
   const [evaluating, setEvaluating] = useState(false);
 
@@ -59,7 +65,7 @@ export function RedriveConsole() {
         threshold, target_language: targetLanguage || undefined,
         style_threshold: styleEnabled ? styleThreshold : undefined,
         style_guide_id: styleEnabled ? (styleGuideId || undefined) : undefined,
-        scoring_provider: scoringProvider || undefined,
+        scoring_provider: scoringProvider || undefined, scoring_model: scoringModel || undefined,
       }));
     } finally {
       setBusy(false);
@@ -76,6 +82,8 @@ export function RedriveConsole() {
         style_guide_id: styleEnabled ? (styleGuideId || undefined) : undefined,
         scoring_provider: scoringProvider || undefined,
         redrive_provider: redriveProvider || undefined,
+        scoring_model: scoringModel || undefined,
+        redrive_model: redriveModel || undefined,
       });
       setRun(result);
     } finally {
@@ -87,7 +95,7 @@ export function RedriveConsole() {
     if (!evalUnitId.trim()) return;
     setEvaluating(true);
     try {
-      setEvalResult(await api.evaluateUnit(evalUnitId.trim(), evalProvider || undefined));
+      setEvalResult(await api.evaluateUnit(evalUnitId.trim(), evalProvider || undefined, evalModel || undefined));
     } finally {
       setEvaluating(false);
     }
@@ -141,11 +149,7 @@ export function RedriveConsole() {
       </PageIntro>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 20 }}>
-        <label style={{ fontSize: 13 }}>
-          Target language (blank = all)
-          <input value={targetLanguage} onChange={(e) => setTargetLanguage(e.target.value)}
-                 placeholder="fr-FR" style={{ display: "block", width: 200, marginTop: 4, padding: 4 }} />
-        </label>
+        <LocaleSelect value={targetLanguage} onChange={setTargetLanguage} label="Target language" blankLabel="All languages" width={200} />
         <label style={{ fontSize: 13 }}>
           Threshold: <strong>{threshold}</strong>
           <input type="range" min={0} max={100} value={threshold}
@@ -176,21 +180,15 @@ export function RedriveConsole() {
           <input type="checkbox" checked={requireApproval} onChange={(e) => setRequireApproval(e.target.checked)} />
           Require human approval before applying redrives
         </label>
-        <div style={{ display: "flex", gap: 10 }}>
-          <label style={{ fontSize: 13 }}>
-            Evaluate with
-            <select value={scoringProvider} onChange={(e) => setScoringProvider(e.target.value)}
-                    style={{ display: "block", padding: 4, marginTop: 4, minWidth: 190 }}>
-              {EVALUATE_PROVIDERS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
-            </select>
-          </label>
-          <label style={{ fontSize: 13 }}>
-            Retranslate with
-            <select value={redriveProvider} onChange={(e) => setRedriveProvider(e.target.value)}
-                    style={{ display: "block", padding: 4, marginTop: 4, minWidth: 190 }}>
-              {TRANSLATE_PROVIDERS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
-            </select>
-          </label>
+        <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+          <ModelPicker
+            providers={EVALUATE_PROVIDERS} provider={scoringProvider} model={scoringModel}
+            onProviderChange={setScoringProvider} onModelChange={setScoringModel} label="Evaluate with"
+          />
+          <ModelPicker
+            providers={TRANSLATE_PROVIDERS} provider={redriveProvider} model={redriveModel}
+            onProviderChange={setRedriveProvider} onModelChange={setRedriveModel} label="Retranslate with"
+          />
         </div>
         <label style={{ fontSize: 13 }}>
           Approving/rejecting as
@@ -275,13 +273,10 @@ export function RedriveConsole() {
             <input value={evalUnitId} onChange={(e) => setEvalUnitId(e.target.value)}
                    placeholder="unit id" style={{ display: "block", width: 260, marginTop: 4, padding: 4 }} />
           </label>
-          <label style={{ fontSize: 13 }}>
-            Evaluate with
-            <select value={evalProvider} onChange={(e) => setEvalProvider(e.target.value)}
-                    style={{ display: "block", padding: 4, marginTop: 4, minWidth: 190 }}>
-              {EVALUATE_PROVIDERS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
-            </select>
-          </label>
+          <ModelPicker
+            providers={EVALUATE_PROVIDERS} provider={evalProvider} model={evalModel}
+            onProviderChange={setEvalProvider} onModelChange={setEvalModel} label="Evaluate with"
+          />
           <button disabled={evaluating || !evalUnitId.trim()} onClick={doEvaluate} style={{ padding: "6px 14px", cursor: "pointer" }}>
             {evaluating ? "Scoring…" : "Evaluate"}
           </button>

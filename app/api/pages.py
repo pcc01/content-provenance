@@ -95,6 +95,15 @@ async def render_page(
     method: TranslationMethod = Query(TranslationMethod.AI),
     refresh: bool = Query(False, description="Force a live re-fetch instead of reusing the latest cached snapshot"),
     as_of: datetime = Query(None, description="Phase 9: reconstruct the page as it looked at this point in time"),
+    # Phase 18 — optional, non-persisted "bring your own authenticated
+    # session" (see fetch_and_render's docstring) for pages behind a login
+    # or bot-detection wall; anonymous fetching (all three omitted) is
+    # unchanged. Query params, not a request body, because GET /render's
+    # whole existing contract is query-string-driven (it's also what a
+    # browser iframe's `src` attribute loads directly) — same tradeoff
+    # every other param on this endpoint already makes, just now also
+    # true of credentials, worth calling out explicitly here.
+    auth_username: str = Query(None), auth_password: str = Query(None), auth_cookie: str = Query(None),
 ):
     db = get_db()
 
@@ -114,7 +123,10 @@ async def render_page(
             return HTMLResponse(cached.html)
 
     try:
-        snapshot = await fetch_and_render(url, source_language, target_language, method)
+        snapshot = await fetch_and_render(
+            url, source_language, target_language, method,
+            auth_username=auth_username, auth_password=auth_password, auth_cookie=auth_cookie,
+        )
     except PageFetchError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e))
 

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, vendorScorecardPdfUrl, type VendorScorecardEntry } from "../api/client";
+import { LocaleSelect } from "../components/LocaleSelect";
 import { PageIntro } from "../components/PageIntro";
 
 function fmt(score: number | null): string {
@@ -41,11 +42,7 @@ export function VendorScorecardPage() {
       </PageIntro>
 
       <div style={{ display: "flex", gap: 10, alignItems: "flex-end", marginBottom: 16 }}>
-        <label style={{ fontSize: 13 }}>
-          Target language (blank = all)
-          <input value={targetLanguage} onChange={(e) => setTargetLanguage(e.target.value)} placeholder="fr-FR"
-                 style={{ display: "block", padding: 4, marginTop: 4, width: 140 }} />
-        </label>
+        <LocaleSelect value={targetLanguage} onChange={setTargetLanguage} label="Target language" blankLabel="All languages" width={160} />
         <button onClick={refresh} style={{ padding: "6px 14px", cursor: "pointer" }}>Refresh</button>
         <a href={vendorScorecardPdfUrl(targetLanguage || undefined)} target="_blank" rel="noreferrer"
            style={{ padding: "6px 14px", fontSize: 13 }}>

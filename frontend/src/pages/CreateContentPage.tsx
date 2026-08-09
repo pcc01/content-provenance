@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import {
   api, TRANSLATE_PROVIDERS, type CheckSourceResult, type RetrievePreview, type StyleGuide, type TranslateResponse,
 } from "../api/client";
+import { LocaleSelect } from "../components/LocaleSelect";
+import { ModelPicker } from "../components/ModelPicker";
 import { PageIntro } from "../components/PageIntro";
 
 // Phase 13/9b.5 — the actual start of the Content Creation workflow: write
@@ -22,6 +24,9 @@ export function CreateContentPage() {
   // Translator) are listed here but not in the Redrive Console's evaluate
   // dropdown.
   const [provider, setProvider] = useState("");
+  // Phase 18 — which model WITHIN provider (Ollama/LMStudio/vLLM/Claude/
+  // OpenAI/Gemini all offer more than one) — "" = provider's own default.
+  const [model, setModel] = useState("");
 
   const [checking, setChecking] = useState(false);
   const [checkResult, setCheckResult] = useState<CheckSourceResult | null>(null);
@@ -70,7 +75,7 @@ export function CreateContentPage() {
       setSubmitted(await api.createTranslation({
         source_text: text, source_language: sourceLanguage, target_language: targetLanguage,
         method: "ai", context: "website", style_guide_id: styleGuideId || undefined,
-        provider: provider || undefined,
+        provider: provider || undefined, model: model || undefined,
       }));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -104,23 +109,12 @@ export function CreateContentPage() {
             {guides.map((g) => <option key={g.id} value={g.id}>{g.name} v{g.version}</option>)}
           </select>
         </label>
-        <label style={{ fontSize: 13 }}>
-          Source language
-          <input value={sourceLanguage} onChange={(e) => setSourceLanguage(e.target.value)}
-                 style={{ display: "block", padding: 4, marginTop: 4, width: 100 }} />
-        </label>
-        <label style={{ fontSize: 13 }}>
-          Target language
-          <input value={targetLanguage} onChange={(e) => setTargetLanguage(e.target.value)}
-                 style={{ display: "block", padding: 4, marginTop: 4, width: 100 }} />
-        </label>
-        <label style={{ fontSize: 13 }}>
-          Translate with
-          <select value={provider} onChange={(e) => setProvider(e.target.value)}
-                  style={{ display: "block", padding: 4, marginTop: 4, minWidth: 200 }}>
-            {TRANSLATE_PROVIDERS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
-          </select>
-        </label>
+        <LocaleSelect value={sourceLanguage} onChange={setSourceLanguage} label="Source language" width={130} />
+        <LocaleSelect value={targetLanguage} onChange={setTargetLanguage} label="Target language" width={130} />
+        <ModelPicker
+          providers={TRANSLATE_PROVIDERS} provider={provider} model={model}
+          onProviderChange={setProvider} onModelChange={setModel} label="Translate with"
+        />
       </div>
 
       <textarea

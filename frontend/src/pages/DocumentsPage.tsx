@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api, type DocumentMeta } from "../api/client";
+import { LocaleSelect } from "../components/LocaleSelect";
 import { PageIntro } from "../components/PageIntro";
 
 // Upload a .txt/.md file for Phase 7a in-context review. There's no
@@ -12,6 +13,8 @@ export function DocumentsPage() {
   const [targetLanguage, setTargetLanguage] = useState("fr-FR");
   const [method, setMethod] = useState("ai");
   const [title, setTitle] = useState("");
+  // Phase 18 — CSV only; ignored (not an error) for .txt/.md uploads.
+  const [sourceColumn, setSourceColumn] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uploaded, setUploaded] = useState<DocumentMeta | null>(null);
@@ -25,6 +28,7 @@ export function DocumentsPage() {
     try {
       const doc = await api.importDocument(file, {
         source_language: sourceLanguage, target_language: targetLanguage, method, title: title || undefined,
+        source_column: sourceColumn || undefined,
       });
       setUploaded(doc);
     } catch (err) {
@@ -42,11 +46,12 @@ export function DocumentsPage() {
     <div style={{ padding: 24, maxWidth: 640 }}>
       <PageIntro
         title="Documents"
-        requires="choose a .txt or .md file at the bottom of this form. Source/target language and method already have sensible defaults — adjust them first only if needed."
+        requires="choose a .txt, .md, or .csv file at the bottom of this form. Source/target language and method already have sensible defaults — adjust them first only if needed."
       >
-        Upload a plain text (.txt) or Markdown (.md) file. Each paragraph/block becomes its own
-        translation unit, translated immediately, and reviewable in-context in the Review tab —
-        the document renders as its own page inside this app.
+        Upload a plain text (.txt), Markdown (.md), or CSV (.csv) file. Text/Markdown segment on
+        blank lines (each paragraph/heading becomes its own unit); CSV segments one unit per row.
+        Every segment is translated immediately and reviewable in-context in the Review tab — the
+        document renders as its own page inside this app.
       </PageIntro>
 
       {error && (
@@ -56,14 +61,8 @@ export function DocumentsPage() {
       )}
 
       <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: 320, marginBottom: 20 }}>
-        <label style={{ fontSize: 13 }}>
-          Source language
-          <input value={sourceLanguage} onChange={(e) => setSourceLanguage(e.target.value)} style={{ display: "block", width: "100%", padding: 4, boxSizing: "border-box" }} />
-        </label>
-        <label style={{ fontSize: 13 }}>
-          Target language
-          <input value={targetLanguage} onChange={(e) => setTargetLanguage(e.target.value)} style={{ display: "block", width: "100%", padding: 4, boxSizing: "border-box" }} />
-        </label>
+        <LocaleSelect value={sourceLanguage} onChange={setSourceLanguage} label="Source language" width={280} />
+        <LocaleSelect value={targetLanguage} onChange={setTargetLanguage} label="Target language" width={280} />
         <label style={{ fontSize: 13 }}>
           Method
           <select value={method} onChange={(e) => setMethod(e.target.value)} style={{ display: "block", width: "100%", padding: 4, boxSizing: "border-box" }}>
@@ -76,9 +75,14 @@ export function DocumentsPage() {
           Title (optional — defaults to the filename)
           <input value={title} onChange={(e) => setTitle(e.target.value)} style={{ display: "block", width: "100%", padding: 4, boxSizing: "border-box" }} />
         </label>
+        <label style={{ fontSize: 13 }}>
+          Source column (CSV only, optional — defaults to the first column)
+          <input value={sourceColumn} onChange={(e) => setSourceColumn(e.target.value)} placeholder="e.g. source_text"
+                 style={{ display: "block", width: "100%", padding: 4, boxSizing: "border-box" }} />
+        </label>
       </div>
 
-      <input type="file" accept=".txt,.md,.markdown,text/plain,text/markdown" disabled={busy} onChange={handleUpload} />
+      <input type="file" accept=".txt,.md,.markdown,.csv,text/plain,text/markdown,text/csv" disabled={busy} onChange={handleUpload} />
 
       {uploaded && (
         <div style={{ marginTop: 24, padding: 16, background: "#f0fdf4", borderRadius: 8, border: "1px solid #bbf7d0" }}>

@@ -149,11 +149,25 @@ def _clean_url(url: str) -> str:
     return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
 
 
-async def crawl_site(root_url: str, max_pages: int = 40) -> List[CrawledPage]:
+async def crawl_site(
+    root_url: str, max_pages: int = 40,
+    auth_username: Optional[str] = None, auth_password: Optional[str] = None,
+    auth_cookie: Optional[str] = None,
+) -> List[CrawledPage]:
     """BFS same-domain(+subdomain) crawl starting at root_url. Individual
     unreachable/disallowed pages are skipped, not fatal — only a failure to
     load the ROOT page aborts the whole crawl (nothing to report on
     otherwise).
+
+    Phase 18 — auth_* are OPTIONAL and per-call only, never persisted
+    (see app/api/audit.py's AuditRunRequest — they're accepted on the
+    request body but deliberately not fields on the SiteAudit DB model).
+    Anonymous crawling (all three None) remains the default and is
+    unaffected; this only changes behavior when the caller explicitly asks
+    for it — "bring your own already-authenticated session" via either HTTP
+    Basic Auth (auth_username+auth_password) or a raw Cookie header value
+    (auth_cookie, e.g. copied from a logged-in browser's devtools), not
+    this tool driving the target site's own login form.
 
     The robots.txt check on the ROOT url specifically is raised here, up
     front, rather than left to the while loop's per-url check below. Inside
@@ -187,31 +201,40 @@ async def crawl_site(root_url: str, max_pages: int = 40) -> List[CrawledPage]:
     async with async_playwright() as pw:
         browser = await pw.chromium.launch()
         try:
-            while queue and len(pages) < max_pages:
-                url = queue.popleft()
-                if url in visited:
-                    continue
-                visited.add(url)
-
-                if not await _check_robots_allowed(url):
-                    continue
-
-                crawled = await _crawl_one_page(browser, url)
-                if crawled is None:
-                    if url == root_url:
-                        raise PageFetchError(f"Could not load {root_url}.", status_code=502)
-                    continue
-
-                pages.append(crawled)
-
-                for link in crawled.links:
-                    if not _same_site(link.href, root_netloc):
+            context_kwargs: dict = {}
+            if auth_username and auth_password:
+                context_kwargs["http_credentials"] = {"username": auth_username, "password": auth_password}
+            if auth_cookie:
+                context_kwargs["extra_http_headers"] = {"Cookie": auth_cookie}
+            context = await browser.new_context(**context_kwargs)
+            try:
+                while queue and len(pages) < max_pages:
+                    url = queue.popleft()
+                    if url in visited:
                         continue
-                    clean = _clean_url(link.href)
-                    if clean not in visited and clean not in queue:
-                        queue.append(clean)
+                    visited.add(url)
 
-                await asyncio.sleep(_CRAWL_DELAY_SECONDS)
+                    if not await _check_robots_allowed(url):
+                        continue
+
+                    crawled = await _crawl_one_page(context, url)
+                    if crawled is None:
+                        if url == root_url:
+                            raise PageFetchError(f"Could not load {root_url}.", status_code=502)
+                        continue
+
+                    pages.append(crawled)
+
+                    for link in crawled.links:
+                        if not _same_site(link.href, root_netloc):
+                            continue
+                        clean = _clean_url(link.href)
+                        if clean not in visited and clean not in queue:
+                            queue.append(clean)
+
+                    await asyncio.sleep(_CRAWL_DELAY_SECONDS)
+            finally:
+                await context.close()
         finally:
             await browser.close()
 
@@ -266,8 +289,10 @@ async def _fetch_resource_text(context, url: str) -> Optional[str]:
         return None
 
 
-async def _crawl_one_page(browser, url: str) -> Optional[CrawledPage]:
-    page = await browser.new_page()
+async def _crawl_one_page(context, url: str) -> Optional[CrawledPage]:
+    """`context` — a Playwright BrowserContext (carries auth credentials/
+    cookies for the whole crawl, see crawl_site), not a bare Browser."""
+    page = await context.new_page()
     try:
         try:
             response = await page.goto(url, wait_until="load", timeout=_PAGE_LOAD_TIMEOUT_MS)

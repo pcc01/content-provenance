@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type GlossaryTerm, type StyleGuide, type StyleGuideRule } from "../api/client";
+import { LocaleSelect } from "../components/LocaleSelect";
 import { PageIntro } from "../components/PageIntro";
 
 // Phase 13 — define the brand voice/terminology rules the graph-based
@@ -135,8 +136,7 @@ export function StyleGuidesPage() {
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             <input placeholder="Name" value={newGuideName} onChange={(e) => setNewGuideName(e.target.value)}
                    style={{ padding: 4, fontSize: 13 }} />
-            <input placeholder="Locale (blank = all)" value={newGuideLocale} onChange={(e) => setNewGuideLocale(e.target.value)}
-                   style={{ padding: 4, fontSize: 13 }} />
+            <LocaleSelect value={newGuideLocale} onChange={setNewGuideLocale} label="Locale" blankLabel="All locales" width={200} />
             <textarea placeholder="Voice description" value={newGuideVoice} onChange={(e) => setNewGuideVoice(e.target.value)}
                       rows={3} style={{ padding: 4, fontSize: 13 }} />
             <button onClick={createGuide} style={{ padding: "6px 10px", cursor: "pointer" }}>Create guide</button>
@@ -191,8 +191,7 @@ export function StyleGuidesPage() {
                 </select>
                 <input placeholder="Rule text" value={newRuleText} onChange={(e) => setNewRuleText(e.target.value)}
                        style={{ flex: 1, padding: 4, fontSize: 12 }} />
-                <input placeholder="Locale" value={newRuleLocale} onChange={(e) => setNewRuleLocale(e.target.value)}
-                       style={{ width: 80, padding: 4, fontSize: 12 }} />
+                <LocaleSelect value={newRuleLocale} onChange={setNewRuleLocale} blankLabel="All locales" width={110} />
                 <button onClick={addRule} style={{ padding: "4px 10px", cursor: "pointer", fontSize: 12 }}>Add</button>
               </div>
 

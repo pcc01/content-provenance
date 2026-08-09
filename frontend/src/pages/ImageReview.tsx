@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api, imageFileUrl, type ImageAsset, type ImageTranslationUnit } from "../api/client";
+import { LocaleSelect } from "../components/LocaleSelect";
 import { PageIntro } from "../components/PageIntro";
 
 // Standalone translatable image assets (banners etc.) — NOT embedded in a
@@ -130,14 +131,8 @@ export function ImageReview() {
         <section style={{ marginBottom: 24 }}>
           <h3>2. Localize</h3>
           <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: 320 }}>
-            <label style={{ fontSize: 13 }}>
-              Source language
-              <input value={sourceLanguage} onChange={(e) => setSourceLanguage(e.target.value)} style={{ display: "block", width: "100%", padding: 4 }} />
-            </label>
-            <label style={{ fontSize: 13 }}>
-              Target language
-              <input value={targetLanguage} onChange={(e) => setTargetLanguage(e.target.value)} style={{ display: "block", width: "100%", padding: 4 }} />
-            </label>
+            <LocaleSelect value={sourceLanguage} onChange={setSourceLanguage} label="Source language" width={280} />
+            <LocaleSelect value={targetLanguage} onChange={setTargetLanguage} label="Target language" width={280} />
             <label style={{ fontSize: 13 }}>
               Method
               <select value={method} onChange={(e) => setMethod(e.target.value)} style={{ display: "block", width: "100%", padding: 4 }}>

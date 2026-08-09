@@ -50,6 +50,15 @@ class AuditRunRequest(BaseModel):
     max_pages: int = Field(40, ge=1, le=200)
     checks: List[SiteAuditCheck] = Field(default_factory=lambda: list(SiteAuditCheck))
     triggered_by: Optional[str] = None
+    # Phase 18 — OPTIONAL, and deliberately NOT a field on the persisted
+    # SiteAudit model (see crawl_site's docstring): "bring your own
+    # authenticated session" for sites that gate content behind a login or
+    # bot-detection wall, without this tool storing credentials anywhere.
+    # Anonymous crawling (all three omitted) is unchanged and remains the
+    # default.
+    auth_username: Optional[str] = None
+    auth_password: Optional[str] = None
+    auth_cookie: Optional[str] = None  # raw Cookie header value, e.g. copied from browser devtools
 
     @field_validator("requester_email")
     @classmethod
@@ -79,7 +88,10 @@ async def create_audit_run(request: AuditRunRequest):
         max_pages=request.max_pages, checks=request.checks, triggered_by=request.triggered_by,
     )
     await db.create_site_audit(audit)
-    result = await run_audit(audit)
+    result = await run_audit(
+        audit, auth_username=request.auth_username, auth_password=request.auth_password,
+        auth_cookie=request.auth_cookie,
+    )
     # Fire-and-forget lead alert — a customer just ran an audit, so notify
     # the site owner. Never let a notification failure surface as a 500
     # for a request that otherwise succeeded.

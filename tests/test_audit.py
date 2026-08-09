@@ -10,6 +10,7 @@ hreflang annotation on a multi-locale site).
 Run with: PYTHONPATH=. pytest tests/test_audit.py -v
 """
 
+import base64
 import functools
 import http.server
 import tempfile
@@ -439,3 +440,68 @@ async def test_audit_run_non_blocked_failure_leaves_blocked_false(client):
     audit = r.json()
     assert audit["status"] == "failed"
     assert audit["blocked"] is False
+
+
+# Gates its real content behind HTTP Basic Auth — a 401 (with a WWW-
+# Authenticate challenge) for anyone without the right credentials, the
+# real page for anyone with them. Proves Phase 18's auth_username/
+# auth_password actually reach Playwright's browser context, not just that
+# omitting them doesn't break the existing anonymous path (already covered
+# by every other test in this file).
+class _BasicAuthHandler(http.server.BaseHTTPRequestHandler):
+    _CREDENTIALS = base64.b64encode(b"testuser:testpass").decode()
+
+    def do_GET(self):
+        if self.path == "/robots.txt":
+            self.send_response(404)
+            self.end_headers()
+            return
+        if self.headers.get("Authorization") != f"Basic {self._CREDENTIALS}":
+            body = b"<!DOCTYPE html><html lang='en'><head><title>Unauthorized</title></head><body><p>You must log in with valid credentials to view this page.</p></body></html>"
+            self.send_response(401)
+            self.send_header("WWW-Authenticate", 'Basic realm="test"')
+        else:
+            body = b"<!DOCTYPE html><html lang='en'><head><title>Members Area</title></head><body><p>Welcome - this page needed a login.</p></body></html>"
+            self.send_response(200)
+        self.send_header("Content-Type", "text/html")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format, *args):
+        pass
+
+
+@pytest.fixture
+def basic_auth_server():
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _BasicAuthHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{server.server_port}/"
+    server.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_audit_run_anonymous_vs_authenticated_crawl(client, basic_auth_server):
+    """Retains the current (anonymous) method exactly as-is — a 401 is a
+    real HTTP response, not a crawl failure, so the anonymous run still
+    completes, just against a page that never authenticated. The
+    authenticated run, given the same URL and the right credentials, sees
+    the real 200 content instead."""
+    anon = await client.post("/api/v1/audit/runs", json={
+        "root_url": basic_auth_server, "primary_language": "en", "requester_email": "reviewer@example.com",
+        "max_pages": 5,
+    })
+    anon_audit = anon.json()
+    assert anon_audit["status"] == "completed"
+    anon_pages = (await client.get(f"/api/v1/audit/runs/{anon_audit['id']}/pages")).json()
+    assert anon_pages[0]["status_code"] == 401
+
+    authed = await client.post("/api/v1/audit/runs", json={
+        "root_url": basic_auth_server, "primary_language": "en", "requester_email": "reviewer@example.com",
+        "max_pages": 5, "auth_username": "testuser", "auth_password": "testpass",
+    })
+    authed_audit = authed.json()
+    assert authed_audit["status"] == "completed"
+    authed_pages = (await client.get(f"/api/v1/audit/runs/{authed_audit['id']}/pages")).json()
+    assert authed_pages[0]["status_code"] == 200

@@ -2,14 +2,14 @@ import type { ReactNode } from "react";
 
 // Shared page header: what this page is for, and — critically — whether
 // there's a required first step before it does anything. Added because
-// several pages (Review, Live Review, Dashboard) had no framing at all,
+// several pages (Review, Live Review, Analytics) had no framing at all,
 // and the ones that did were inconsistent about calling out required
 // inputs vs. "just click the button, nothing to fill in first."
 // `requires` renders as a distinct callout so it reads as an instruction,
 // not just more description prose; omit it for pages that work with zero
 // setup (state that explicitly in `children` instead, e.g. "loads
-// automatically" — see VendorScorecardPage/Dashboard) so the absence of
-// the callout isn't ambiguous with someone having forgotten to add one.
+// automatically" — see VendorScorecardPage/AnalyticsPage) so the absence
+// of the callout isn't ambiguous with someone having forgotten to add one.
 interface Props {
   title: string;
   children: ReactNode;

@@ -24,7 +24,7 @@ import uvicorn
 
 from app.api import (
     translations, provenance, search, xliff_export, xliff_import, redrive, images,
-    notes, documents, pages, audit, style, tm, vendors, consistency, quality,
+    notes, documents, pages, audit, style, tm, vendors, consistency, quality, models,
 )
 from app.core.database import init_db
 from app.core.haystack_pipeline import init_haystack
@@ -88,6 +88,7 @@ app.include_router(style.router, prefix="/api/v1/style", tags=["Style & Voice"])
 app.include_router(vendors.router, prefix="/api/v1/vendors", tags=["Vendor Scorecard"])
 app.include_router(consistency.router, prefix="/api/v1/consistency", tags=["Consistency"])
 app.include_router(quality.router, prefix="/api/v1/quality", tags=["Automatic Quality Metrics"])
+app.include_router(models.router, prefix="/api/v1/models", tags=["Model Discovery"])
 
 
 # The Review Shell (frontend/) is a Vite+React app now, not a static HTML

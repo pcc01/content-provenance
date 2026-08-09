@@ -21,7 +21,7 @@ import re
 import urllib.robotparser
 from datetime import datetime
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 from urllib.parse import urlparse
 
 from playwright.async_api import async_playwright
@@ -154,6 +154,12 @@ async def fetch_and_render(
     source_language: str,
     target_language: str,
     method: TranslationMethod = TranslationMethod.AI,
+    # Phase 18 — same optional, non-persisted "bring your own authenticated
+    # session" as app/core/audit/crawler.py's crawl_site — HTTP Basic Auth
+    # and/or a raw Cookie header, applied to this one fetch only. Anonymous
+    # fetching (all three None, the default) is unchanged.
+    auth_username: Optional[str] = None, auth_password: Optional[str] = None,
+    auth_cookie: Optional[str] = None,
 ) -> PageSnapshot:
     if not url.startswith(("http://", "https://")):
         raise PageFetchError("Only http:// and https:// URLs are supported.", status_code=400)
@@ -166,29 +172,38 @@ async def fetch_and_render(
         async with async_playwright() as pw:
             browser = await pw.chromium.launch()
             try:
-                page = await browser.new_page()
+                context_kwargs: dict = {}
+                if auth_username and auth_password:
+                    context_kwargs["http_credentials"] = {"username": auth_username, "password": auth_password}
+                if auth_cookie:
+                    context_kwargs["extra_http_headers"] = {"Cookie": auth_cookie}
+                context = await browser.new_context(**context_kwargs)
                 try:
-                    await page.goto(url, wait_until="load", timeout=30000)
-                except Exception as e:
-                    raise PageFetchError(f"Could not load {url}: {e}", status_code=502) from e
-                try:
-                    await page.wait_for_load_state("networkidle", timeout=10000)
-                except Exception:
-                    pass  # some pages never go idle (polling/websockets) — proceed with what's loaded
+                    page = await context.new_page()
+                    try:
+                        await page.goto(url, wait_until="load", timeout=30000)
+                    except Exception as e:
+                        raise PageFetchError(f"Could not load {url}: {e}", status_code=502) from e
+                    try:
+                        await page.wait_for_load_state("networkidle", timeout=10000)
+                    except Exception:
+                        pass  # some pages never go idle (polling/websockets) — proceed with what's loaded
 
-                await page.add_script_tag(content=_load_harvest_js())
-                harvested = await page.evaluate("() => window.ReviewHarvest.harvest()")
-                now = datetime.utcnow()
-                mapping, unit_ids = await match_or_create_units(
-                    url, source_language, target_language, method, harvested, now=now,
-                )
+                    await page.add_script_tag(content=_load_harvest_js())
+                    harvested = await page.evaluate("() => window.ReviewHarvest.harvest()")
+                    now = datetime.utcnow()
+                    mapping, unit_ids = await match_or_create_units(
+                        url, source_language, target_language, method, harvested, now=now,
+                    )
 
-                # swapText=true: Phase 8's rendered pages are served from a
-                # different origin than the original, so both the visible
-                # text and asset URLs need rewriting (unlike Phase 10's
-                # live-tab mode, which only tags elements — see harvest.ts).
-                await page.evaluate("(mapping) => window.ReviewHarvest.rewrite(mapping, true)", mapping)
-                html = await page.content()
+                    # swapText=true: Phase 8's rendered pages are served from a
+                    # different origin than the original, so both the visible
+                    # text and asset URLs need rewriting (unlike Phase 10's
+                    # live-tab mode, which only tags elements — see harvest.ts).
+                    await page.evaluate("(mapping) => window.ReviewHarvest.rewrite(mapping, true)", mapping)
+                    html = await page.content()
+                finally:
+                    await context.close()
             finally:
                 await browser.close()
     except PageFetchError:

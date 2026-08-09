@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api, type ConsistencyFinding, type ConsistencyResult } from "../api/client";
+import { LocaleSelect } from "../components/LocaleSelect";
 import { PageIntro } from "../components/PageIntro";
 
 const FINDING_LABEL: Record<ConsistencyFinding["finding_type"], string> = {
@@ -48,11 +49,7 @@ export function ConsistencyPage() {
       {error && <div style={{ background: "#fef2f2", color: "#b91c1c", padding: 10, borderRadius: 6, marginBottom: 16, fontSize: 13 }}>{error}</div>}
 
       <div style={{ display: "flex", gap: 10, alignItems: "flex-end", marginBottom: 20 }}>
-        <label style={{ fontSize: 13 }}>
-          Target language (blank = all)
-          <input value={targetLanguage} onChange={(e) => setTargetLanguage(e.target.value)} placeholder="fr-FR"
-                 style={{ display: "block", padding: 4, marginTop: 4, width: 140 }} />
-        </label>
+        <LocaleSelect value={targetLanguage} onChange={setTargetLanguage} label="Target language" blankLabel="All languages" width={160} />
         <button disabled={busy} onClick={run} style={{ padding: "6px 14px", cursor: "pointer" }}>
           {busy ? "Checking…" : "Run check"}
         </button>

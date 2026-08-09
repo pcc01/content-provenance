@@ -44,6 +44,9 @@ class EvaluateRequest(BaseModel):
     # deterministic.py's free checks still short-circuit obvious cases
     # before spending a model call.
     provider: Optional[str] = None
+    # Phase 18 — which model to run within provider, for ollama/lmstudio/
+    # vllm (see GET /api/v1/models/{provider}). Ignored otherwise.
+    model: Optional[str] = None
 
 
 @router.post("/meteor-compare", response_model=MeteorCompareResponse)
@@ -122,7 +125,7 @@ async def evaluate_unit(request: EvaluateRequest):
 
     scorer_name = (request.provider or settings.scoring_provider).lower()
     try:
-        scorer = get_scorer(request.provider)
+        scorer = get_scorer(request.provider, request.model)
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

@@ -45,11 +45,22 @@ instead of one ad-hoc number; and **every translate/evaluate/retranslate
 step is multi-provider** — OpenAI, Anthropic Claude, Google Gemini, Google
 Translate, Microsoft Translator, Ollama (including Unbabel's Tower/Tower+),
 LMStudio, and vLLM are all selectable per request, not just at process
-startup. The Review Shell is segmented into three workflows matching how the
-work actually happens: **Content Creation** (define voice, import legacy
-content, write/check/translate new copy), **Quality Review** (review,
-redrive, vendor scorecard, cross-document consistency), and **Audit**
-(third-party site i18n/compliance review, a separate concern). See
+startup, **and the specific model within a provider is read live** (`GET
+/api/v1/models/{provider}`) rather than hardcoded — Ollama's locally pulled
+models, LMStudio/vLLM's currently-loaded model, and whatever your Claude/
+OpenAI/Gemini API key actually has access to.
+
+The Review Shell is segmented into four workflows matching how the work
+actually happens: **Content Creation** (define voice, import legacy content
+— TMX, XLIFF, or now CSV — write/check/translate new copy), **Quality
+Review** (in-context review, redrive, vendor scorecard, cross-document
+consistency), **Audit** (third-party site i18n/compliance review, a
+separate concern, optionally crawling as an authenticated user for
+sites that gate content behind a login), and **Analytics** (system-wide
+totals and charts, aggregating across the other three). Every translation
+unit's full history — provenance, deployment record, lineage graph, XLIFF
+export, automatic quality-metric scores, context screenshots — is reachable
+directly from the Review tab's segment drawer, not just via the API. See
 [`ROADMAP.md`](ROADMAP.md) for the full phase-by-phase build history and
 [`docs/quality-evaluation-research.md`](docs/quality-evaluation-research.md)
 / [`docs/graphrag-provenance-proposal.md`](docs/graphrag-provenance-proposal.md)
@@ -276,6 +287,26 @@ For production, `npm run build` in `frontend/` produces `frontend/dist/`
 (and, as part of the same script, `frontend/review-sdk/dist/overlay.js`),
 which `app/main.py` serves directly — no separate frontend server needed.
 
+### Review Shell Segments
+
+Four top-level segments, each a stage of the actual workflow rather than an
+arbitrary grouping:
+
+| Segment | Pages | What it's for |
+|---------|-------|----------------|
+| **Content Creation** | Create, Style Guides, Import, Documents | Everything BEFORE a translation exists: define brand voice (Style Guides), bring in legacy vendor content (Import — TMX, XLIFF, and the Import page's ingest ledger), write/check/translate new copy (Create), or bulk-import a `.txt`/`.md`/`.csv` file (Documents) |
+| **Quality Review** | Review, Live (extension), Redrive, Images, Vendor Scorecard, Consistency, Search | Everything about evaluating and improving translations already in the system — in-context review (SDK-tagged app, live browser tab, or any URL), threshold redrive with a worklist and ad-hoc evaluate/METEOR-compare tools, image localization, per-vendor scoring, cross-document term/tone consistency, semantic/keyword search |
+| **Audit** | (single page) | A THIRD-PARTY site compliance tool — genuinely separate from this system's own translations; optionally authenticated (see [Authenticated Crawling/Fetching](#authenticated-crawlingfetching)) |
+| **Analytics** | (single page) | System-wide totals and charts (by-method bar chart, by-status donut chart) aggregating across all three segments above |
+
+Every page opens with a short intro stating what it's for and, where it
+isn't obvious from the form alone, what input is required to start (or that
+none is — several pages just load automatically). Every language field is a
+dropdown (`LocaleSelect`) with the ten most-spoken languages pinned above a
+broader list, not free text. Every provider dropdown that offers more than
+one model (Ollama/LMStudio/vLLM/Claude/OpenAI/Gemini) reveals a second,
+live-populated model dropdown — see [Model Discovery](#model-discovery).
+
 ---
 
 ## API Reference
@@ -292,9 +323,13 @@ which `app/main.py` serves directly — no separate frontend server needed.
 | `POST` | `/api/v1/translations/{id}/versions/{version_id}/revert` | Phase 9: restore an earlier version's text as a new version (never rewrites history) |
 | `POST` | `/api/v1/translations/{id}/deploy` | Record a new deployment location |
 | `PUT`  | `/api/v1/translations/{id}/review` | Mark as human-reviewed |
-| `GET`  | `/api/v1/translations/stats` | Aggregated statistics |
+| `GET`  | `/api/v1/translations/stats` | Aggregated statistics — powers the Review Shell's **Analytics** segment |
 | `GET`/`POST` | `/api/v1/translations/{id}/notes` | Review notes thread (threaded via `parent_id`) |
 | `PUT`  | `/api/v1/translations/{id}/notes/{note_id}/resolve` | Mark a note resolved/unresolved |
+
+Deploy/mark-as-reviewed are both in the Review tab's segment drawer now, not
+just the API — its "Details" tab has a "Record a deployment" form and a
+"Mark as reviewed" button.
 
 **POST /api/v1/translations/ — request body**
 
@@ -307,12 +342,16 @@ which `app/main.py` serves directly — no separate frontend server needed.
   "context": "banner_ad",
   "deployment_location": "https://ads.example.com/campaign/q4",
   "domain": "marketing",
-  "translator_name": null
+  "translator_name": null,
+  "provider": null,
+  "model": null
 }
 ```
 
 `method`: `ai` | `human` | `hybrid`  
-`context`: `website` | `banner_ad` | `marketing_campaign` | `email` | `mobile_app` | `social_media` | `print` | `api`
+`context`: `website` | `banner_ad` | `marketing_campaign` | `email` | `mobile_app` | `social_media` | `print` | `api`  
+`provider`/`model`: optional per-request overrides — see
+[Translation & Evaluation Backends](#translation--evaluation-backends).
 
 ### Provenance
 
@@ -324,11 +363,17 @@ which `app/main.py` serves directly — no separate frontend server needed.
 | `GET`  | `/api/v1/provenance/{id}/lineage` | Lineage graph (nodes + edges for visualisation) |
 | `GET`  | `/api/v1/provenance/{id}/deployments` | All deployment records |
 
+All five are surfaced in the Review tab's segment drawer ("Provenance"
+tab) — agent/activity/entity/relation summary, a lineage node/edge count
+with an expandable edge list, the deployment history, and direct
+download links for XLIFF/PROV-JSON/PROV-N (plus an inline, lazy-loaded raw
+XLIFF preview) — not just reachable via the API.
+
 ### Search (Haystack)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET`  | `/api/v1/search/?q={query}` | Semantic or BM25 search over all translations |
+| `GET`  | `/api/v1/search/?q={query}` | Semantic or BM25 search over all translations — response also includes `indexed_documents`/`search_type`, shown in the Search tab |
 | `GET`  | `/api/v1/search/indexed-count` | Number of documents in the vector store |
 
 Query params: `semantic` (bool), `method`, `context`, `top_k`
@@ -341,11 +386,11 @@ leaving the system" record.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET`  | `/api/v1/xliff/{id}` | Download XLIFF 2.0 file with embedded PROV metadata (incl. per-version history notes) |
-| `GET`  | `/api/v1/xliff/{id}/preview` | Preview XLIFF as text |
-| `GET`  | `/api/v1/xliff/project/{id}` | Export full project as a single XLIFF document |
+| `GET`  | `/api/v1/xliff/{id}` | Download XLIFF 2.0 file with embedded PROV metadata (incl. per-version history notes) — a direct link in the segment drawer's Provenance tab |
+| `GET`  | `/api/v1/xliff/{id}/preview` | Preview XLIFF as text — an inline, lazy-loaded `<details>` in the same tab |
+| `GET`  | `/api/v1/xliff/project/{id}` | Export full project as a single XLIFF document — API-only; no project-management UI exists yet to create/browse a `TranslationProject` to export |
 | `POST` | `/api/v1/xliff/import` | Ingest an external XLIFF 2.0 document (multipart `file` + `source_system`) — creates/updates units and their version history; synthesizes minimal provenance if the file carries none |
-| `GET`  | `/api/v1/xliff/ingest-log` | The entering/leaving ledger |
+| `GET`  | `/api/v1/xliff/ingest-log` | The entering/leaving ledger — the Import page's "Ingest ledger" table |
 
 ### Threshold-Quality Redrive
 
@@ -360,7 +405,7 @@ QE-scorer → threshold → MT-fallback-chain pipeline.
 | `POST` | `/api/v1/redrive/runs/{id}/items/{item_id}/approve` | Human-in-the-loop: apply a proposed redrive |
 | `POST` | `/api/v1/redrive/runs/{id}/items/{item_id}/reject` | Human-in-the-loop: decline a proposed redrive |
 | `GET`  | `/api/v1/redrive/preview` | Dry-run forecast — how many units a threshold would catch, no writes/spend |
-| `GET`  | `/api/v1/redrive/queue` | Units currently below a threshold, worst-first |
+| `GET`  | `/api/v1/redrive/queue` | Units currently below a threshold, worst-first — the Redrive Console's "Worklist" table, with a per-row "Evaluate" handoff into the standalone evaluate panel |
 
 Scoring runs deterministic free checks first (untranslated/garbage/placeholder
 issues, wrong script, HTML tag/number mismatches — ported from
@@ -387,7 +432,7 @@ for why) — rather than only scoring a translation after the fact.
 |--------|----------|-------------|
 | `POST`/`GET` | `/api/v1/style/guides` | Create / list style guides (name, version, locale, voice description, tone attributes) |
 | `GET`  | `/api/v1/style/guides/{id}` | A single guide |
-| `GET`  | `/api/v1/style/guides/{id}/chain` | Walk the `supersedes_id` chain back to the oldest ancestor |
+| `GET`  | `/api/v1/style/guides/{id}/chain` | Walk the `supersedes_id` chain back to the oldest ancestor — shown inline on the Style Guides page as "Version history: v1.0 → v2.0" |
 | `POST`/`GET` | `/api/v1/style/guides/{id}/rules` | Create / list tone, voice, terminology, or formatting rules under a guide |
 | `POST`/`GET` | `/api/v1/style/glossary-terms` | Create / list glossary terms (do-not-translate, preferred-term linking) |
 | `GET`  | `/api/v1/style/retrieve-preview` | What the retrieval layer would hand an AI translation for this source text — inspect the context before translating |
@@ -412,9 +457,9 @@ redrive candidate against the version it replaces).
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/api/v1/quality/evaluate` | Score one unit with a chosen [evaluation provider](#translation--evaluation-backends) on demand — independent of a redrive run |
-| `POST` | `/api/v1/quality/meteor-compare` | Ad-hoc METEOR score between any two strings |
-| `GET`  | `/api/v1/quality/{unit_id}/automatic` | A unit's automatic-metric (COMET/METEOR) score history |
+| `POST` | `/api/v1/quality/evaluate` | Score one unit with a chosen [evaluation provider](#translation--evaluation-backends) on demand — independent of a redrive run; the Redrive Console's standalone "Evaluate a single unit" panel |
+| `POST` | `/api/v1/quality/meteor-compare` | Ad-hoc METEOR score between any two strings — the Redrive Console's "Compare METEOR" tool |
+| `GET`  | `/api/v1/quality/{unit_id}/automatic` | A unit's automatic-metric (COMET/METEOR) score history — the segment drawer's "Metrics" tab |
 | `POST` | `/api/v1/quality/comet-score` | Batch, offline/admin-triggered COMET-Kiwi scoring — deliberately not on any live-request path (CPU inference on a transformer-scale model doesn't fit a live-latency budget) |
 
 COMET-Kiwi requires `unbabel-comet` (not installed by default — multi-GB,
@@ -446,7 +491,7 @@ get translated three different ways across the corpus."
 |--------|----------|-------------|
 | `POST` | `/api/v1/images/` | Upload an image (`kind=context\|translatable`) |
 | `GET`  | `/api/v1/images/{id}` / `/{id}/file` | Metadata / raw file bytes |
-| `POST` | `/api/v1/images/{id}/context-link` | Attach a context screenshot to a translation unit |
+| `POST` | `/api/v1/images/{id}/context-link` | Attach a context screenshot to a translation unit — the segment drawer's "Context screenshots" uploader (distinct from Image Review, which only handles standalone `kind=translatable` banners) |
 | `GET`  | `/api/v1/images/context-links/{unit_id}` | Context images linked to a unit |
 | `POST` | `/api/v1/images/{id}/localize` | Start localizing a source image (optionally with the target file immediately) |
 | `PUT`  | `/api/v1/images/localize/{itu_id}/target` | Attach/replace the localized target image |
@@ -457,23 +502,26 @@ inline in the review overlay like any other segment. Translatable images
 (banners, graphics) get their own provenance chain reusing the same PROV-DM
 builder as text (`SourceImage`/`TranslatedImage` entities).
 
-### Documents (plain text / Markdown)
+### Documents (plain text / Markdown / CSV)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/api/v1/documents/import` | Upload a `.txt`/`.md` file — split into paragraph/block segments, translated immediately |
+| `POST` | `/api/v1/documents/import` | Upload a `.txt`/`.md`/`.csv` file — segmented and translated immediately |
 | `GET`  | `/api/v1/documents/{id}` | Document metadata |
 | `GET`  | `/api/v1/documents/{id}/segments` | Ordered segments for a target language |
 
-Each paragraph/block of an imported document becomes an ordinary
-`TranslationUnit` (tagged `{document_id, position}` in its metadata), so it
-gets the same translation/scoring/redrive/provenance treatment as any other
-unit. The Review Shell's "Documents" tab uploads a file and hands back a
-ready-made target URL/route/locale for the "Review" tab — the document
-renders as its own `data-tu-id`-tagged page at `/documents/{id}`, served
-from the Review Shell's own origin, so the existing overlay SDK reviews it
-with no changes. PDF/PowerPoint/DOCX are tracked but not yet designed — see
-`ROADMAP.md`.
+Text/Markdown segment on blank lines (each paragraph/heading/multi-item
+list becomes its own unit); CSV segments **one unit per row**, taken from
+an optional `source_column` form field (defaults to the first column) — the
+natural shape for a CMS/spreadsheet export (`key,source_text,notes`, ...).
+Either way, each segment becomes an ordinary `TranslationUnit` (tagged
+`{document_id, position}` in its metadata), so it gets the same
+translation/scoring/redrive/provenance treatment as any other unit. The
+Review Shell's "Documents" tab uploads a file and hands back a ready-made
+target URL/route/locale for the "Review" tab — the document renders as its
+own `data-tu-id`-tagged page at `/documents/{id}`, served from the Review
+Shell's own origin, so the existing overlay SDK reviews it with no changes.
+PDF/PowerPoint/DOCX are tracked but not yet designed — see `ROADMAP.md`.
 
 ### Pages (review any URL, no app changes required)
 
@@ -493,8 +541,13 @@ with no changes. PDF/PowerPoint/DOCX are tracked but not yet designed — see
 `source_language` (default `en-US`), `method` (default `ai`), `refresh`
 (force a live re-fetch instead of reusing the latest cached snapshot),
 `as_of` (Phase 9 — reconstruct the page as it looked at this timestamp
-instead of the current live version). `history`/`diff` take `url` +
-`target_language` (`diff` also takes `from_ts`/`to_ts`).
+instead of the current live version), and optionally `auth_username`/
+`auth_password` (HTTP Basic Auth) or `auth_cookie` (a raw `Cookie` header
+value) for pages that gate content behind a login — anonymous fetching is
+the default and is unchanged when these are omitted; see
+[Authenticated Crawling/Fetching](#authenticated-crawlingfetching) below.
+`history`/`diff` take `url` + `target_language` (`diff` also takes
+`from_ts`/`to_ts`).
 
 This is the non-cooperative counterpart to the SDK-tagging model above —
 `app/core/page_fetch.py` renders the URL with a headless browser
@@ -538,7 +591,7 @@ load the extension.
 | `POST` | `/api/v1/audit/runs` | Crawl a site and run the enabled checks — runs synchronously, returns the completed (or failed) audit |
 | `GET`  | `/api/v1/audit/runs` | List past audits |
 | `GET`  | `/api/v1/audit/runs/{id}` | Status + finding counts by check/severity |
-| `GET`  | `/api/v1/audit/runs/{id}/pages` | The crawled-page inventory |
+| `GET`  | `/api/v1/audit/runs/{id}/pages` | The crawled-page inventory — a collapsible table on the Audit report (URL/status/html-lang/expected-locale/detected-language) |
 | `GET`  | `/api/v1/audit/runs/{id}/findings` | Findings, filterable by `check`/`severity`/`page_id` |
 | `GET`  | `/api/v1/audit/runs/{id}/export` | Plain-text report download |
 | `GET`  | `/api/v1/audit/runs/{id}/report.pdf` | Branded PDF report download (logo, executive summary, findings by check) |
@@ -554,9 +607,16 @@ load the extension.
     "mixed_locale", "rtl_readiness", "icu_i18n", "privacy",
     "text_expansion", "font_coverage", "hreflang", "cookie_consent",
     "placeholder_leak", "locale_format"
-  ]
+  ],
+  "auth_username": null,
+  "auth_password": null,
+  "auth_cookie": null
 }
 ```
+
+`auth_username`/`auth_password`/`auth_cookie` are optional (see
+[Authenticated Crawling/Fetching](#authenticated-crawlingfetching) below) —
+omitted, the crawl is anonymous, exactly as before this option existed.
 
 Distinct from every other capability in this system: it audits a
 THIRD-PARTY site from the outside, not this system's own translations, and
@@ -582,6 +642,26 @@ button hands off directly into the existing fetch-mode review for that
 URL; `app/core/audit/report.py` (reportlab) generates the branded PDF. See
 `ROADMAP.md`'s "Site I18n & Compliance Audit Toolkit" and "Consulting-Grade
 Checks, Regulatory Data & PDF Report" sections for the full design.
+
+### Authenticated Crawling/Fetching
+
+Both the Audit crawler and the Review tab's "Any URL" fetch mode default to
+**anonymous** access — like any visitor without an account — and that's
+unchanged. Some sites gate real content behind a login or a bot-detection
+wall, so both also accept an optional, **per-request, never-persisted**
+authenticated session:
+
+- **HTTP Basic Auth** — `auth_username` + `auth_password`
+- **A raw `Cookie` header** — `auth_cookie`, copied from a logged-in
+  browser's devtools
+
+Either is applied to a single Playwright `BrowserContext` built once for
+that one crawl/fetch — this is "bring your own already-authenticated
+session," not a bot that drives the target site's own login form, and
+neither the Audit run's `SiteAudit` record nor anything else persists the
+credentials. In the Review Shell, both the Audit tab and the Review tab's
+"Any URL" mode collapse this behind an "Advanced: (crawl/fetch) as a
+logged-in user" `<details>` section, off by default.
 
 ---
 
@@ -631,7 +711,11 @@ default for that one call — not just at process startup, and surfaced
 directly in the Review Shell (Create Content's "Translate with" dropdown,
 Redrive Console's "Evaluate with"/"Retranslate with" dropdowns and standalone
 per-unit evaluate panel). `TRANSLATION_PROVIDER`/`SCORING_PROVIDER` in `.env`
-just set the fallback when a request doesn't pick one.
+just set the fallback when a request doesn't pick one. Each of those same
+request shapes also accepts a `model` field — **which model to run within a
+provider**, for the six providers that offer more than one (see
+[Model Discovery](#model-discovery) below); ignored for the three
+single-endpoint NMT services (DeepL, Google Translate, MS Translator).
 
 **Translation** (`app/core/translation_backends.py`):
 
@@ -692,6 +776,35 @@ typed MQM) — is in
 A third, independent scoring axis alongside the LLM-judge above — see
 [Quality & Evaluation](#quality--evaluation-mqm--comet--meteor) below.
 
+### Model Discovery
+
+`GET /api/v1/models/{provider}` reads live from the provider itself —
+never a hardcoded list, so it can't go stale the moment you pull a new
+Ollama model or your OpenAI account gains access to a new one:
+
+| Provider | Source |
+|----------|--------|
+| `ollama` | Ollama's own `GET /api/tags` — whatever's actually pulled locally |
+| `lmstudio`, `vllm` | The OpenAI-compatible `GET /v1/models` both servers expose — whatever's currently loaded |
+| `openai` | OpenAI's `GET /v1/models`, filtered to chat-capable-looking ids (`gpt*`/`o1*`/`o3*`) — excludes embeddings/whisper/dall-e |
+| `gemini` | Google's `GET /v1beta/models`, filtered to models supporting `generateContent` |
+| `anthropic` / `claude` | Anthropic's Models API (`GET /v1/models`) — both vocabularies accepted, since translate and evaluate name this vendor differently (see below) |
+
+DeepL/Google Translate/MS Translator aren't listed — pure single-endpoint
+NMT services, nothing to discover. In the Review Shell, picking a
+discoverable provider from any "Translate with"/"Evaluate with"/"Retranslate
+with" dropdown reveals a second "Model" dropdown that live-fetches this
+endpoint (`ModelPicker.tsx`); it degrades to "Default" with an inline error
+if discovery fails (no API key set, local server not running) rather than
+blocking the picker.
+
+**Note the vocabulary split:** a *translate* request calls the vendor
+`anthropic`; an *evaluate* request calls the same vendor `claude` (the two
+provider factories — `app/core/translation_backends.py` and
+`app/core/scoring/factory.py` — were named independently). `GET
+/api/v1/models/{provider}` accepts either name for this one vendor and
+resolves them to the same Models API call.
+
 ---
 
 ## Development
@@ -742,7 +855,8 @@ content-provenance/
 │   │   ├── style.py                # Phase 13: style guides, glossary, retrieval preview, source voice check
 │   │   ├── vendors.py              # Phase 14: vendor scorecard + PDF export
 │   │   ├── consistency.py          # Phase 14: cross-document term-drift/tone-spread checks
-│   │   └── quality.py              # Phase 15/16: METEOR/COMET automatic metrics + standalone LLM-judge evaluate endpoint
+│   │   ├── quality.py              # Phase 15/16: METEOR/COMET automatic metrics + standalone LLM-judge evaluate endpoint
+│   │   └── models.py               # Phase 18: live model discovery for every multi-model provider
 │   ├── core/
 │   │   ├── config.py               # Environment-based settings
 │   │   ├── database.py             # Thin public interface (get_db/init_db) over db/repository.py
@@ -794,8 +908,9 @@ content-provenance/
 ├── frontend/                       # Review Shell — Vite + React + TypeScript, segmented into Content Creation / Quality Review / Audit
 │   ├── src/
 │   │   ├── api/client.ts           # Typed fetch wrapper for the whole API
-│   │   ├── components/             # ReviewFrame, SegmentDrawer, PageFlaggedList, PageHistory, PageNotes, PendingChanges, AuditReport, ProvenancePanel, QualityBadge (hard_fail marker), VersionHistory, NotesThread
-│   │   └── pages/                  # ReviewPage, LiveReviewPage, RedriveConsole (+ provider dropdowns), ImageReview, DocumentsPage, DocumentViewer, AuditPage, SearchPage, Dashboard, CreateContentPage, StyleGuidesPage, ImportPage, VendorScorecardPage, ConsistencyPage
+│   │   ├── components/             # ReviewFrame, SegmentDrawer (Details/History/Provenance/Metrics/Notes tabs), PageFlaggedList, PageHistory, PageNotes, PendingChanges, AuditReport (+ pages-crawled table), ProvenancePanel (+ lineage/exports), MetricsPanel, ContextImages, QualityBadge, VersionHistory, NotesThread, PageIntro, ModelPicker, LocaleSelect, BarChart, DonutChart
+│   │   ├── data/locales.ts         # Phase 18: top-10-most-spoken + broader language list backing LocaleSelect
+│   │   └── pages/                  # ReviewPage, LiveReviewPage, RedriveConsole (+ provider/model dropdowns, worklist, METEOR compare), ImageReview, DocumentsPage (+ CSV), DocumentViewer, AuditPage (+ authenticated crawl), SearchPage, AnalyticsPage, CreateContentPage, StyleGuidesPage (+ version chain), ImportPage (+ ingest ledger), VendorScorecardPage, ConsistencyPage
 │   ├── review-sdk/                 # The in-context overlay injected into a cooperative target app, or extracted for Phase 10's extension
 │   │   ├── overlay.ts              # Highlight boxes, score/pending coloring, pluggable transport (postMessage or chrome.runtime)
 │   │   ├── harvest.ts              # Phase 10: shared harvest/rewrite DOM walk — compiled once, used by both Playwright and the extension
@@ -825,7 +940,7 @@ content-provenance/
 │   ├── test_pages.py               # Page fetch/harvest/render + history/diff/as_of tests (real headless-browser render)
 │   ├── test_revert.py              # Version revert API tests
 │   ├── test_propose.py             # Phase 10: human-drafted proposal -> pending -> approve/reject tests
-│   ├── test_audit.py               # Phase 11/12: all 10 checks + PDF export against a local fixture site
+│   ├── test_audit.py               # Phase 11/12: all 10 checks + PDF export against a local fixture site; Phase 18: authenticated-vs-anonymous crawl against a Basic-Auth-gated fixture
 │   ├── test_tmx_import.py          # Phase 13: TMX import
 │   ├── test_style_api.py / test_style_scoring.py  # Phase 13: style guide/glossary CRUD, tone/voice scoring
 │   ├── test_graph.py               # Phase 13: pgGraph retrieval

@@ -104,7 +104,11 @@ export function StyleGuidesPage() {
         requires="create a style guide (name only is required) using the form on the left. Until one exists, there's nothing for the rest of this workflow to check translations against."
       >
         Brand voice/tone rules and terminology retrieved automatically before every AI translation
-        (see the Retrieval Preview tool) and scored against on every redrive.
+        (see the Retrieval Preview tool) and scored against on every redrive. This is what makes
+        transcreation reviewable rather than just informal: a rule like "playful, never literal —
+        adapt idioms and cultural references for the target market" is a real, checkable
+        instruction, so a translator's (or model's) creative departure from the source can be
+        judged against the brand's own intent instead of penalized for not matching it word-for-word.
       </PageIntro>
 
       {error && (

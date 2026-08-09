@@ -66,6 +66,40 @@ directly from the Review tab's segment drawer, not just via the API. See
 / [`docs/graphrag-provenance-proposal.md`](docs/graphrag-provenance-proposal.md)
 for the research behind these decisions.
 
+### Built for Transcreation, Not Just Literal Translation
+
+A recurring use case: **marketing copy**, where the right move is often
+**transcreation** — rewording a message to preserve intent, tone, and
+cultural fit in the target market rather than translating it word-for-word
+(a tagline, a pun, a culturally-specific reference rarely survives literal
+translation intact). This system treats that as the normal case, not an
+edge case to work around:
+
+- **XLIFF itself doesn't require literal correspondence.** A `<unit>`'s job
+  is to pair a source segment with whatever target text was ultimately
+  produced — a straight AI translation, a human transcreation, or a hybrid
+  post-edit are all just "the target text," carrying the same embedded PROV
+  metadata either way (see [XLIFF ⇄ W3C PROV Integration](#xliff--w3c-prov-integration)
+  below). Nothing in the format — or in this system's `TranslationMethod`
+  field (`ai` | `human` | `hybrid`) — checks or expects the target to
+  resemble the source.
+- **Style guides ground the adaptation, not the wording.** A rule like
+  "playful, never literal — adapt idioms for the local market" (see
+  [Style Guides, Glossary & Voice Check](#style-guides-glossary--voice-check-pggraph-retrieval)
+  below) is a real, retrieved instruction an AI translation follows and a
+  reviewer's tone/voice score is judged against — brand intent, not
+  string similarity to the source.
+- **Quality scoring judges meaning and voice, not resemblance.** The
+  MQM-style LLM judge behind redrive/evaluate (see
+  [Quality & Evaluation](#quality--evaluation-mqm--comet--meteor) below)
+  flags mistranslations, fluency issues, and register/style errors — it
+  doesn't penalize a target for diverging from the source's literal wording.
+  The automatic (non-LLM) metrics are a narrower tool by contrast: COMET-Kiwi
+  and METEOR are similarity/adequacy-style signals better suited to QA on
+  literal MT output, and are kept as an independent, informational axis for
+  exactly this reason — never blended into the score that actually gates a
+  redrive, and never the right signal to lean on for creative copy.
+
 ---
 
 ## Architecture

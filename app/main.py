@@ -25,6 +25,7 @@ import uvicorn
 from app.api import (
     translations, provenance, search, xliff_export, xliff_import, redrive, images,
     notes, documents, pages, audit, style, tm, vendors, consistency, quality, models,
+    json_export, json_import, integrations,
 )
 from app.core.database import init_db
 from app.core.haystack_pipeline import init_haystack
@@ -75,6 +76,10 @@ app.include_router(search.router, prefix="/api/v1/search", tags=["Search"])
 # unit_id — route registration order is what decides this, not specificity.
 app.include_router(xliff_import.router, prefix="/api/v1/xliff", tags=["XLIFF"])
 app.include_router(xliff_export.router, prefix="/api/v1/xliff", tags=["XLIFF"])
+# JSON provenance documents — the JSON peer of the XLIFF pair above, same
+# import-before-export mounting order and the same reason.
+app.include_router(json_import.router, prefix="/api/v1/json", tags=["JSON"])
+app.include_router(json_export.router, prefix="/api/v1/json", tags=["JSON"])
 app.include_router(redrive.router, prefix="/api/v1/redrive", tags=["Redrive"])
 app.include_router(images.router, prefix="/api/v1/images", tags=["Images"])
 app.include_router(documents.router, prefix="/api/v1/documents", tags=["Documents"])
@@ -89,6 +94,7 @@ app.include_router(vendors.router, prefix="/api/v1/vendors", tags=["Vendor Score
 app.include_router(consistency.router, prefix="/api/v1/consistency", tags=["Consistency"])
 app.include_router(quality.router, prefix="/api/v1/quality", tags=["Automatic Quality Metrics"])
 app.include_router(models.router, prefix="/api/v1/models", tags=["Model Discovery"])
+app.include_router(integrations.router, prefix="/api/v1/integrations/cms", tags=["CMS Integrations"])
 
 
 # The Review Shell (frontend/) is a Vite+React app now, not a static HTML
@@ -112,6 +118,13 @@ REVIEW_SDK_DIST = Path("frontend/review-sdk/dist")
 
 if REVIEW_SDK_DIST.exists():
     app.mount("/sdk-dist", StaticFiles(directory=REVIEW_SDK_DIST), name="review-sdk-dist")
+
+# demo/strapi-site/index.html is deliberately NOT mounted on this app — it's
+# served standalone (docker-compose's "cms" profile, its own container on
+# its own port) so it never contends with this app's own port the way a
+# docker `app` container and a local `uvicorn --reload` process already do.
+# See docker-compose.yml's demo-site service and CONTRIBUTING.md's "Testing
+# the Strapi Integration" section.
 
 
 @app.get("/", response_class=HTMLResponse)

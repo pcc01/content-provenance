@@ -20,6 +20,69 @@ For the review UI, see the "Run the review environment" section of the
 [README](README.md#run-the-review-environment-review-shell) — it's a
 separate Vite+React app under `frontend/`.
 
+## Testing the Strapi Integration
+
+The CMS integration (`app/core/integrations/strapi.py`, `POST /api/v1/
+integrations/cms/push`) needs a real Strapi instance to test against
+end-to-end. `docker-compose --profile cms` runs two containers, each on
+its own port, deliberately separate from `app`'s (8001) so nothing here
+ever contends with it the way a docker `app` container and a local
+`uvicorn --reload` process already can:
+
+- **`strapi`** (port 1337) — the CMS itself.
+- **`demo-site`** (port 4321) — a plain nginx-served static page
+  (`demo/strapi-site/index.html`) standing in for an independent,
+  Strapi-driven website. It reads its copy straight from Strapi's public
+  REST API — no token in the page, just the demo content type's public
+  `find`/`findOne` permissions, granted automatically by the bootstrap
+  script below.
+
+`scripts/bootstrap_strapi.py` sets Strapi up completely from the command
+line (admin account, a demo content type, an API token, one demo entry —
+no clicking through Strapi's admin UI required):
+
+```bash
+docker-compose --profile cms up -d --build   # first run builds a real Strapi project — a few minutes
+python scripts/bootstrap_strapi.py            # prints STRAPI_BASE_URL / STRAPI_API_TOKEN to add to .env
+```
+
+Add the printed values to `.env`, restart the app, then push a real
+translation into the demo entry it created:
+
+```bash
+curl -X POST localhost:8001/api/v1/integrations/cms/push -H "Content-Type: application/json" -d '{
+  "unit_id": "<a translation_unit_id from POST /api/v1/translations/>",
+  "provider": "strapi", "content_type": "translation-examples",
+  "entry_id": "<printed by the bootstrap script>", "field_name": "body"
+}'
+```
+
+Open **http://localhost:4321** and refresh — the pushed entry's card
+shows the CMS's live text plus, once something's landed, a "Provenance
+recorded" panel with the summary/agent/method/confidence and a link to
+the full W3C PROV record. No rebuild/redeploy step, which is the actual
+point of storing provenance on the CMS entry itself rather than only in
+this system.
+
+Or run the whole thing — including the push and reading the entry back
+from Strapi to confirm both the translated text and the `content_
+provenance` field actually landed — in one shot:
+
+```bash
+python scripts/bootstrap_strapi.py --verify   # needs the app running at localhost:8001
+```
+
+Note on the Docker image: Strapi has no official ready-to-run Docker Hub
+image, and the best-known community replacement (`naskio/strapi`) was
+found broken while building this integration ("Cannot find module
+'react'" during its internal build step, reproduced against several
+tags). `docker/strapi/Dockerfile` instead generates a real project via
+`create-strapi-app` at image-build time — see that file's comment for
+details. The automated test suite (`tests/test_cms_integration.py`) does
+**not** need any of this — it monkeypatches the `CMSIntegration` factory
+with an offline stub, same convention as the scorer/translation-backend
+tests.
+
 ## Running Tests
 
 Every test needs Postgres reachable — `docker-compose up -d postgres` first

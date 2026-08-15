@@ -120,6 +120,21 @@ class Settings:
     xliff_tool_name: str = os.getenv("XLIFF_TOOL_NAME", "AI Translation Provenance System")
     xliff_tool_version: str = os.getenv("XLIFF_TOOL_VERSION", "1.0.0")
 
+    # ── CMS Integration (app/core/integrations/) ─────────────────────────────
+    # Which provider is active — see app/core/integrations/factory.py.
+    # "strapi" is the only one implemented today; "directus"/"payload" are
+    # accepted values that fail loudly with what's missing, not silently.
+    cms_provider: str = os.getenv("CMS_PROVIDER", "strapi")
+    # Field name written on the CMS entry alongside the translated field,
+    # holding the full ProvenanceRecord (see app/core/cms_service.py).
+    cms_provenance_field: str = os.getenv("CMS_PROVENANCE_FIELD", "content_provenance")
+    # Strapi — same per-provider env var naming as the translation
+    # providers above (DEEPL_API_KEY, OPENAI_API_KEY, ...); future
+    # DIRECTUS_*/PAYLOAD_* vars will follow the same pattern once built.
+    strapi_base_url: str = os.getenv("STRAPI_BASE_URL", "")
+    strapi_api_token: str = os.getenv("STRAPI_API_TOKEN", "")
+    strapi_timeout_seconds: float = float(os.getenv("STRAPI_TIMEOUT_SECONDS", "15"))
+
     # ── CORS ──────────────────────────────────────────────────────────────────
     @property
     def cors_origins(self) -> List[str]:

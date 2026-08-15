@@ -867,7 +867,7 @@ reviewer.
 | `BarChart.tsx`, `DonutChart.tsx` | ✅ | Hand-rolled, dependency-free (div-width bars; SVG stroke-dasharray donut) — Analytics had zero charts before this, just numbers and a plain `<ul>` |
 | CSV import | ✅ | `DocumentFormat.CSV`, `_parse_csv_blocks()` — one `TranslationUnit` per row (not blank-line blocks like text/md), taken from an optional `source_column` (defaults to the first column). `DocumentsPage.tsx` accepts `.csv` alongside `.txt`/`.md` |
 | Authenticated crawl/fetch | ✅ | `crawl_site()`/`fetch_and_render()` gained optional `auth_username`/`auth_password` (HTTP Basic Auth) and `auth_cookie` (raw Cookie header), applied via a Playwright `BrowserContext` built once per crawl/fetch. **Anonymous remains the default and is unchanged** — every field omitted reproduces the exact prior behavior. Not a login-form-driving bot: "bring your own already-authenticated session," the standard pattern for this. Deliberately never persisted — accepted on `AuditRunRequest`/`GET /pages/render`'s query params, never written to the `SiteAudit` DB model |
-| CMS push/pull content API | 📋 | Explicitly out of scope for this pass ("later") — logged under v1.2 below, not built |
+| CMS push/pull content API | ✅ | Built in Phase 20 below (Strapi) |
 
 **Bug found via live testing, not code review:** the model-discovery scope
 above started as "Ollama/LMStudio/vLLM only" — corrected mid-implementation
@@ -903,6 +903,47 @@ just running the app, but active backend development should run
 `uvicorn app.main:app --reload --port 8001` directly (per this repo's own
 README) rather than assuming the Docker container picks up edits.
 
+### JSON Provenance Export/Import (Phase 19)
+
+The JSON peer of XLIFF export/import (Phase 2) — same self-contained-
+document idea (translation text + the complete embedded provenance chain,
+single-unit or whole-project), same `ingest_events` ledger, but JSON
+instead of XML. Distinct from the pre-existing `GET /provenance/{id}/
+prov-json`, which only ever serialized the bare PROV bundle (no source/
+target text, no deployments, no version history, no import counterpart).
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| JSON document build/parse (`app/provenance_json/json_service.py`) | ✅ | `model.model_dump(mode="json")` does the real serialization — no XLIFF-style note-based key=value packing needed. Snake_case throughout, matching every other JSON response in this API |
+| `GET /api/v1/json/{unit_id}`, `/project/{project_id}`, `/{unit_id}/preview` | ✅ | `app/api/json_export.py` — no caching table (unlike `xliff_documents`); built fresh from current DB state every call, since JSON serialization has no XML-pretty-print cost to amortize |
+| Lenient import of plain/minimal JSON (`app/provenance_json/json_import.py`) | ✅ | Accepts this system's own extensive shape, a bare `{"units":[...]}` wrapper, a bare array, or a single bare unit object; alias field names (`sourceText`/`source`/`text` etc.) tolerated. Provenance is always rebuilt fresh server-side — importing a minimal file and exporting it back out is how a plain file becomes "the extensive version with the provenance metadata" |
+| `POST /api/v1/json/import`, `GET /api/v1/json/ingest-log` | ✅ | `app/api/json_import.py` — the ingest-log route is a passthrough to the same ledger XLIFF's `/api/v1/xliff/ingest-log` already exposes (`IngestEvent.format` already distinguishes `"xliff"`/`"json"`), not a second ledger |
+
+16 new tests (`tests/test_json_export.py`), full suite 177/177 passing.
+
+### CMS Integration API — Strapi (Phase 20)
+
+The "CMS push/pull content API" flagged since Phase 18 (see below) —
+pushes a finished translation + its full provenance record into an
+external CMS entry, and pulls a field's current value back out to seed a
+new translation. Provider-abstracted the same way translation backends
+are (`TranslationBackend` / `get_translation_backend`): Strapi is the only
+working provider, Directus and Payload — the strongest other FOSS,
+REST-based, natively multilingual CMSs — are prepared for but not built.
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| `CMSIntegration` ABC + `get_cms_integration()` factory | ✅ | `app/core/integrations/base.py` / `factory.py` — `locale` optional on both push/pull. Selecting `directus`/`payload` fails loudly with what's missing (not implemented yet) rather than silently falling through to Strapi |
+| `StrapiIntegration` | ✅ | `app/core/integrations/strapi.py` — raw `httpx`, no SDK. Handles both Strapi v4 (`data.attributes`-nested) and v5 (flat) response shapes; `?locale=` query param |
+| `push_translation_to_cms` / `pull_source_from_cms` (`app/core/cms_service.py`) | ✅ | Push writes the translated field + a `content_provenance` field (the full `ProvenanceRecord`) in one request, then records a `context=cms` `DeploymentRecord` and rebuilds the unit's provenance to include it — same pattern `translations.record_deployment` already uses. Pull only fetches text — deliberately does not create a `TranslationUnit` itself; hand the result to `POST /api/v1/translations` |
+| `DeploymentContext.CMS` | ✅ | Plain string column, no migration needed |
+| `POST /api/v1/integrations/cms/push`, `GET /pull`, `GET /status` | ✅ | `app/api/integrations.py` |
+| Local Strapi for testing (`docker-compose --profile cms`) + `scripts/bootstrap_strapi.py` | ✅ | Verified live, not just written: built the image, booted a real Strapi 5.52.0, ran the bootstrap script end-to-end (admin registration, content-type creation via the Content-Type Builder API, API token, demo entry), then `--verify` created a real translation through this app, pushed it via `POST /api/v1/integrations/cms/push`, and read the Strapi entry back directly to confirm both the translated text and the full `content_provenance` field landed correctly. Caught and fixed two real bugs this way: the Content-Type Builder payload shape (`singularName`/`pluralName`/`displayName` go directly on `contentType`, not nested under `info` as in Strapi v4) and the API token response field (`accessKey`, not `accessToken`) |
+
+9 new tests (`tests/test_cms_integration.py`, offline-stub convention —
+no live Strapi needed for the suite), full suite 177/177 passing (Phase
+19 + 20 tests are additive to the same run).
+
 ---
 
 ## v1.2 — Suggested (Not Yet Built)
@@ -918,7 +959,9 @@ _These features were discussed in the design phase but not yet implemented._
 | Transifex API connector | 💡 | |
 | SDL Trados plugin concept | 💡 | CAT tool provenance injection |
 | Non-cooperative review overlay (browser extension / rewriting proxy) | 💡 | For pages we don't control or that block iframing — see Review Environment above |
-| CMS push/pull content API | 💡 | Explicitly flagged during Phase 18 as a near-term need, not built yet: an API for a CMS (WordPress, Contentful, Sanity, ...) to pull translated content out of this system and push source content in, keeping provenance on both legs — distinct from the TMS connectors above (a CMS publishes content, a TMS manages the translation workflow around it; this system currently has neither a push endpoint for a CMS to call nor a webhook to notify one when a redrive changes live content) |
+| CMS push/pull content API (Strapi) | ✅ | Built in Phase 20 — see the built-features section above. Distinct from the TMS connectors above (a CMS publishes content, a TMS manages the translation workflow around it) |
+| Directus / Payload CMS connectors | 💡 | `CMSIntegration`/`get_cms_integration()` (Phase 20) already shape the provider contract for these — see `app/core/integrations/factory.py`'s docstrings on each for exactly what a real implementation needs (Directus: no universal `locale` param, needs a translations-junction-collection mapping; Payload: a near-mechanical port of `StrapiIntegration`) |
+| WordPress / Contentful / Sanity connectors | 💡 | Not evaluated against the `CMSIntegration` shape yet — WordPress's multilingual support in particular is plugin-bolted (Polylang/WPML), not core, unlike Strapi/Directus/Payload |
 
 ### AI Act & Regulatory Compliance
 

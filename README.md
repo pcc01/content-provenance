@@ -20,8 +20,8 @@ This system answers the key provenance questions for every piece of translated c
 | **By whom / what?** | `prov:Agent` — AI model + version, or named human translator |
 | **How?** | `TranslationMethod` — AI, Human, or Hybrid (AI + human post-edit) |
 | **When?** | Activity timestamps — translated_at, reviewed_at, deployed_at |
-| **Where is it used?** | `DeploymentRecord` — Website, Banner Ad, Marketing Campaign, Email, Mobile App, Social Media, Print, API |
-| **What standard proves it?** | XLIFF 2.0 file with embedded W3C PROV bundle + PROV-JSON / PROV-N exports |
+| **Where is it used?** | `DeploymentRecord` — Website, Banner Ad, Marketing Campaign, Email, Mobile App, Social Media, Print, API, CMS |
+| **What standard proves it?** | XLIFF 2.0 file or JSON document, either one carrying the full embedded W3C PROV bundle, + PROV-JSON / PROV-N exports |
 
 Beyond tracking provenance, the system runs a **threshold-quality redrive
 loop**: score every translation (deterministic checks, falling back to a
@@ -274,6 +274,10 @@ docker-compose --profile search up
 
 # Full stack (Qdrant + Elasticsearch too)
 docker-compose --profile full up
+
+# With a local Strapi instance for testing the CMS integration
+docker-compose --profile cms up -d --build strapi
+python scripts/bootstrap_strapi.py   # sets it up end-to-end — see CONTRIBUTING.md
 ```
 
 ### Run the review environment (Review Shell)
@@ -425,6 +429,25 @@ leaving the system" record.
 | `GET`  | `/api/v1/xliff/project/{id}` | Export full project as a single XLIFF document — API-only; no project-management UI exists yet to create/browse a `TranslationProject` to export |
 | `POST` | `/api/v1/xliff/import` | Ingest an external XLIFF 2.0 document (multipart `file` + `source_system`) — creates/updates units and their version history; synthesizes minimal provenance if the file carries none |
 | `GET`  | `/api/v1/xliff/ingest-log` | The entering/leaving ledger — the Import page's "Ingest ledger" table |
+
+### JSON Export & Import
+
+The JSON peer of XLIFF export/import above — same idea (translation text +
+the complete embedded provenance chain, single-unit or whole-project), same
+shared ingest ledger (`IngestEvent.format` distinguishes `"xliff"` from
+`"json"`; both show up in either ledger endpoint), but JSON instead of XML,
+and no note-based key=value packing — every field is just a real JSON key.
+Distinct from `GET /provenance/{id}/prov-json` above, which only ever
+serializes the bare PROV bundle (no source/target text, no deployments, no
+version history, no import counterpart).
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET`  | `/api/v1/json/{id}` | Download a JSON provenance document (source/target text, full embedded provenance, deployments, version history) |
+| `GET`  | `/api/v1/json/{id}/preview` | Preview the same document without triggering a download |
+| `GET`  | `/api/v1/json/project/{id}` | Export a full project as a single JSON document |
+| `POST` | `/api/v1/json/import` | Ingest a JSON document (multipart `file` + `source_system`) — creates/updates units and their version history. Lenient: accepts this system's own extensive export, a bare `{"units":[...]}` array, or a single bare unit object, with a few common field-name aliases (`sourceText`/`source`/`text`, etc.). Provenance is always rebuilt fresh server-side rather than trusted from the file, so importing a minimal file and exporting it back is how a plain JSON file becomes the fully provenance-enriched version |
+| `GET`  | `/api/v1/json/ingest-log` | Same ledger as `/api/v1/xliff/ingest-log`, exposed under this prefix too for discoverability |
 
 ### Threshold-Quality Redrive
 
@@ -697,6 +720,33 @@ credentials. In the Review Shell, both the Audit tab and the Review tab's
 "Any URL" mode collapse this behind an "Advanced: (crawl/fetch) as a
 logged-in user" `<details>` section, off by default.
 
+### CMS Integration (Strapi)
+
+Pushes a finished translation — plus its full W3C PROV provenance record —
+directly into a CMS entry, and pulls a field's current value back out to
+seed a new translation. Provider-abstracted the same way the translation
+backends above are (`CMSIntegration` + `get_cms_integration()`, mirroring
+`TranslationBackend`/`get_translation_backend()`): **Strapi** is the only
+working provider today; **Directus** and **Payload** — the strongest other
+FOSS, REST-based, natively multilingual CMSs — are prepared for in the
+provider contract but not built yet (selecting either fails with a clear
+"not implemented yet" rather than silently falling through to Strapi).
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/v1/integrations/cms/push` | Write a translation's target text **and** its full provenance record into a CMS entry in one call (`unit_id`, `provider`, `content_type`, `entry_id`, `field_name`, optional `locale`, optional `provenance_field`) — records a `context=cms` deployment and rebuilds the unit's provenance to include it |
+| `GET`  | `/api/v1/integrations/cms/pull` | Fetch a field's current value from a CMS entry (`provider`, `content_type`, `entry_id`, `field_name`, optional `locale`) — returns `source_text`/`source_id` to hand to `POST /api/v1/translations`; deliberately doesn't create a translation itself |
+| `GET`  | `/api/v1/integrations/cms/status?provider=strapi` | Whether a provider is configured (never echoes the token back) |
+
+Configure via `.env` — `CMS_PROVIDER`, `CMS_PROVENANCE_FIELD` (the CMS field
+name the provenance record is written to, default `content_provenance`),
+`STRAPI_BASE_URL`, `STRAPI_API_TOKEN` (a full-access token from Strapi's
+admin panel under Settings → API Tokens). For local testing without a real
+Strapi account, `docker-compose --profile cms up -d --build strapi` +
+`python scripts/bootstrap_strapi.py` boot a real local Strapi instance and
+set it up completely from the command line — see CONTRIBUTING.md's
+"Testing the Strapi Integration" section.
+
 ---
 
 ## Standards Compliance
@@ -880,6 +930,9 @@ content-provenance/
 │   │   ├── search.py               # Haystack semantic/BM25 search
 │   │   ├── xliff_export.py         # XLIFF 2.0 download and preview ("leaving" the system)
 │   │   ├── xliff_import.py         # XLIFF 2.0 ingestion + the entering/leaving ledger ("entering")
+│   │   ├── json_export.py          # JSON provenance document download and preview — the JSON peer of xliff_export.py
+│   │   ├── json_import.py          # JSON provenance document ingestion — lenient about plain/minimal input shapes
+│   │   ├── integrations.py         # CMS push/pull (Strapi) — app/core/cms_service.py
 │   │   ├── redrive.py              # Threshold-quality redrive runs, preview, queue, human-in-the-loop approve/reject
 │   │   ├── images.py               # Image asset upload, context-linking, localization
 │   │   ├── documents.py            # Phase 7a: text/Markdown document import + segments
@@ -904,6 +957,8 @@ content-provenance/
 │   │   │   └── retrieval.py        # Hybrid vector+graph style/glossary/exemplar context retrieval, pre-translation
 │   │   ├── vendors/                # Phase 14: vendor scorecard aggregation
 │   │   ├── consistency/            # Phase 14: term-drift / term-inconsistency / tone-spread checker
+│   │   ├── integrations/           # CMS provider abstraction — base.py (CMSIntegration ABC), strapi.py, factory.py (Directus/Payload prepared for, not built)
+│   │   ├── cms_service.py          # CMS push/pull orchestration — provenance + DeploymentRecord bookkeeping around the integration call
 │   │   ├── scoring/                # Quality scoring — deterministic + pluggable LLM-judge + automatic metrics
 │   │   │   ├── deterministic.py    # Free floor-checks (ported from peripateticware's QE scorer)
 │   │   │   ├── mqm_types.py        # Phase 15: official 44-item MQM-Core error taxonomy (7 dimensions)
@@ -938,6 +993,9 @@ content-provenance/
 │   ├── xliff/
 │   │   ├── xliff_service.py        # XLIFF 2.0 generation/parsing with full embedded PROV + version history
 │   │   └── xliff_import.py         # Import logic (create/update units from a parsed XLIFF doc)
+│   ├── provenance_json/
+│   │   ├── json_service.py         # JSON provenance document build/parse — the JSON peer of app/xliff/xliff_service.py
+│   │   └── json_import.py          # Import logic (create/update units from a parsed JSON doc)
 │   └── static/branding/logo.png    # Phase 12: consulting-firm logo used in the PDF audit report
 ├── frontend/                       # Review Shell — Vite + React + TypeScript, segmented into Content Creation / Quality Review / Audit
 │   ├── src/
@@ -981,11 +1039,17 @@ content-provenance/
 │   ├── test_vendors.py / test_consistency.py       # Phase 14: vendor scorecard, cross-document consistency
 │   ├── test_mqm.py / test_automatic_metrics.py     # Phase 15: MQM taxonomy, hard_fail, METEOR/COMET-Kiwi
 │   ├── test_multiprovider.py       # Phase 16: provider-registry graceful degradation, standalone evaluate endpoint
-│   └── test_notifications.py
+│   ├── test_notifications.py
+│   ├── test_json_export.py         # JSON provenance document export/import, incl. lenient minimal-input import
+│   └── test_cms_integration.py     # CMS push/pull API — offline-stubbed CMSIntegration, no live Strapi needed
+├── docker/
+│   └── strapi/Dockerfile           # Generates a real Strapi project via create-strapi-app at build time — see CONTRIBUTING.md
+├── scripts/
+│   └── bootstrap_strapi.py         # Sets up the local Strapi test instance end-to-end from the command line — see CONTRIBUTING.md
 ├── .gitignore
 ├── CONTRIBUTING.md
 ├── Dockerfile
-├── docker-compose.yml              # dev / search / full profiles — host ports offset (8001/5433) to avoid collisions
+├── docker-compose.yml              # dev / search / full / cms profiles — host ports offset (8001/5433) to avoid collisions
 ├── LICENSE                         # MIT
 ├── Makefile
 ├── pyproject.toml                  # packaging + pytest + ruff config

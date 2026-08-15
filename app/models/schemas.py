@@ -27,6 +27,10 @@ class DeploymentContext(str, Enum):
     SOCIAL_MEDIA = "social_media"
     PRINT = "print"
     API = "api"
+    # A CMS integration push (app/core/cms_service.py) — distinct from the
+    # generic API context above so a deployment's provenance trail makes
+    # clear it landed via the CMS integration, not an arbitrary API caller.
+    CMS = "cms"
     OTHER = "other"
 
 
@@ -910,3 +914,48 @@ class CheckSourceResponse(BaseModel):
     reasons: List[str] = Field(default_factory=list)
     style_guide_id: Optional[str] = None
     needs_review: bool = False
+
+
+# ─── CMS Integration (app/core/cms_service.py, app/core/integrations/) ──────
+# ROADMAP.md's "CMS push/pull content API" — Strapi is the first working
+# provider; the request/response shape is provider-agnostic (Directus/
+# Payload are prepared for, see app/core/integrations/factory.py) so this
+# doesn't need to change when a second provider ships.
+
+class CMSPushRequest(BaseModel):
+    unit_id: str
+    provider: str = "strapi"
+    content_type: str = Field(..., example="articles")
+    entry_id: str = Field(..., example="42")
+    field_name: str = Field(..., example="body")
+    # Which locale-variant of the entry to write — optional because not
+    # every CMS project uses locale-per-entry (some map one Strapi entry
+    # per language already); see CMSIntegration.push_field's docstring for
+    # how each provider actually uses this.
+    locale: Optional[str] = Field(None, example="fr")
+    # Defaults to settings.cms_provenance_field when omitted.
+    provenance_field: Optional[str] = None
+
+
+class CMSPushResponse(BaseModel):
+    deployment_id: str
+    provider: str
+    content_type: str
+    entry_id: str
+    field_name: str
+    locale: Optional[str] = None
+    provenance_field: str
+    cms_response: Dict[str, Any] = Field(default_factory=dict)
+
+
+class CMSPullResponse(BaseModel):
+    provider: str
+    content_type: str
+    entry_id: str
+    field_name: str
+    locale: Optional[str] = None
+    source_text: str
+    # Hand this to POST /api/v1/translations as source_text's companion —
+    # pulling and deciding how to translate are separate concerns (see
+    # cms_service.pull_source_from_cms's docstring).
+    source_id: str

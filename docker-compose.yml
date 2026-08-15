@@ -6,6 +6,10 @@ version: "3.9"
 #   default  — app + PostgreSQL (mock translation)
 #   search   — + Qdrant vector store
 #   full     — + Qdrant + Elasticsearch
+#   cms      — + a local Strapi instance, for testing the CMS integration
+#              (app/core/integrations/strapi.py) without a real Strapi
+#              account. See CONTRIBUTING.md's "Testing the Strapi
+#              integration" section for the one-time bootstrap step.
 #
 # Quick start (development):
 #   docker-compose up
@@ -15,6 +19,10 @@ version: "3.9"
 #
 # Full stack (adds Elasticsearch too):
 #   docker-compose --profile full up
+#
+# With a local Strapi to test the CMS integration against:
+#   docker-compose --profile cms up -d strapi
+#   python scripts/bootstrap_strapi.py
 #
 # Host ports are deliberately offset from the obvious defaults (app 8001 not
 # 8000, postgres 5433 not 5432) so this stack can run alongside another
@@ -101,6 +109,32 @@ services:
       timeout: 5s
       retries: 5
 
+  # ── Strapi CMS (profile: cms — for testing the CMS integration) ────────────────
+  # Built from docker/strapi/Dockerfile — see that file for why (no
+  # official Strapi image exists, and the best-known community
+  # replacement turned out to be broken). First `docker-compose --profile
+  # cms up -d strapi` takes a few minutes (building the image runs a real
+  # `npm install`); after that it's a normal fast container start. The
+  # whole /opt/app directory is volume-persisted so the admin account,
+  # content-types, and sqlite data survive container restarts.
+  strapi:
+    build:
+      context: ./docker/strapi
+    profiles: ["cms"]
+    ports:
+      - "1337:1337"
+    environment:
+      - DATABASE_CLIENT=sqlite
+      - DATABASE_FILENAME=.tmp/data.db
+      - JWT_SECRET=${STRAPI_JWT_SECRET:-dev-jwt-secret-change-me}
+      - ADMIN_JWT_SECRET=${STRAPI_ADMIN_JWT_SECRET:-dev-admin-jwt-secret-change-me}
+      - APP_KEYS=${STRAPI_APP_KEYS:-devkey1,devkey2,devkey3,devkey4}
+      - API_TOKEN_SALT=${STRAPI_API_TOKEN_SALT:-dev-api-token-salt-change-me}
+      - TRANSFER_TOKEN_SALT=${STRAPI_TRANSFER_TOKEN_SALT:-dev-transfer-token-salt-change-me}
+    volumes:
+      - strapi_data:/opt/app
+    restart: unless-stopped
+
   # ── Elasticsearch (profile: full) ─────────────────────────────────────────────
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.13.0
@@ -126,3 +160,4 @@ volumes:
   es_data:
   model_cache:
   image_storage:
+  strapi_data:

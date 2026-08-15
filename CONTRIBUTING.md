@@ -24,14 +24,26 @@ separate Vite+React app under `frontend/`.
 
 The CMS integration (`app/core/integrations/strapi.py`, `POST /api/v1/
 integrations/cms/push`) needs a real Strapi instance to test against
-end-to-end — `docker-compose --profile cms` runs one locally, and
-`scripts/bootstrap_strapi.py` sets it up completely from the command line
-(admin account, a demo content type, an API token, one demo entry — no
-clicking through Strapi's admin UI required):
+end-to-end. `docker-compose --profile cms` runs two containers, each on
+its own port, deliberately separate from `app`'s (8001) so nothing here
+ever contends with it the way a docker `app` container and a local
+`uvicorn --reload` process already can:
+
+- **`strapi`** (port 1337) — the CMS itself.
+- **`demo-site`** (port 4321) — a plain nginx-served static page
+  (`demo/strapi-site/index.html`) standing in for an independent,
+  Strapi-driven website. It reads its copy straight from Strapi's public
+  REST API — no token in the page, just the demo content type's public
+  `find`/`findOne` permissions, granted automatically by the bootstrap
+  script below.
+
+`scripts/bootstrap_strapi.py` sets Strapi up completely from the command
+line (admin account, a demo content type, an API token, one demo entry —
+no clicking through Strapi's admin UI required):
 
 ```bash
-docker-compose --profile cms up -d --build strapi   # first run builds a real Strapi project — a few minutes
-python scripts/bootstrap_strapi.py                   # prints STRAPI_BASE_URL / STRAPI_API_TOKEN to add to .env
+docker-compose --profile cms up -d --build   # first run builds a real Strapi project — a few minutes
+python scripts/bootstrap_strapi.py            # prints STRAPI_BASE_URL / STRAPI_API_TOKEN to add to .env
 ```
 
 Add the printed values to `.env`, restart the app, then push a real
@@ -45,16 +57,12 @@ curl -X POST localhost:8001/api/v1/integrations/cms/push -H "Content-Type: appli
 }'
 ```
 
-**Sample website** (`demo/strapi-site/index.html`, served by the app at
-`http://localhost:8001/demo/`): a plain page that reads its copy straight
-from Strapi's public REST API — no token in the page, just the demo
-content type's public `find`/`findOne` permissions (granted automatically
-by the bootstrap script). Every entry it lists shows the CMS's live text
-plus, once you've pushed at least once, a "Provenance recorded" panel
-with the summary/agent/method/confidence and a link to the full W3C PROV
-record. Push a translation as above, then refresh the page — it updates
-live, no rebuild/redeploy step, which is the actual point of storing
-provenance on the CMS entry itself rather than only in this system.
+Open **http://localhost:4321** and refresh — the pushed entry's card
+shows the CMS's live text plus, once something's landed, a "Provenance
+recorded" panel with the summary/agent/method/confidence and a link to
+the full W3C PROV record. No rebuild/redeploy step, which is the actual
+point of storing provenance on the CMS entry itself rather than only in
+this system.
 
 Or run the whole thing — including the push and reading the entry back
 from Strapi to confirm both the translated text and the `content_

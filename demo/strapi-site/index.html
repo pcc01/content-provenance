@@ -115,14 +115,15 @@
   <div id="entries"></div>
 </main>
 
-<footer>demo/strapi-site/index.html — served by content-provenance, reads directly from Strapi's public REST API.</footer>
+<footer>demo/strapi-site/index.html — a standalone site (its own container/port), reads directly from Strapi's public REST API.</footer>
 
 <script>
   const $ = (id) => document.getElementById(id);
 
-  // Same-origin default: this page is served by the content-provenance app
-  // itself, so its own API lives at the page's own origin unless overridden.
-  $('appUrl').value = window.location.origin.includes('1337') ? 'http://localhost:8001' : window.location.origin;
+  // This page is served standalone (its own container/port — see
+  // docker-compose.yml's demo-site service), never by the content-provenance
+  // app itself, so there's no same-origin case to detect here.
+  $('appUrl').value = 'http://localhost:8001';
 
   const CONTENT_TYPE = 'translation-examples';
 

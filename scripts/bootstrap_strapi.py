@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """
-Bootstrap a local Strapi instance (docker-compose --profile cms up -d
-strapi) into a working example for testing this app's CMS integration
+Bootstrap a local Strapi instance (docker-compose --profile cms up -d)
+into a working example for testing this app's CMS integration
 (app/core/integrations/strapi.py) end-to-end, with no manual clicking
 through Strapi's admin UI required:
 
@@ -10,9 +10,13 @@ through Strapi's admin UI required:
   2. Register the first admin account (or log in, if one already exists).
   3. Create a demo "translation-example" content type via Strapi's
      Content-Type Builder API (title, body, content_provenance fields).
-  4. Create a full-access API token.
-  5. Create one demo entry in Strapi.
-  6. Print the exact .env lines to set (STRAPI_BASE_URL/STRAPI_API_TOKEN)
+  4. Grant that content type public find/findOne access, so the sample
+     website (demo/strapi-site/, served standalone on its own port by the
+     "cms" profile's demo-site container — http://localhost:4321) can
+     read it with no token embedded in browser-shipped code.
+  5. Create a full-access API token (for THIS app's own writes).
+  6. Create one demo entry in Strapi.
+  7. Print the exact .env lines to set (STRAPI_BASE_URL/STRAPI_API_TOKEN)
      and the content_type/entry_id/field_name to use with
      POST /api/v1/integrations/cms/push.
 
@@ -263,6 +267,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--strapi-url", default="http://localhost:1337")
     parser.add_argument("--app-url", default="http://localhost:8001", help="This app's own base URL (for --verify).")
+    parser.add_argument("--demo-site-url", default="http://localhost:4321", help="The standalone demo-site container's URL.")
     parser.add_argument("--admin-email", default="admin@content-provenance.local")
     parser.add_argument("--admin-password", default="Bootstrap123!Strapi")
     parser.add_argument("--timeout", type=float, default=120.0, help="Seconds to wait for Strapi to boot.")
@@ -290,7 +295,7 @@ def main() -> None:
         f'{{"unit_id": "...", "content_type": "{CONTENT_TYPE_PLURAL}", '
         f'"entry_id": "{entry_id}", "field_name": "{DEMO_FIELD}"}}'
     )
-    log(f"Sample website (reads {CONTENT_TYPE_PLURAL} straight from Strapi, no token needed): {args.app_url}/demo/")
+    log(f"Sample website (reads {CONTENT_TYPE_PLURAL} straight from Strapi, no token needed): {args.demo_site_url}")
 
     if args.verify:
         print()

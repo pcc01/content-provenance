@@ -275,8 +275,9 @@ docker-compose --profile search up
 # Full stack (Qdrant + Elasticsearch too)
 docker-compose --profile full up
 
-# With a local Strapi instance for testing the CMS integration
-docker-compose --profile cms up -d --build strapi
+# With a local Strapi instance + sample website (port 4321) for testing
+# the CMS integration — each its own container/port, no contention with `app`
+docker-compose --profile cms up -d --build
 python scripts/bootstrap_strapi.py   # sets it up end-to-end — see CONTRIBUTING.md
 ```
 
@@ -742,14 +743,16 @@ Configure via `.env` — `CMS_PROVIDER`, `CMS_PROVENANCE_FIELD` (the CMS field
 name the provenance record is written to, default `content_provenance`),
 `STRAPI_BASE_URL`, `STRAPI_API_TOKEN` (a full-access token from Strapi's
 admin panel under Settings → API Tokens). For local testing without a real
-Strapi account, `docker-compose --profile cms up -d --build strapi` +
-`python scripts/bootstrap_strapi.py` boot a real local Strapi instance and
-set it up completely from the command line — see CONTRIBUTING.md's
-"Testing the Strapi Integration" section. That script also grants the demo
-content type public read access, which `demo/strapi-site/index.html`
-(served at `http://localhost:8001/demo/`) uses to render a sample
-Strapi-backed website — push a translation, refresh the page, watch the
-CMS entry's live text and provenance panel update with no rebuild step.
+Strapi account, `docker-compose --profile cms up -d --build` + `python
+scripts/bootstrap_strapi.py` boot a real local Strapi instance (port 1337)
+and set it up completely from the command line — see CONTRIBUTING.md's
+"Testing the Strapi Integration" section. The same `cms` profile also
+starts a sample Strapi-backed website (`demo/strapi-site/index.html`,
+served standalone at `http://localhost:4321` — its own container/port, not
+a route on this app, so it's never contending with `app`'s own port) that
+the bootstrap script grants public read access to — push a translation,
+refresh the page, watch the CMS entry's live text and provenance panel
+update with no rebuild step.
 
 ---
 
@@ -1051,7 +1054,7 @@ content-provenance/
 ├── scripts/
 │   └── bootstrap_strapi.py         # Sets up the local Strapi test instance end-to-end from the command line — see CONTRIBUTING.md
 ├── demo/
-│   └── strapi-site/index.html      # Sample Strapi-backed website — served at /demo/, reads content_provenance straight from Strapi's public API
+│   └── strapi-site/index.html      # Sample Strapi-backed website — standalone nginx container, port 4321, reads content_provenance straight from Strapi's public API
 ├── .gitignore
 ├── CONTRIBUTING.md
 ├── Dockerfile

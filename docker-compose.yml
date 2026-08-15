@@ -6,10 +6,12 @@ version: "3.9"
 #   default  — app + PostgreSQL (mock translation)
 #   search   — + Qdrant vector store
 #   full     — + Qdrant + Elasticsearch
-#   cms      — + a local Strapi instance, for testing the CMS integration
-#              (app/core/integrations/strapi.py) without a real Strapi
-#              account. See CONTRIBUTING.md's "Testing the Strapi
-#              integration" section for the one-time bootstrap step.
+#   cms      — + a local Strapi instance and a sample Strapi-backed website,
+#              for testing the CMS integration (app/core/integrations/
+#              strapi.py) without a real Strapi account. Each on its own
+#              port so nothing here ever contends with `app`'s. See
+#              CONTRIBUTING.md's "Testing the Strapi integration" section
+#              for the one-time bootstrap step.
 #
 # Quick start (development):
 #   docker-compose up
@@ -20,8 +22,8 @@ version: "3.9"
 # Full stack (adds Elasticsearch too):
 #   docker-compose --profile full up
 #
-# With a local Strapi to test the CMS integration against:
-#   docker-compose --profile cms up -d strapi
+# With a local Strapi + sample website to test the CMS integration against:
+#   docker-compose --profile cms up -d
 #   python scripts/bootstrap_strapi.py
 #
 # Host ports are deliberately offset from the obvious defaults (app 8001 not
@@ -133,6 +135,22 @@ services:
       - TRANSFER_TOKEN_SALT=${STRAPI_TRANSFER_TOKEN_SALT:-dev-transfer-token-salt-change-me}
     volumes:
       - strapi_data:/opt/app
+    restart: unless-stopped
+
+  # ── Sample Strapi-backed website (profile: cms) ─────────────────────────────
+  # Deliberately a SEPARATE container on its own port, not a route on the
+  # main `app` service — it represents an independent, Strapi-driven site,
+  # and sharing `app`'s port would put it in the same contention `app`
+  # already has with a locally-run `uvicorn --reload` process. Just static
+  # files (demo/strapi-site/) behind nginx; the page itself talks to Strapi
+  # directly (its public REST API, no token) from the browser.
+  demo-site:
+    image: nginx:alpine
+    profiles: ["cms"]
+    ports:
+      - "4321:80"
+    volumes:
+      - ./demo/strapi-site:/usr/share/nginx/html:ro
     restart: unless-stopped
 
   # ── Elasticsearch (profile: full) ─────────────────────────────────────────────

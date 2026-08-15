@@ -281,6 +281,54 @@ docker-compose --profile cms up -d --build
 python scripts/bootstrap_strapi.py   # sets it up end-to-end — see CONTRIBUTING.md
 ```
 
+### Set up the CMS integration (Strapi)
+
+The one-time setup for pushing translations into a CMS (see
+[CMS Integration (Strapi)](#cms-integration-strapi) below for the API
+itself). Using the local test instance rather than a real Strapi account:
+
+1. **Start Strapi + the sample website** — two separate containers, ports
+   1337 and 4321, neither contending with `app`'s own port 8001:
+   ```bash
+   docker-compose --profile cms up -d --build
+   ```
+   First run builds a real Strapi project (`docker/strapi/Dockerfile`) —
+   a few minutes. After that it's a normal fast container start.
+
+2. **Bootstrap it from the command line** — admin account, a demo content
+   type (`title`/`body`/`content_provenance` fields), public read access
+   on that content type, an API token, and one demo entry. No clicking
+   through Strapi's admin UI:
+   ```bash
+   python scripts/bootstrap_strapi.py
+   ```
+   It prints `STRAPI_BASE_URL` and `STRAPI_API_TOKEN` — add both to `.env`
+   (along with `CMS_PROVIDER=strapi`, already the default) and restart the
+   app.
+
+3. **Confirm it's wired up:**
+   ```bash
+   curl "localhost:8001/api/v1/integrations/cms/status?provider=strapi"
+   # {"provider":"strapi","configured":true,"base_url":"http://localhost:1337"}
+   ```
+
+4. **Push a translation and watch it land** — create one via
+   `POST /api/v1/translations/` (or reuse an existing `translation_unit_id`),
+   then:
+   ```bash
+   curl -X POST localhost:8001/api/v1/integrations/cms/push -H "Content-Type: application/json" -d '{
+     "unit_id": "<translation_unit_id>", "provider": "strapi",
+     "content_type": "translation-examples",
+     "entry_id": "<printed by the bootstrap script>", "field_name": "body"
+   }'
+   ```
+   Open **http://localhost:4321** and refresh — the entry's card shows the
+   pushed text plus a "Provenance recorded" panel, no rebuild step.
+
+Re-running `scripts/bootstrap_strapi.py` any time is safe (idempotent) —
+useful for a fresh API token or another demo entry. `--verify` does steps
+3–4 itself and asserts the result, for a single-command sanity check.
+
 ### Run the review environment (Review Shell)
 
 The review UI is a separate Vite+React app, not served as a static file from

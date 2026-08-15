@@ -119,6 +119,17 @@ REVIEW_SDK_DIST = Path("frontend/review-sdk/dist")
 if REVIEW_SDK_DIST.exists():
     app.mount("/sdk-dist", StaticFiles(directory=REVIEW_SDK_DIST), name="review-sdk-dist")
 
+# demo/strapi-site/index.html — a self-contained sample "storefront" that
+# reads its copy straight from Strapi's public REST API (no token needed
+# client-side) and renders whatever content-provenance has pushed there,
+# provenance panel included. See CONTRIBUTING.md's "Testing the Strapi
+# Integration" section. html=True serves index.html for the bare /demo/
+# path, matching how the other two static mounts behave.
+DEMO_STRAPI_SITE = Path("demo/strapi-site")
+
+if DEMO_STRAPI_SITE.exists():
+    app.mount("/demo", StaticFiles(directory=DEMO_STRAPI_SITE, html=True), name="demo-strapi-site")
+
 
 @app.get("/", response_class=HTMLResponse)
 async def root():

@@ -45,6 +45,17 @@ curl -X POST localhost:8001/api/v1/integrations/cms/push -H "Content-Type: appli
 }'
 ```
 
+**Sample website** (`demo/strapi-site/index.html`, served by the app at
+`http://localhost:8001/demo/`): a plain page that reads its copy straight
+from Strapi's public REST API — no token in the page, just the demo
+content type's public `find`/`findOne` permissions (granted automatically
+by the bootstrap script). Every entry it lists shows the CMS's live text
+plus, once you've pushed at least once, a "Provenance recorded" panel
+with the summary/agent/method/confidence and a link to the full W3C PROV
+record. Push a translation as above, then refresh the page — it updates
+live, no rebuild/redeploy step, which is the actual point of storing
+provenance on the CMS entry itself rather than only in this system.
+
 Or run the whole thing — including the push and reading the entry back
 from Strapi to confirm both the translated text and the `content_
 provenance` field actually landed — in one shot:

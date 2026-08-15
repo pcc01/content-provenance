@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Strapi Storefront — content-provenance demo</title>
+<style>
+  :root {
+    --bg: #f6f5f2; --card: #ffffff; --ink: #1c1b19; --muted: #6b6862;
+    --accent: #b5541a; --line: #e4e1da; --ok: #2f7a4f; --warn: #a13a2f;
+    --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+    background: var(--bg); color: var(--ink); line-height: 1.5;
+  }
+  header {
+    background: var(--ink); color: #f2efe9; padding: 1.25rem 1.5rem;
+  }
+  header h1 { margin: 0; font-size: 1.35rem; font-weight: 600; }
+  header p { margin: .25rem 0 0; color: #c9c5bb; font-size: .9rem; }
+
+  .toolbar {
+    display: flex; flex-wrap: wrap; gap: .75rem; align-items: flex-end;
+    background: var(--card); border-bottom: 1px solid var(--line);
+    padding: .85rem 1.5rem;
+  }
+  .toolbar label { display: block; font-size: .72rem; color: var(--muted); margin-bottom: .2rem; text-transform: uppercase; letter-spacing: .04em; }
+  .toolbar input {
+    font-family: var(--mono); font-size: .85rem; padding: .4rem .55rem;
+    border: 1px solid var(--line); border-radius: 6px; width: 15rem; background: #fbfaf8;
+  }
+  .toolbar button {
+    font-size: .85rem; padding: .45rem .9rem; border-radius: 6px; border: 1px solid var(--accent);
+    background: var(--accent); color: white; cursor: pointer; font-weight: 500;
+  }
+  .toolbar button:hover { opacity: .9; }
+  .toolbar .status { font-size: .8rem; color: var(--muted); margin-left: auto; align-self: center; }
+
+  main { max-width: 860px; margin: 0 auto; padding: 1.5rem; }
+
+  .howto {
+    background: #fbf3ea; border: 1px solid #eddac2; border-radius: 10px;
+    padding: 1rem 1.15rem; margin-bottom: 1.5rem; font-size: .87rem;
+  }
+  .howto summary { cursor: pointer; font-weight: 600; }
+  .howto pre {
+    background: #1c1b19; color: #e9e6df; padding: .8rem .9rem; border-radius: 8px;
+    overflow-x: auto; font-family: var(--mono); font-size: .78rem; margin: .6rem 0 0;
+  }
+
+  .empty { color: var(--muted); text-align: center; padding: 3rem 1rem; }
+
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 1.25rem 1.4rem; margin-bottom: 1.1rem;
+  }
+  .card h2 { margin: 0 0 .5rem; font-size: 1.15rem; }
+  .card .body-copy { font-size: 1rem; color: #2b2a27; white-space: pre-wrap; }
+  .card .meta { font-size: .78rem; color: var(--muted); margin-top: .6rem; }
+
+  .badge {
+    display: inline-flex; align-items: center; gap: .3rem; font-size: .75rem;
+    padding: .15rem .55rem; border-radius: 999px; font-weight: 600; margin-top: .7rem;
+  }
+  .badge.has-prov { background: #e6f2ea; color: var(--ok); }
+  .badge.no-prov { background: #f5e6e3; color: var(--warn); }
+
+  details.prov { margin-top: .8rem; border-top: 1px dashed var(--line); padding-top: .7rem; }
+  details.prov summary { cursor: pointer; font-size: .85rem; font-weight: 600; color: var(--accent); }
+  .prov-grid {
+    display: grid; grid-template-columns: auto 1fr; gap: .3rem 1rem;
+    font-size: .82rem; margin-top: .6rem;
+  }
+  .prov-grid dt { color: var(--muted); }
+  .prov-grid dd { margin: 0; font-family: var(--mono); word-break: break-all; }
+  .prov-link { display: inline-block; margin-top: .6rem; font-size: .8rem; }
+
+  footer { text-align: center; color: var(--muted); font-size: .8rem; padding: 2rem 1rem; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Sample Storefront</h1>
+  <p>A plain website that reads its copy straight from Strapi — no API token in this page, just the CMS's public read permissions. Push a translation from content-provenance and refresh to see it land here, provenance and all.</p>
+</header>
+
+<div class="toolbar">
+  <div>
+    <label for="strapiUrl">Strapi base URL</label>
+    <input id="strapiUrl" value="http://localhost:1337" />
+  </div>
+  <div>
+    <label for="appUrl">content-provenance base URL</label>
+    <input id="appUrl" value="" />
+  </div>
+  <button id="refreshBtn">Refresh</button>
+  <span class="status" id="status"></span>
+</div>
+
+<main>
+  <details class="howto">
+    <summary>How to test the full loop</summary>
+    <p style="margin:.5rem 0 0">
+      1. Create a translation in content-provenance (or reuse one you already have).<br>
+      2. Push it into one of the entries below via <code>POST /api/v1/integrations/cms/push</code>.<br>
+      3. Click <strong>Refresh</strong> — the storefront card updates with the new text, and the
+      "Provenance" panel fills in with what content-provenance recorded about it.
+    </p>
+    <pre id="curlExample"></pre>
+  </details>
+
+  <div id="entries"></div>
+</main>
+
+<footer>demo/strapi-site/index.html — served by content-provenance, reads directly from Strapi's public REST API.</footer>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+
+  // Same-origin default: this page is served by the content-provenance app
+  // itself, so its own API lives at the page's own origin unless overridden.
+  $('appUrl').value = window.location.origin.includes('1337') ? 'http://localhost:8001' : window.location.origin;
+
+  const CONTENT_TYPE = 'translation-examples';
+
+  function esc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  function renderProvenance(prov, appUrl, isOpen) {
+    if (!prov || !prov.bundle_id) {
+      return '<span class="badge no-prov">No provenance yet — push a translation to see it here</span>';
+    }
+    const agent = (prov.agents || [])[0] || {};
+    const translationEntity = (prov.entities || []).find(e => e.entity_type === 'Translation') || {};
+    const attrs = translationEntity.attributes || {};
+    const rows = [
+      ['Summary', prov.summary || '—'],
+      ['Bundle', prov.bundle_id],
+      ['Generated', prov.generated_at],
+      ['Agent', agent.name ? `${agent.name} (${agent.agent_type})` : '—'],
+      ['Method', attrs['provx:translationMethod'] || '—'],
+      ['Status', attrs['provx:status'] || '—'],
+      ['Confidence', attrs['provx:confidenceScore'] || '—'],
+      ['Quality score', attrs['provx:qualityScore'] || '—'],
+    ];
+    const unitId = prov.translation_unit_id;
+    const link = unitId
+      ? `<a class="prov-link" href="${esc(appUrl)}/api/v1/provenance/${esc(unitId)}" target="_blank">View full W3C PROV record →</a>`
+      : '';
+    return `
+      <span class="badge has-prov">✓ Provenance recorded</span>
+      <details class="prov"${isOpen ? ' open' : ''}>
+        <summary>Show provenance detail</summary>
+        <dl class="prov-grid">
+          ${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}
+        </dl>
+        ${link}
+      </details>`;
+  }
+
+  async function load() {
+    const strapiUrl = $('strapiUrl').value.replace(/\/$/, '');
+    const appUrl = $('appUrl').value.replace(/\/$/, '');
+    const status = $('status');
+    const entriesEl = $('entries');
+
+    $('curlExample').textContent =
+`curl -X POST ${appUrl}/api/v1/integrations/cms/push \\
+  -H "Content-Type: application/json" \\
+  -d '{"unit_id": "<a translation_unit_id>", "provider": "strapi",
+       "content_type": "${CONTENT_TYPE}", "entry_id": "<an entry id below>",
+       "field_name": "body"}'`;
+
+    // The 8s auto-refresh below re-renders this whole section from scratch —
+    // without this, clicking "Show provenance detail" to inspect a push
+    // would snap shut again a few seconds later. Track which entries'
+    // <details> are open (by entry id) before wiping the DOM, then re-open
+    // the same ones after.
+    const openIds = new Set(
+      [...entriesEl.querySelectorAll('.card')]
+        .filter(card => card.querySelector('details.prov')?.open)
+        .map(card => card.dataset.entryId)
+    );
+
+    status.textContent = 'Loading…';
+    try {
+      const resp = await fetch(`${strapiUrl}/api/${CONTENT_TYPE}`);
+      if (!resp.ok) throw new Error(`Strapi returned ${resp.status}`);
+      const body = await resp.json();
+      const entries = (body.data || []).map(e => e.attributes ? { id: e.id, ...e.attributes } : e);
+
+      if (entries.length === 0) {
+        entriesEl.innerHTML = `<div class="empty">No entries yet. Run <code>python scripts/bootstrap_strapi.py</code> to create one.</div>`;
+      } else {
+        entriesEl.innerHTML = entries.map(entry => {
+          const entryId = String(entry.documentId ?? entry.id);
+          return `
+          <div class="card" data-entry-id="${esc(entryId)}">
+            <h2>${esc(entry.title || 'Untitled')}</h2>
+            <div class="body-copy">${esc(entry.body || '(empty)')}</div>
+            <div class="meta">entry_id: <code>${esc(entryId)}</code></div>
+            ${renderProvenance(entry.content_provenance, appUrl, openIds.has(entryId))}
+          </div>`;
+        }).join('');
+      }
+      status.textContent = `Loaded ${entries.length} entr${entries.length === 1 ? 'y' : 'ies'} · ${new Date().toLocaleTimeString()}`;
+    } catch (err) {
+      entriesEl.innerHTML = `<div class="empty">Couldn't reach Strapi at <code>${esc(strapiUrl)}</code> — is it running?<br><small>${esc(err.message)}</small></div>`;
+      status.textContent = 'Error';
+    }
+  }
+
+  $('refreshBtn').addEventListener('click', load);
+  load();
+  setInterval(load, 8000); // cheap auto-refresh so a push shows up without clicking
+</script>
+
+</body>
+</html>

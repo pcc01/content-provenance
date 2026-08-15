@@ -138,6 +138,43 @@ def ensure_content_type(client: httpx.Client, base_url: str, admin_token: str) -
     wait_for_strapi(base_url, timeout=90)
 
 
+def grant_public_read(client: httpx.Client, base_url: str, admin_token: str) -> None:
+    """Enables find/findOne for the demo content type on Strapi's built-in
+    "Public" role (id 2 — Users & Permissions plugin), so an unauthenticated
+    visitor — e.g. demo/strapi-site/index.html's client-side JS — can read
+    it directly with no API token embedded in browser-shipped code. This
+    mirrors how a real Strapi-backed site usually works: public marketing
+    content is readable by anyone via the Public role; only the CMS write
+    side (this app's push) needs an authenticated token. Idempotent — just
+    re-enables the same two flags if already set."""
+    headers = {"Authorization": f"Bearer {admin_token}"}
+    role_resp = client.get(f"{base_url}/users-permissions/roles/2", headers=headers)
+    if role_resp.status_code >= 400:
+        raise SystemExit(f"Could not read the Public role: {role_resp.status_code} {role_resp.text[:400]}")
+    role = role_resp.json()["role"]
+
+    ct_perms = role["permissions"].get(f"api::{CONTENT_TYPE_SINGULAR}", {}).get("controllers", {}).get(CONTENT_TYPE_SINGULAR)
+    if ct_perms is None:
+        raise SystemExit(
+            f"Public role has no permission entry for '{CONTENT_TYPE_SINGULAR}' yet — "
+            "Strapi may still be finishing its post-content-type-creation restart; try again."
+        )
+    if ct_perms["find"]["enabled"] and ct_perms["findOne"]["enabled"]:
+        log("Public read access already enabled — skipping.")
+        return
+
+    log("Enabling public (unauthenticated) read access for the demo content type...")
+    ct_perms["find"]["enabled"] = True
+    ct_perms["findOne"]["enabled"] = True
+    put_resp = client.put(
+        f"{base_url}/users-permissions/roles/2",
+        headers=headers,
+        json={"name": role["name"], "description": role["description"], "permissions": role["permissions"]},
+    )
+    if put_resp.status_code >= 400:
+        raise SystemExit(f"Granting public read access failed: {put_resp.status_code} {put_resp.text[:400]}")
+
+
 def create_api_token(client: httpx.Client, base_url: str, admin_token: str) -> str:
     log("Creating a full-access API token...")
     resp = client.post(
@@ -236,6 +273,7 @@ def main() -> None:
     with httpx.Client(timeout=30.0) as client:
         admin_token = get_admin_token(client, args.strapi_url, init_data, args.admin_email, args.admin_password)
         ensure_content_type(client, args.strapi_url, admin_token)
+        grant_public_read(client, args.strapi_url, admin_token)
         api_token = create_api_token(client, args.strapi_url, admin_token)
         entry_id = create_demo_entry(client, args.strapi_url, api_token)
 
@@ -252,6 +290,7 @@ def main() -> None:
         f'{{"unit_id": "...", "content_type": "{CONTENT_TYPE_PLURAL}", '
         f'"entry_id": "{entry_id}", "field_name": "{DEMO_FIELD}"}}'
     )
+    log(f"Sample website (reads {CONTENT_TYPE_PLURAL} straight from Strapi, no token needed): {args.app_url}/demo/")
 
     if args.verify:
         print()

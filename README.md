@@ -745,7 +745,11 @@ admin panel under Settings → API Tokens). For local testing without a real
 Strapi account, `docker-compose --profile cms up -d --build strapi` +
 `python scripts/bootstrap_strapi.py` boot a real local Strapi instance and
 set it up completely from the command line — see CONTRIBUTING.md's
-"Testing the Strapi Integration" section.
+"Testing the Strapi Integration" section. That script also grants the demo
+content type public read access, which `demo/strapi-site/index.html`
+(served at `http://localhost:8001/demo/`) uses to render a sample
+Strapi-backed website — push a translation, refresh the page, watch the
+CMS entry's live text and provenance panel update with no rebuild step.
 
 ---
 
@@ -1046,6 +1050,8 @@ content-provenance/
 │   └── strapi/Dockerfile           # Generates a real Strapi project via create-strapi-app at build time — see CONTRIBUTING.md
 ├── scripts/
 │   └── bootstrap_strapi.py         # Sets up the local Strapi test instance end-to-end from the command line — see CONTRIBUTING.md
+├── demo/
+│   └── strapi-site/index.html      # Sample Strapi-backed website — served at /demo/, reads content_provenance straight from Strapi's public API
 ├── .gitignore
 ├── CONTRIBUTING.md
 ├── Dockerfile

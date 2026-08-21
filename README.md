@@ -1,6 +1,9 @@
 # AI Translation Provenance System
 
-> End-to-end provenance tracking for AI-translated content — built with **FastAPI**, **Haystack**, **XLIFF 2.0**, and **W3C PROV-DM**.
+> End-to-end provenance tracking for translated content — AI, human, or a
+> hybrid post-edit of the two — with every version attributed to a named
+> actor, not just labeled "AI" or "human." Built with **FastAPI**,
+> **Haystack**, **XLIFF 2.0**, and **W3C PROV-DM**.
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688.svg)](https://fastapi.tiangolo.com/)
@@ -22,6 +25,20 @@ This system answers the key provenance questions for every piece of translated c
 | **When?** | Activity timestamps — translated_at, reviewed_at, deployed_at |
 | **Where is it used?** | `DeploymentRecord` — Website, Banner Ad, Marketing Campaign, Email, Mobile App, Social Media, Print, API, CMS |
 | **What standard proves it?** | XLIFF 2.0 file or JSON document, either one carrying the full embedded W3C PROV bundle, + PROV-JSON / PROV-N exports |
+
+**Human actor provenance is a first-class citizen here, not an
+afterthought bolted onto an AI-tracking system.** Every version in a
+unit's edit history (`initial` / `human_edit` / `import` / `redrive` /
+`revert`) carries its own `translated_by_agent_id` — a real `prov:Agent`
+resolved from `translator_name`/`reviewer_name` into a named `Person`
+agent, the same way an AI call resolves to a named model+version agent.
+Nothing in the data model collapses a human edit into a generic "human"
+label the way, say, a Wikipedia-style "edited by a person" flag would —
+you get the actual name, on the actual version, the same as you'd get for
+`claude-sonnet-4` or `gpt-4o`. That's what makes `TranslationMethod`
+(`ai` | `human` | `hybrid`) and the `wasAttributedTo` relation in the
+[XLIFF ⇄ W3C PROV Integration](#xliff--w3c-prov-integration) below
+meaningful rather than cosmetic.
 
 Beyond tracking provenance, the system runs a **threshold-quality redrive
 loop**: score every translation (deterministic checks, falling back to a
@@ -406,10 +423,10 @@ live-populated model dropdown — see [Model Discovery](#model-discovery).
 | `GET`  | `/api/v1/translations/` | List all translation units (filter by language, method, status) |
 | `GET`  | `/api/v1/translations/batch?ids=a,b,c` | Bulk lookup with latest quality score — what the review overlay uses to score a whole page in one call |
 | `GET`  | `/api/v1/translations/{id}` | Get a specific translation unit |
-| `GET`  | `/api/v1/translations/{id}/versions` | Full edit history (initial / human_edit / import / redrive / revert) |
+| `GET`  | `/api/v1/translations/{id}/versions` | Full edit history (initial / human_edit / import / redrive / revert), each version attributed to its own named agent — human or AI |
 | `POST` | `/api/v1/translations/{id}/versions/{version_id}/revert` | Phase 9: restore an earlier version's text as a new version (never rewrites history) |
 | `POST` | `/api/v1/translations/{id}/deploy` | Record a new deployment location |
-| `PUT`  | `/api/v1/translations/{id}/review` | Mark as human-reviewed |
+| `PUT`  | `/api/v1/translations/{id}/review` | Mark as human-reviewed — takes a `reviewer_name`, resolved to a named `Person` agent, not just a boolean flag |
 | `GET`  | `/api/v1/translations/stats` | Aggregated statistics — powers the Review Shell's **Analytics** segment |
 | `GET`/`POST` | `/api/v1/translations/{id}/notes` | Review notes thread (threaded via `parent_id`) |
 | `PUT`  | `/api/v1/translations/{id}/notes/{note_id}/resolve` | Mark a note resolved/unresolved |
@@ -708,6 +725,7 @@ load the extension.
 {
   "root_url": "https://example.com",
   "primary_language": "en",
+  "requester_email": "someone@example.com",
   "max_pages": 40,
   "checks": [
     "mixed_locale", "rtl_readiness", "icu_i18n", "privacy",
@@ -720,9 +738,15 @@ load the extension.
 }
 ```
 
-`auth_username`/`auth_password`/`auth_cookie` are optional (see
-[Authenticated Crawling/Fetching](#authenticated-crawlingfetching) below) —
-omitted, the crawl is anonymous, exactly as before this option existed.
+`requester_email` is **required**, not optional — every audit run is treated
+as a lead, so who asked for it has to be captured (validated as
+looks-like-an-email, not RFC 5322-verified or deliverability-checked; a `422`
+comes back for anything that fails the check). See
+[Lead Capture & Notifications](#lead-capture--notifications-audit) below for
+what happens with it. `auth_username`/`auth_password`/`auth_cookie` are
+optional (see [Authenticated Crawling/Fetching](#authenticated-crawlingfetching)
+below) — omitted, the crawl is anonymous, exactly as before this option
+existed.
 
 Distinct from every other capability in this system: it audits a
 THIRD-PARTY site from the outside, not this system's own translations, and
@@ -769,6 +793,37 @@ credentials. In the Review Shell, both the Audit tab and the Review tab's
 "Any URL" mode collapse this behind an "Advanced: (crawl/fetch) as a
 logged-in user" `<details>` section, off by default.
 
+### Lead Capture & Notifications (Audit)
+
+The Audit tool doubles as a consulting-practice lead-gen instrument (see
+[Site Audit](#site-audit-phase-1112--i18nl10ncompliance-review-of-a-third-party-site)
+above), so every run is treated as a lead, not just a report:
+
+- **`requester_email` is required** on `POST /api/v1/audit/runs` — see the
+  request body above.
+- **`notify_audit_completed()`** (`app/core/notifications.py`) fires
+  fire-and-forget after every run — completed, failed, *or* blocked — and
+  emails `NOTIFY_EMAIL_TO` the site URL, requester email, status, page
+  count, and (if `PUBLIC_APP_URL` is set) a direct link to the run's PDF
+  report. Built on stdlib `smtplib` against one env-configured SMTP relay
+  (a Gmail App Password, Office365, or any provider's relay) rather than a
+  transactional-email dependency — this is a low-volume lead alert, not
+  bulk mail. Fails soft everywhere: a broken or unconfigured SMTP setup
+  never turns into a `500` for the audit request that triggered it, it just
+  logs and moves on.
+- **`SiteAudit.blocked`** is `True` specifically when the target site
+  refused automated crawling (`robots.txt` disallow, a bot-detection/
+  CAPTCHA interstitial) rather than a bad URL or network failure — a real,
+  actionable distinction the public landing page uses to show a
+  consultative "we'll follow up personally" message instead of a flat
+  error, for a visitor curious enough to submit their own site.
+
+Configure via `.env`: `EMAIL_NOTIFICATIONS_ENABLED` (default `false` — a
+deployment with no SMTP creds set just skips sending, it doesn't error),
+`NOTIFY_EMAIL_TO`, `SMTP_HOST`/`SMTP_PORT`/`SMTP_USER`/`SMTP_PASSWORD`/
+`SMTP_FROM`/`SMTP_USE_TLS`/`SMTP_USE_SSL`, and `PUBLIC_APP_URL` (optional —
+the base URL the notification email's report link is built from).
+
 ### CMS Integration (Strapi)
 
 Pushes a finished translation — plus its full W3C PROV provenance record —
@@ -801,6 +856,44 @@ a route on this app, so it's never contending with `app`'s own port) that
 the bootstrap script grants public read access to — push a translation,
 refresh the page, watch the CMS entry's live text and provenance panel
 update with no rebuild step.
+
+---
+
+## Production Deployment
+
+`docker-compose.prod.yml` is a production overrides file for the base
+`docker-compose.yml`, not a separate stack:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+```
+
+It replaces (not merges — Compose's `!override`, requiring Compose ≥
+2.24.4) the base file's `ports:` lists so the app and Postgres bind to
+`127.0.0.1` only rather than every interface — the assumption is a
+reverse proxy/tunnel (e.g. `cloudflared`) is the sole public entry point,
+mirroring how the user's other project (peripateticware) is deployed. It
+also sets `APP_ENV=production`, `CORS_ORIGINS`/`PUBLIC_APP_URL` (default
+`https://audit.thewordinbits.com`, override via the environment), a
+`mem_limit`/`cpus` cap, `restart: always`, and swaps the dev bind-mounts
+for named volumes so the container runs the image's baked-in code, not a
+live host mount of a working tree.
+
+**Public lead-gen landing build.** The same override bakes the frontend
+with `VITE_PUBLIC_SITE=true` (`Dockerfile`'s frontend-build stage; default
+is `false`, i.e. the normal internal Review Shell). When set,
+`frontend/src/App.tsx` renders *only*
+[`PublicAuditLanding.tsx`](frontend/src/pages/PublicAuditLanding.tsx) — a
+single branded page styled to match thewordinbits.com's own theme
+(Fraunces/IBM Plex Sans, the site's Elementor color palette) with an intro
+explaining the audit, an email-gated request form (posts to `POST
+/api/v1/audit/runs` — see [Lead Capture & Notifications](#lead-capture--notifications-audit)
+above), and a results view with a PDF download — none of the internal
+review/redrive/style/vendor/etc. tooling is exposed to a public visitor.
+It's a build-time switch on the same codebase, not a second app to
+maintain; set `VITE_PUBLIC_SITE=false` in the environment before `up
+--build` if this compose file is ever reused for an internal-only
+deployment instead.
 
 ---
 
@@ -1003,6 +1096,7 @@ content-provenance/
 │   │   ├── config.py               # Environment-based settings
 │   │   ├── database.py             # Thin public interface (get_db/init_db) over db/repository.py
 │   │   ├── llm_clients.py          # Phase 16: shared OpenAI-compatible / Gemini / MS Translator httpx REST clients
+│   │   ├── notifications.py        # Audit lead-alert emails (stdlib smtplib) — fires on every audit run, fails soft
 │   │   ├── db/                     # Postgres persistence layer
 │   │   │   ├── models.py           # SQLAlchemy ORM models
 │   │   │   ├── session.py          # Async engine/session factory
@@ -1057,7 +1151,7 @@ content-provenance/
 │   │   ├── api/client.ts           # Typed fetch wrapper for the whole API
 │   │   ├── components/             # ReviewFrame, SegmentDrawer (Details/History/Provenance/Metrics/Notes tabs), PageFlaggedList, PageHistory, PageNotes, PendingChanges, AuditReport (+ pages-crawled table), ProvenancePanel (+ lineage/exports), MetricsPanel, ContextImages, QualityBadge, VersionHistory, NotesThread, PageIntro, ModelPicker, LocaleSelect, BarChart, DonutChart
 │   │   ├── data/locales.ts         # Phase 18: top-10-most-spoken + broader language list backing LocaleSelect
-│   │   └── pages/                  # ReviewPage, LiveReviewPage, RedriveConsole (+ provider/model dropdowns, worklist, METEOR compare), ImageReview, DocumentsPage (+ CSV), DocumentViewer, AuditPage (+ authenticated crawl), SearchPage, AnalyticsPage, CreateContentPage, StyleGuidesPage (+ version chain), ImportPage (+ ingest ledger), VendorScorecardPage, ConsistencyPage
+│   │   └── pages/                  # ReviewPage, LiveReviewPage, RedriveConsole (+ provider/model dropdowns, worklist, METEOR compare), ImageReview, DocumentsPage (+ CSV), DocumentViewer, AuditPage (+ authenticated crawl), SearchPage, AnalyticsPage, CreateContentPage, StyleGuidesPage (+ version chain), ImportPage (+ ingest ledger), VendorScorecardPage, ConsistencyPage, PublicAuditLanding (branded lead-gen landing, VITE_PUBLIC_SITE builds only)
 │   ├── review-sdk/                 # The in-context overlay injected into a cooperative target app, or extracted for Phase 10's extension
 │   │   ├── overlay.ts              # Highlight boxes, score/pending coloring, pluggable transport (postMessage or chrome.runtime)
 │   │   ├── harvest.ts              # Phase 10: shared harvest/rewrite DOM walk — compiled once, used by both Playwright and the extension
@@ -1094,7 +1188,7 @@ content-provenance/
 │   ├── test_vendors.py / test_consistency.py       # Phase 14: vendor scorecard, cross-document consistency
 │   ├── test_mqm.py / test_automatic_metrics.py     # Phase 15: MQM taxonomy, hard_fail, METEOR/COMET-Kiwi
 │   ├── test_multiprovider.py       # Phase 16: provider-registry graceful degradation, standalone evaluate endpoint
-│   ├── test_notifications.py
+│   ├── test_notifications.py       # Audit lead-alert email — smtplib fully mocked, no real SMTP connection made
 │   ├── test_json_export.py         # JSON provenance document export/import, incl. lenient minimal-input import
 │   └── test_cms_integration.py     # CMS push/pull API — offline-stubbed CMSIntegration, no live Strapi needed
 ├── docker/
@@ -1107,6 +1201,7 @@ content-provenance/
 ├── CONTRIBUTING.md
 ├── Dockerfile
 ├── docker-compose.yml              # dev / search / full / cms profiles — host ports offset (8001/5433) to avoid collisions
+├── docker-compose.prod.yml         # Production overrides — loopback-only ports, VITE_PUBLIC_SITE lead-gen build, see Production Deployment
 ├── LICENSE                         # MIT
 ├── Makefile
 ├── pyproject.toml                  # packaging + pytest + ruff config

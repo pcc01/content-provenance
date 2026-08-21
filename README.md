@@ -1,6 +1,9 @@
 # AI Translation Provenance System
 
-> End-to-end provenance tracking for AI-translated content — built with **FastAPI**, **Haystack**, **XLIFF 2.0**, and **W3C PROV-DM**.
+> End-to-end provenance tracking for translated content — AI, human, or a
+> hybrid post-edit of the two — with every version attributed to a named
+> actor, not just labeled "AI" or "human." Built with **FastAPI**,
+> **Haystack**, **XLIFF 2.0**, and **W3C PROV-DM**.
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688.svg)](https://fastapi.tiangolo.com/)
@@ -22,6 +25,20 @@ This system answers the key provenance questions for every piece of translated c
 | **When?** | Activity timestamps — translated_at, reviewed_at, deployed_at |
 | **Where is it used?** | `DeploymentRecord` — Website, Banner Ad, Marketing Campaign, Email, Mobile App, Social Media, Print, API, CMS |
 | **What standard proves it?** | XLIFF 2.0 file or JSON document, either one carrying the full embedded W3C PROV bundle, + PROV-JSON / PROV-N exports |
+
+**Human actor provenance is a first-class citizen here, not an
+afterthought bolted onto an AI-tracking system.** Every version in a
+unit's edit history (`initial` / `human_edit` / `import` / `redrive` /
+`revert`) carries its own `translated_by_agent_id` — a real `prov:Agent`
+resolved from `translator_name`/`reviewer_name` into a named `Person`
+agent, the same way an AI call resolves to a named model+version agent.
+Nothing in the data model collapses a human edit into a generic "human"
+label the way, say, a Wikipedia-style "edited by a person" flag would —
+you get the actual name, on the actual version, the same as you'd get for
+`claude-sonnet-4` or `gpt-4o`. That's what makes `TranslationMethod`
+(`ai` | `human` | `hybrid`) and the `wasAttributedTo` relation in the
+[XLIFF ⇄ W3C PROV Integration](#xliff--w3c-prov-integration) below
+meaningful rather than cosmetic.
 
 Beyond tracking provenance, the system runs a **threshold-quality redrive
 loop**: score every translation (deterministic checks, falling back to a
@@ -406,10 +423,10 @@ live-populated model dropdown — see [Model Discovery](#model-discovery).
 | `GET`  | `/api/v1/translations/` | List all translation units (filter by language, method, status) |
 | `GET`  | `/api/v1/translations/batch?ids=a,b,c` | Bulk lookup with latest quality score — what the review overlay uses to score a whole page in one call |
 | `GET`  | `/api/v1/translations/{id}` | Get a specific translation unit |
-| `GET`  | `/api/v1/translations/{id}/versions` | Full edit history (initial / human_edit / import / redrive / revert) |
+| `GET`  | `/api/v1/translations/{id}/versions` | Full edit history (initial / human_edit / import / redrive / revert), each version attributed to its own named agent — human or AI |
 | `POST` | `/api/v1/translations/{id}/versions/{version_id}/revert` | Phase 9: restore an earlier version's text as a new version (never rewrites history) |
 | `POST` | `/api/v1/translations/{id}/deploy` | Record a new deployment location |
-| `PUT`  | `/api/v1/translations/{id}/review` | Mark as human-reviewed |
+| `PUT`  | `/api/v1/translations/{id}/review` | Mark as human-reviewed — takes a `reviewer_name`, resolved to a named `Person` agent, not just a boolean flag |
 | `GET`  | `/api/v1/translations/stats` | Aggregated statistics — powers the Review Shell's **Analytics** segment |
 | `GET`/`POST` | `/api/v1/translations/{id}/notes` | Review notes thread (threaded via `parent_id`) |
 | `PUT`  | `/api/v1/translations/{id}/notes/{note_id}/resolve` | Mark a note resolved/unresolved |

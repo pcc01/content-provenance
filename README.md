@@ -179,9 +179,13 @@ This is the core design decision: **every XLIFF `<unit>` is a self-contained pro
       activityType=Translation; startedAt=...; agentId=...
     </note>
 
-    <!-- W3C PROV Agents -->
+    <!-- W3C PROV Agents — same shape for an AI model or a named human;
+         agentType is the only thing that changes (SoftwareAgent vs Person) -->
     <note category="prov:Agent" id="agent:...">
       name=claude-sonnet-4; agentType=SoftwareAgent; organization=Anthropic
+    </note>
+    <note category="prov:Agent" id="agent:reviewer:...">
+      name=Jane Doe; agentType=Person
     </note>
 
     <!-- W3C PROV Relations -->
@@ -190,6 +194,10 @@ This is the core design decision: **every XLIFF `<unit>` is a self-contained pro
     </note>
     <note category="prov:Relation:wasAttributedTo" id="prov:rel:1:wasAttributedTo">
       entity=entity:translation:...; agent=agent:...
+    </note>
+    <!-- Human reviewer, same role= convention used for a human post-editor -->
+    <note category="prov:Relation:wasAssociatedWith" id="prov:rel:2:wasAssociatedWith">
+      activity=activity:review:...; agent=agent:reviewer:...; role=prov:Reviewer
     </note>
 
     <!-- Deployment -->
@@ -206,6 +214,13 @@ This is the core design decision: **every XLIFF `<unit>` is a self-contained pro
   </segment>
 </unit>
 ```
+
+The AI agent and the human agent above are structurally identical
+`prov:Agent` notes — same fields, same relation types — so a human
+translator's or reviewer's real name is written into the XLIFF file
+itself (`agentType=Person`), not just recorded in the database. Any TMS
+or CAT tool that reads this file gets the full chain of custody either
+way, including who the human was.
 
 ---
 

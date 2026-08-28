@@ -1146,6 +1146,12 @@ cd frontend && npx tsc -b
 cd frontend/demo-target && npx tsc -b
 ```
 
+The [`Makefile`](Makefile) wraps the common ones: `make install` / `migrate` /
+`run` (dev server on `:8001`) / `test` / `lint`, `make frontend-dev` /
+`demo-dev`, `make docker-up` (also `-search` / `-full`) / `docker-down` /
+`docker-clean`, `make docs` (open `/docs`), `make tree`, `make clean` — each
+target has a `##` description line above it in the file.
+
 ---
 
 ## Project Structure

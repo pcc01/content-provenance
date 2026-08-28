@@ -78,6 +78,24 @@ export function ImageReview() {
     }
   }
 
+  async function handleOcr() {
+    if (!sourceImage) return;
+    setError(null);
+    setBusy(true);
+    try {
+      const result = await api.ocrImage(sourceImage.id, {
+        source_language: sourceLanguage, target_language: targetLanguage,
+        method: method === "human" ? "ai" : method,
+        itu_id: itu?.id,
+      });
+      setItu(result);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleLookup() {
     if (!lookupId.trim()) return;
     setError(null);
@@ -157,6 +175,22 @@ export function ImageReview() {
                 Start localization (no target image yet)
               </button>
             )}
+            <button onClick={handleOcr} disabled={busy} style={{ padding: "6px 14px", cursor: "pointer" }}>
+              OCR text → reviewable units
+            </button>
+            <span style={{ fontSize: 11, color: "#9ca3af" }}>
+              Pulls text out of the image (needs Tesseract), translates each line, and wires it into
+              this image's overlay text units.
+            </span>
+          </div>
+        </section>
+      )}
+
+      {itu && itu.overlay_text_unit_ids.length > 0 && (
+        <section style={{ marginBottom: 24, fontSize: 13 }}>
+          <h3>OCR text units ({itu.overlay_text_unit_ids.length})</h3>
+          <div style={{ fontFamily: "monospace", fontSize: 11, color: "#6b7280", wordBreak: "break-all" }}>
+            {itu.overlay_text_unit_ids.join(" · ")}
           </div>
         </section>
       )}

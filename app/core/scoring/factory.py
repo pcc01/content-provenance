@@ -27,18 +27,24 @@ _scorer_instance: Optional[QualityScorer] = None
 _scorer_name: Optional[str] = None
 
 
-def get_scorer(provider: Optional[str] = None, model: Optional[str] = None) -> QualityScorer:
+def get_scorer(
+    provider: Optional[str] = None,
+    model: Optional[str] = None,
+    reference_mode: Optional[str] = None,
+) -> QualityScorer:
     """provider overrides settings.scoring_provider (e.g. a specific redrive
     run asking for a different scorer than the app default) — passing one
     always builds a fresh instance rather than reusing the cached default.
     `model` (Phase 18) additionally overrides WHICH model runs within
     provider, for ollama/lmstudio/vllm — see GET /api/v1/models/{provider}.
     Ignored (not an error) for every other provider, which has exactly one
-    configured model."""
+    configured model. `reference_mode` (auto|reference_free|prefer_reference)
+    is only meaningful for the mprometheus provider — see
+    app/core/scoring/mprometheus_scorer.py — and ignored for the rest."""
     global _scorer_instance, _scorer_name
 
     requested = (provider or settings.scoring_provider).lower()
-    if provider is None and model is None and _scorer_instance is not None:
+    if provider is None and model is None and reference_mode is None and _scorer_instance is not None:
         return _scorer_instance
 
     if requested == "claude":
@@ -47,6 +53,9 @@ def get_scorer(provider: Optional[str] = None, model: Optional[str] = None) -> Q
     elif requested == "ollama":
         from app.core.scoring.ollama_scorer import OllamaQualityScorer
         model_scorer = OllamaQualityScorer(model=model)
+    elif requested == "mprometheus":
+        from app.core.scoring.mprometheus_scorer import MPrometheusQualityScorer
+        model_scorer = MPrometheusQualityScorer(model=model, reference_mode=reference_mode)
     elif requested == "gemini":
         from app.core.scoring.gemini_scorer import GeminiQualityScorer
         model_scorer = GeminiQualityScorer(model=model)
@@ -67,11 +76,11 @@ def get_scorer(provider: Optional[str] = None, model: Optional[str] = None) -> Q
     else:
         raise RuntimeError(
             f"Unknown scoring provider '{requested}' — expected one of "
-            "'claude', 'ollama', 'openai', 'gemini', 'lmstudio', 'vllm'"
+            "'claude', 'ollama', 'mprometheus', 'openai', 'gemini', 'lmstudio', 'vllm'"
         )
 
     scorer = CompositeScorer(model_scorer, scorer_name=requested)
-    if provider is None and model is None:
+    if provider is None and model is None and reference_mode is None:
         _scorer_instance = scorer
         _scorer_name = requested
     return scorer

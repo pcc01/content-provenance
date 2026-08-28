@@ -3,6 +3,8 @@ import { AnalyticsPage } from "./pages/AnalyticsPage";
 import { AuditPage } from "./pages/AuditPage";
 import { ConsistencyPage } from "./pages/ConsistencyPage";
 import { CreateContentPage } from "./pages/CreateContentPage";
+import { DeckReview } from "./pages/DeckReview";
+import { DocumentReview } from "./pages/DocumentReview";
 import { DocumentsPage } from "./pages/DocumentsPage";
 import { ImageReview } from "./pages/ImageReview";
 import { ImportPage } from "./pages/ImportPage";
@@ -47,7 +49,7 @@ export default function App() {
 //     first, not because the data is Quality-Review-specific.
 type Segment = "create" | "review" | "audit" | "analytics";
 type CreateTab = "create" | "style-guides" | "import" | "documents";
-type ReviewTab = "review" | "live" | "redrive" | "images" | "vendors" | "consistency" | "search";
+type ReviewTab = "review" | "live" | "redrive" | "decks" | "docs" | "images" | "vendors" | "consistency" | "search";
 
 const SEGMENTS: [Segment, string][] = [
   ["create", "Content Creation"],
@@ -67,6 +69,8 @@ const REVIEW_TABS: [ReviewTab, string][] = [
   ["review", "Review"],
   ["live", "Live (extension)"],
   ["redrive", "Redrive"],
+  ["decks", "Decks"],
+  ["docs", "Docs"],
   ["images", "Images"],
   ["vendors", "Vendor Scorecard"],
   ["consistency", "Consistency"],
@@ -132,6 +136,8 @@ function InternalApp() {
             {reviewTab === "review" && <ReviewPage initialFetchTarget={reviewTarget} />}
             {reviewTab === "live" && <LiveReviewPage />}
             {reviewTab === "redrive" && <div style={{ overflowY: "auto", height: "100%" }}><RedriveConsole /></div>}
+            {reviewTab === "decks" && <div style={{ overflowY: "auto", height: "100%" }}><DeckReview /></div>}
+            {reviewTab === "docs" && <div style={{ overflowY: "auto", height: "100%" }}><DocumentReview /></div>}
             {reviewTab === "images" && <div style={{ overflowY: "auto", height: "100%" }}><ImageReview /></div>}
             {reviewTab === "vendors" && <div style={{ overflowY: "auto", height: "100%" }}><VendorScorecardPage /></div>}
             {reviewTab === "consistency" && <div style={{ overflowY: "auto", height: "100%" }}><ConsistencyPage /></div>}

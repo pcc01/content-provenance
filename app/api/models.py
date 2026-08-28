@@ -31,7 +31,7 @@ router = APIRouter()
 # TRANSLATE_PROVIDERS/EVALUATE_PROVIDERS docstring on the frontend side for
 # why) — both are accepted here so one model picker serves both flows
 # without the caller needing to know which vocabulary it's in.
-_ALIASES = {"claude": "anthropic"}
+_ALIASES = {"claude": "anthropic", "mprometheus": "ollama"}
 
 
 class ModelListResponse(BaseModel):

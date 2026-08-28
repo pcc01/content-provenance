@@ -74,6 +74,30 @@ class RedriveOutcome(str, Enum):
     REJECTED = "rejected"                  # a human reviewer declined the proposed redrive
 
 
+class QualityReportStatus(str, Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class QualityReportBucket(str, Enum):
+    """Which lane a unit lands in after evaluation — the stop-point between
+    "evaluate" and "redrive". Drives the default recommended_action and the
+    Phase 3 per-bucket routing table."""
+    PASS = "pass"                    # at/above threshold, no critical error
+    BELOW_QUALITY = "below_quality"  # numeric score under the quality threshold
+    HARD_FAIL = "hard_fail"          # a critical MQM error regardless of the number
+    BELOW_STYLE = "below_style"      # style-adherence score under style_threshold
+    NEEDS_REVIEW = "needs_review"    # evaluator couldn't render a verdict (score is None)
+
+
+class RecommendedAction(str, Enum):
+    NONE = "none"    # PASS — leave the unit alone
+    HUMAN = "human"  # route to a human reviewer (PENDING_APPROVAL)
+    MT = "mt"        # retranslate with a machine engine
+
+
 class SiteAuditStatus(str, Enum):
     PENDING = "pending"
     RUNNING = "running"
@@ -121,6 +145,26 @@ class DocumentFormat(str, Enum):
     # TEXT/MARKDOWN — a CSV export's rows are already the natural segment
     # boundary, e.g. a CMS's "string key, English text" export.
     CSV = "csv"
+    # Phase 7 — slide deck. One TranslationUnit per text-bearing shape (or
+    # speaker-note paragraph), each with a DocumentShape holding its slide
+    # index + fractional bounding box, for the layout-aware deck review.
+    PPTX = "pptx"
+    # Phase 7 — PDF: one unit per text block, DocumentShape carries page
+    # index + fractional bbox (PyMuPDF), reviewed like a deck.
+    PDF = "pdf"
+    # Phase 7 — DOCX: flow document, one unit per paragraph / table cell,
+    # DocumentShape has no geometry — reviewed as a bilingual reader.
+    DOCX = "docx"
+
+
+class DocumentShapeKind(str, Enum):
+    TITLE = "title"
+    BODY = "body"
+    CAPTION = "caption"
+    TABLE_CELL = "table_cell"
+    SPEAKER_NOTE = "speaker_note"
+    CHART_LABEL = "chart_label"
+    OTHER = "other"
 
 
 class StyleRuleType(str, Enum):
@@ -314,6 +358,26 @@ class RedriveRunItem(BaseModel):
     approved_at: Optional[datetime] = None
 
 
+class RoutingTarget(BaseModel):
+    """One routing decision: what to do with a unit, and (for mt/human) which
+    translation engine drafts it. provider/model None = fall back to the
+    run's default engine."""
+    action: RecommendedAction
+    provider: Optional[str] = None  # a translation-backend provider name
+    model: Optional[str] = None
+
+
+class RedriveRouting(BaseModel):
+    """How a report-gated redrive routes each unit. Resolution per item,
+    later layers win: item.recommended_action -> default -> by_bucket[bucket]
+    -> item.route_override (action only) -> by_unit[unit_id]. A layer that
+    leaves provider/model None doesn't clear one an earlier layer set, so an
+    override can change only the action and inherit the engine."""
+    default: Optional[RoutingTarget] = None
+    by_bucket: Dict[str, RoutingTarget] = Field(default_factory=dict)  # key = QualityReportBucket value
+    by_unit: Dict[str, RoutingTarget] = Field(default_factory=dict)    # key = unit_id
+
+
 class RedriveRun(BaseModel):
     """A single threshold-quality redrive pass: score everything in scope
     (skipping units already scored against their current version), redrive
@@ -344,10 +408,80 @@ class RedriveRun(BaseModel):
     redrive_provider: str
     require_human_approval: bool = False
     triggered_by: Optional[str] = None
+    # Phase 3 (report-gated redrive) — set when this run was launched from a
+    # saved QualityReport instead of re-scoring a scope. `routing` is the
+    # RedriveRouting used, kept for provenance and re-runs; per-item routing
+    # (mt vs human, and which engine) is recorded in each item's detail.
+    from_report_id: Optional[str] = None
+    routing: Optional[Dict[str, Any]] = None
+    # Phase 4 — report-gated runs only. Off: an mt redrive whose candidate
+    # clears the report's threshold on a second-pass score is applied
+    # immediately; a candidate that doesn't clear it is held as
+    # PENDING_APPROVAL instead of going live. On: every mt candidate is held
+    # for a human sign-off regardless of its second-pass score.
+    second_review: bool = False
     started_at: datetime = Field(default_factory=datetime.utcnow)
     finished_at: Optional[datetime] = None
     summary: Dict[str, Any] = Field(default_factory=dict)
     items: List[RedriveRunItem] = Field(default_factory=list)
+
+
+class QualityReportItem(BaseModel):
+    """One unit's row in a QualityReport — a frozen snapshot of its
+    evaluation, plus the bucket/action that snapshot implies. `quality_score_id`
+    points at the QualityScore row the evaluate pass persisted (scoring is
+    still free and side-effect-safe to repeat), so the report never has to
+    re-derive the number. `route_override` is None until a reviewer changes
+    the routing in Phase 3's console."""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    report_id: str
+    unit_id: str
+    quality_score_id: Optional[str] = None
+    scorer: str  # "deterministic" | provider name — who produced before_score
+    before_score: Optional[float] = None
+    style_score: Optional[float] = None
+    reasons: List[str] = Field(default_factory=list)
+    errors: List[ScoreError] = Field(default_factory=list)
+    hard_fail: bool = False
+    needs_review: bool = False
+    bucket: QualityReportBucket
+    recommended_action: RecommendedAction
+    route_override: Optional[RecommendedAction] = None
+    # False = the score leaned on a research/non-commercial-only signal
+    # (M-Prometheus, XCOMET, CometKiwi). None = operator must assert (an
+    # unclassified local checkpoint). See app/core/scoring/licensing.py.
+    commercial_safe: Optional[bool] = None
+    source_text_len: int = 0
+    # Phase 6 — XCOMET localized error spans, attached after the fact via
+    # POST /quality/reports/{id}/attach-xcomet (optional, non-commercial).
+    # Each: {text, severity: minor|major|critical, start, end} — offsets
+    # into the unit's target_text, or None when they can't be recovered.
+    error_spans: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class QualityReport(BaseModel):
+    """The artifact the "produce a report" step emits — a persisted,
+    exportable snapshot of one evaluate pass over a scope, with per-unit
+    buckets and a default routing recommendation. It spends no translation
+    budget; Phase 3's redrive consumes it instead of re-scoring."""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    status: QualityReportStatus = QualityReportStatus.PENDING
+    scope: Dict[str, Any] = Field(default_factory=dict)
+    quality_threshold: float
+    style_threshold: Optional[float] = None
+    style_guide_id: Optional[str] = None
+    scoring_provider: str
+    scoring_model: Optional[str] = None
+    reference_mode: Optional[str] = None  # mprometheus only
+    triggered_by: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    finished_at: Optional[datetime] = None
+    # counts keyed by QualityReportBucket value
+    summary: Dict[str, Any] = Field(default_factory=dict)
+    # units, below_threshold, hard_fail, needs_review, est_source_chars,
+    # commercial_safe / non_commercial / commercial_unknown split
+    totals: Dict[str, Any] = Field(default_factory=dict)
+    items: List[QualityReportItem] = Field(default_factory=list)
 
 
 class ReviewNote(BaseModel):
@@ -489,6 +623,30 @@ class Document(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     uploaded_by: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class DocumentShape(BaseModel):
+    """Phase 7 — one text-bearing shape (or speaker-note paragraph) on a
+    slide, with its geometry, so the deck review can reconstruct the slide
+    layout and draw score-coloured boxes over it (the same rect-based
+    overlay the inline review already uses). Bounding box is stored as
+    fractions of the slide (0-1), layout-independent. `unit_id` links to
+    the TranslationUnit that carries the actual source/target text; a
+    speaker note or an empty decorative shape may have none."""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    document_id: str
+    page_index: int                 # 0-based slide number
+    page_width: float               # slide EMU width, for aspect ratio
+    page_height: float
+    shape_index: int                # z-order within the slide
+    reading_order: int              # visual top-to-bottom, left-to-right rank
+    kind: DocumentShapeKind = DocumentShapeKind.OTHER
+    x: Optional[float] = None       # bbox as slide fractions; None for speaker notes
+    y: Optional[float] = None
+    w: Optional[float] = None
+    h: Optional[float] = None
+    unit_id: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 # ─── Page Snapshots (Phase 8: non-cooperative page review) ─────────────────
@@ -756,7 +914,7 @@ class AutomaticMetricScore(BaseModel):
     rather than a column on QualityScore or StyleAdherenceScore."""
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     unit_id: str
-    metric: str  # "meteor" | "comet_kiwi"
+    metric: str  # "meteor" | "comet_kiwi" | "xcomet"
     score: Optional[float] = Field(None, ge=0.0, le=100.0)
     raw_score: Optional[float] = None
     reference_type: Optional[str] = None

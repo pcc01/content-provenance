@@ -62,6 +62,19 @@ nltk>=3.9                        # METEOR (app/core/scoring/automatic/meteor.py)
 # download_model() will succeed. See docs/quality-evaluation-research.md §3/§8.1.
 # unbabel-comet>=2.2.0
 
+# XCOMET (Phase 6 — localized error spans + severity, same unbabel-comet
+# package as COMET-Kiwi above). Also CC-BY-NC-SA-4.0 / gated; attach it to a
+# Quality Report via POST /quality/reports/{id}/attach-xcomet. Checkpoints:
+# Unbabel/XCOMET-XL (~3.5B) or Unbabel/XCOMET-XXL (~10.7B), set XCOMET_CHECKPOINT.
+# See app/core/scoring/automatic/xcomet.py.
+
+# ── Document formats (Phase 7 — layout-aware review + round-trip export) ──────
+python-pptx>=0.6.23             # PPTX text + shape geometry + reinsert (app/core/documents/{pptx_extract,reinsert}.py)
+python-docx>=1.1.0              # DOCX flow-document text + reinsert (both need lxml — lazy-imported, degrade to 503)
+pymupdf>=1.24.0                # PDF text + block geometry (app/core/documents/pdf_extract.py). Self-contained wheel, no lxml.
+pytesseract>=0.3.10            # In-image OCR (app/core/documents/ocr.py) — needs the Tesseract binary on PATH (or TESSERACT_CMD).
+Pillow>=10.0.0                 #   image decoding for OCR
+
 # ── Vector Stores (optional alternatives to in-memory) ────────────────────────
 # qdrant-client>=1.9.0          # Qdrant
 # elasticsearch>=8.0.0          # Elasticsearch

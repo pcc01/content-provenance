@@ -86,9 +86,23 @@ class Settings:
     )
 
     # ── Quality Scoring / Redrive ────────────────────────────────────────────
-    scoring_provider: str = os.getenv("SCORING_PROVIDER", "claude")  # claude | ollama
+    scoring_provider: str = os.getenv("SCORING_PROVIDER", "claude")  # claude | ollama | mprometheus | openai | gemini | lmstudio | vllm
     redrive_provider: str = os.getenv("REDRIVE_PROVIDER", "")  # blank = reuse TRANSLATION_PROVIDER
     ollama_url: str = os.getenv("OLLAMA_URL", "http://localhost:11434")
+
+    # M-Prometheus (Unbabel) as an LLM-judge scoring provider — a scalar
+    # 1-5 MT-quality judge run locally via Ollama GGUF, on its own
+    # absolute-grading rubric (NOT the shared MQM-JSON contract). Default
+    # is the 14B imatrix Q4_K_M (~9GB, fits a 12GB card for short QE
+    # prompts); drop to M-Prometheus-7B-GGUF:Q5_K_M (~5.5GB) if it contends
+    # for VRAM with the translation/embedding models. Runs through
+    # ollama_url above. See app/core/scoring/mprometheus_scorer.py.
+    mprometheus_model: str = os.getenv(
+        "MPROMETHEUS_MODEL", "hf.co/mradermacher/M-Prometheus-14B-i1-GGUF:i1-Q4_K_M"
+    )
+    # auto | reference_free | prefer_reference — how the judge sources a
+    # "Score 5" reference (near-exact TM hit / none). See the scorer module.
+    mprometheus_reference_mode: str = os.getenv("MPROMETHEUS_REFERENCE_MODE", "auto")
     # Phase 16 — upgraded from the original TowerInstruct-7B-v0.1 to
     # Tower-Plus-9B (see ollama_translation_model above for why) and moved
     # ollama_scorer.py from a hand-rolled prompt string to Ollama's
@@ -114,6 +128,12 @@ class Settings:
 
     # ── Image Assets ──────────────────────────────────────────────────────────
     image_storage_dir: str = os.getenv("IMAGE_STORAGE_DIR", "data/images")
+
+    # ── Documents (Phase 7 — original bytes kept for round-trip export) ──────
+    document_storage_dir: str = os.getenv("DOCUMENT_STORAGE_DIR", "data/documents")
+    # Optional path to the Tesseract binary for in-image OCR (pytesseract);
+    # blank = rely on it being on PATH. See app/core/documents/ocr.py.
+    tesseract_cmd: str = os.getenv("TESSERACT_CMD", "")
 
     # ── XLIFF ─────────────────────────────────────────────────────────────────
     xliff_version: str = os.getenv("XLIFF_VERSION", "2.0")

@@ -67,7 +67,7 @@ Status legend: ✅ Built · 🔧 Partial · 📋 Planned · 💡 Suggested
 | Translatable image assets with their own provenance chain | ✅ | `ImageTranslationUnit`, reuses the text PROV builder pattern |
 | Upload → pending → attach target → completed flow | ✅ | `app/api/images.py` |
 | Local filesystem storage | ✅ | `IMAGE_STORAGE_DIR`, Docker volume |
-| Overlay text units within an image (OCR/text-in-image extraction) | 📋 | `ImageTranslationUnit.overlay_text_unit_ids` exists; nothing populates it automatically yet |
+| Overlay text units within an image (OCR/text-in-image extraction) | ✅ | `POST /api/v1/images/{id}/ocr` — Tesseract → one `TranslationUnit` per line, wired into `overlay_text_unit_ids` (`app/core/documents/ocr.py`, `503` without the binary) |
 
 ### Review Environment (In-Context Overlay)
 
@@ -90,7 +90,10 @@ Status legend: ✅ Built · 🔧 Partial · 📋 Planned · 💡 Suggested
 | Adopt the SDK in a real target app (peripateticware) instead of the demo fixture | — | Superseded by the fetch+rewrite loader above — peripateticware is now reviewable without any source changes, so cooperative-tagging adoption is no longer the only path |
 | **Page history / time-travel — browse, diff, and revert a page's past versions** | ✅ | `app/core/page_history.py`, `PageHistory.tsx` — reconstructs "page as of time T" from existing `TranslationUnitVersion` history + a `PageSnapshot` template, no new snapshot-storage system. `GET /api/v1/pages/render?as_of=`, `/history`, `/diff`; revert via `POST /translations/{id}/versions/{id}/revert` |
 | **Document formats in-context review — text/Markdown** | ✅ | `app/api/documents.py`, `DocumentViewer.tsx`, `DocumentsPage.tsx` — each paragraph/block becomes a `TranslationUnit`, reviewed through the same overlay SDK as any page |
-| **Document formats in-context review — PDF/PowerPoint/DOCX** | 📋 | Requested but not yet designed — needs its own investigation into text-layer/coordinate extraction per format and how much of the overlay contract carries over |
+| **Document formats in-context review — PPTX / PDF** | ✅ | `app/core/documents/{pptx_extract,pdf_extract}.py` → `DocumentShape` (page index + slide/page-fraction bbox), `GET /documents/{id}/structure`, `DeckReview.tsx` renders each page under the same rect-based overlay + an expansion badge. Round-trip `GET /documents/{id}/export.pptx` (`reinsert.py`). |
+| **Document formats in-context review — DOCX** | ✅ | `docx_extract.py` (flow, no geometry) → `DocumentReview.tsx` bilingual reader; round-trip `export.docx`. `python-docx` lazy-imported, `503` where lxml is blocked. |
+| Round-trip export for PDF (write translations back into the original) | 📋 | In-place PDF text replacement (redaction + reflow) is materially harder than the OOXML formats — deferred; PPTX/DOCX round-trip ship now |
+| Bilingual-reader polish — inline editing, block-level notes in `DocumentReview` | 📋 | The reader is read-only today; editing still goes through the standard Review tab / segment drawer |
 
 ### Site I18n & Compliance Audit Toolkit
 

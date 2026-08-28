@@ -22,7 +22,7 @@ from app.core.redrive.engine import RedriveEngine, _NeverInvokedScorer, build_en
 from app.core.redrive.propose import propose_human_translation
 from app.core.scoring.factory import get_scorer
 from app.core.translation_backends import get_translation_backend
-from app.models.schemas import RedriveRun, RedriveRunItem
+from app.models.schemas import RedriveRouting, RedriveRun, RedriveRunItem
 
 router = APIRouter()
 
@@ -48,6 +48,18 @@ class RedriveRunRequest(BaseModel):
     redrive_model: Optional[str] = None
     require_human_approval: bool = False
     triggered_by: Optional[str] = None
+    # Phase 3 — launch from a saved QualityReport instead of re-scoring a
+    # scope. When set, threshold/style_threshold/style_guide_id/scope/
+    # scoring_* are taken from the report and the fields above are ignored;
+    # `routing` decides per bucket / per unit whether each issue goes to a
+    # human (PENDING_APPROVAL) or straight to an MT engine, and which one.
+    from_report_id: Optional[str] = None
+    routing: Optional[RedriveRouting] = None
+    # Phase 4 — report-gated runs only. On: hold every mt candidate for a
+    # human sign-off. Off (default): an mt candidate that clears the report's
+    # threshold on a second-pass score goes live immediately; one that
+    # doesn't is held as PENDING_APPROVAL rather than replacing the unit.
+    second_review: bool = False
 
 
 class RedriveApprovalRequest(BaseModel):
@@ -91,8 +103,35 @@ async def create_redrive_run(request: RedriveRunRequest):
 
     When require_human_approval is set, below-threshold units come back with
     outcome="pending_approval" and a proposed_text instead of being applied —
-    call the approve/reject endpoints below to resolve each one."""
+    call the approve/reject endpoints below to resolve each one.
+
+    When from_report_id is set, this consumes that saved QualityReport
+    (Phase 3) — no re-scoring — and routes each item per `routing`."""
     db = get_db()
+
+    if request.from_report_id:
+        report = await db.get_quality_report(request.from_report_id)
+        if report is None:
+            raise HTTPException(status_code=404, detail=f"Quality report {request.from_report_id} not found")
+        try:
+            scorer = get_scorer(report.scoring_provider, report.scoring_model, report.reference_mode)
+        except RuntimeError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        default_target = request.routing.default if request.routing else None
+        redrive_backend = (
+            get_translation_backend(default_target.provider, default_target.model)
+            if default_target and default_target.provider else None
+        )
+        engine = RedriveEngine(
+            scorer=scorer, scorer_label=report.scoring_provider,
+            redrive_backend=redrive_backend,
+            redrive_label=default_target.provider if default_target else None,
+        )
+        return await engine.redrive_from_report(
+            report, request.routing, triggered_by=request.triggered_by,
+            second_review=request.second_review,
+        )
+
     engine = _build_engine(
         request.scoring_provider, request.redrive_provider, request.scoring_model, request.redrive_model,
     )

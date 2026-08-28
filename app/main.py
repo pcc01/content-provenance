@@ -24,7 +24,8 @@ import uvicorn
 
 from app.api import (
     translations, provenance, search, xliff_export, xliff_import, redrive, images,
-    notes, documents, pages, audit, style, tm, vendors, consistency, quality, models,
+    notes, documents, pages, audit, style, tm, vendors, consistency, quality,
+    quality_reports, models,
     json_export, json_import, integrations,
 )
 from app.core.database import init_db
@@ -92,6 +93,9 @@ app.include_router(tm.router, prefix="/api/v1/tm", tags=["Translation Memory"])
 app.include_router(style.router, prefix="/api/v1/style", tags=["Style & Voice"])
 app.include_router(vendors.router, prefix="/api/v1/vendors", tags=["Vendor Scorecard"])
 app.include_router(consistency.router, prefix="/api/v1/consistency", tags=["Consistency"])
+# quality_reports mounted BEFORE quality under the same prefix: its literal
+# /reports routes must match before quality's /{unit_id}/automatic param route.
+app.include_router(quality_reports.router, prefix="/api/v1/quality", tags=["Quality Reports"])
 app.include_router(quality.router, prefix="/api/v1/quality", tags=["Automatic Quality Metrics"])
 app.include_router(models.router, prefix="/api/v1/models", tags=["Model Discovery"])
 app.include_router(integrations.router, prefix="/api/v1/integrations/cms", tags=["CMS Integrations"])

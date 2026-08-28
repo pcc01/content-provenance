@@ -40,41 +40,52 @@ you get the actual name, on the actual version, the same as you'd get for
 [XLIFF ⇄ W3C PROV Integration](#xliff--w3c-prov-integration) below
 meaningful rather than cosmetic.
 
-Beyond tracking provenance, the system runs a **threshold-quality redrive
-loop**: score every translation (deterministic checks, falling back to a
-pluggable model scorer), automatically resend anything below a threshold for
-retranslation, and record the whole thing — new version, new provenance,
-`wasRevisionOf` link back to what it replaced — with an optional
-human-in-the-loop gate before any redrive actually goes live. Reviewing that
-content happens in-context: the **Review Shell** overlays the real rendered
-page with clickable highlight boxes instead of a segment-grid TMS view (see
-[Run the review environment](#run-the-review-environment-review-shell)
-below).
+Beyond tracking provenance, the system runs a **report-gated, human-in-the-loop
+redrive loop**: score every translation (deterministic checks, falling back to
+a pluggable model scorer), **produce a persisted, exportable Quality Report**
+that buckets each unit (pass / below-quality / critical / below-style /
+needs-review) and spends no translation budget, then **route each issue** — per
+bucket or per unit — to a **human reviewer** or straight to a **chosen MT
+engine**. Every machine retranslation is **second-pass scored before it goes
+live**: a candidate that doesn't clear the threshold is held for approval, not
+silently applied. The whole thing is recorded — new version, new provenance,
+`wasRevisionOf` link back to what it replaced. Reviewing that content happens
+in-context: the **Review Shell** overlays the real rendered page — a web page,
+a plain document, a **slide deck or PDF with its layout preserved**, or the
+**text inside an image** (OCR) — with clickable, score-coloured highlight boxes
+instead of a segment-grid TMS view, and can write the translations back out to
+the original `.pptx`/`.docx` (see
+[Run the review environment](#run-the-review-environment-review-shell) below).
 
 On top of that: **brand voice/tone/terminology adherence** is tracked as its
 own scoring axis alongside translation quality, grounded by a **pgGraph**
 retrieval layer (style guides, glossary terms, and prior-translation
 exemplars, hybrid vector+graph) that feeds context into AI translation
 *before* it happens rather than only scoring after the fact; **MQM/COMET/
-METEOR** formalize what "quality" means (a real 44-error-type taxonomy, a
-trained reference-free QE regression model, and a lexical regression check)
-instead of one ad-hoc number; and **every translate/evaluate/retranslate
+METEOR / M-Prometheus / XCOMET** formalize what "quality" means (a real
+44-error-type taxonomy, a trained reference-free QE regression model, a lexical
+regression check, an open multilingual 1–5 LLM judge, and localized error-span
+detection) instead of one ad-hoc number — and each report item is tagged
+**commercial-safe or research/non-commercial-only** so a downstream deliverable
+knows which scores it may cite; and **every translate/evaluate/retranslate
 step is multi-provider** — OpenAI, Anthropic Claude, Google Gemini, Google
-Translate, Microsoft Translator, Ollama (including Unbabel's Tower/Tower+),
-LMStudio, and vLLM are all selectable per request, not just at process
-startup, **and the specific model within a provider is read live** (`GET
-/api/v1/models/{provider}`) rather than hardcoded — Ollama's locally pulled
-models, LMStudio/vLLM's currently-loaded model, and whatever your Claude/
-OpenAI/Gemini API key actually has access to.
+Translate, Microsoft Translator, Ollama (including Unbabel's Tower/Tower+ and
+M-Prometheus), LMStudio, and vLLM are all selectable per request, not just at
+process startup, **and the specific model within a provider is read live**
+(`GET /api/v1/models/{provider}`) rather than hardcoded — Ollama's locally
+pulled models, LMStudio/vLLM's currently-loaded model, and whatever your
+Claude/OpenAI/Gemini API key actually has access to.
 
 The Review Shell is segmented into four workflows matching how the work
 actually happens: **Content Creation** (define voice, import legacy content
-— TMX, XLIFF, or now CSV — write/check/translate new copy), **Quality
-Review** (in-context review, redrive, vendor scorecard, cross-document
-consistency), **Audit** (third-party site i18n/compliance review, a
-separate concern, optionally crawling as an authenticated user for
-sites that gate content behind a login), and **Analytics** (system-wide
-totals and charts, aggregating across the other three). Every translation
+— TMX, XLIFF, CSV, or documents — write/check/translate new copy), **Quality
+Review** (in-context review, the 3-step Redrive Console, layout-aware
+deck/PDF review, the DOCX bilingual reader, image localization + OCR, vendor
+scorecard, cross-document consistency), **Audit** (third-party site
+i18n/compliance review, a separate concern, optionally crawling as an
+authenticated user for sites that gate content behind a login), and
+**Analytics** (system-wide totals and charts, aggregating across the other
+three). Every translation
 unit's full history — provenance, deployment record, lineage graph, XLIFF
 export, automatic quality-metric scores, context screenshots — is reachable
 directly from the Review tab's segment drawer, not just via the API. See
@@ -108,7 +119,7 @@ edge case to work around:
   string similarity to the source.
 - **Quality scoring judges meaning and voice, not resemblance.** The
   MQM-style LLM judge behind redrive/evaluate (see
-  [Quality & Evaluation](#quality--evaluation-mqm--comet--meteor) below)
+  [Quality & Evaluation](#quality--evaluation-mqm--m-prometheus--comet--xcomet--meteor) below)
   flags mistranslations, fluency issues, and register/style errors — it
   doesn't penalize a target for diverging from the source's literal wording.
   The automatic (non-LLM) metrics are a narrower tool by contrast: COMET-Kiwi
@@ -233,6 +244,7 @@ way, including who the human was.
 - PostgreSQL, reachable (or Docker, to run it via `docker-compose up postgres`) — the system of record, not optional
 - Node.js 18+ / npm — only needed for the Review Shell (`frontend/`) and its demo fixture, not the API server itself
 - A Playwright-managed Chromium install — only needed for Phase 8's "review any URL" fetch mode (`playwright install chromium`, see below)
+- The Tesseract OCR binary — only needed for in-image OCR (`POST /images/{id}/ocr`); everything else degrades to a `503` without it
 
 ### Installation
 
@@ -414,7 +426,7 @@ arbitrary grouping:
 | Segment | Pages | What it's for |
 |---------|-------|----------------|
 | **Content Creation** | Create, Style Guides, Import, Documents | Everything BEFORE a translation exists: define brand voice (Style Guides), bring in legacy vendor content (Import — TMX, XLIFF, and the Import page's ingest ledger), write/check/translate new copy (Create), or bulk-import a `.txt`/`.md`/`.csv` file (Documents) |
-| **Quality Review** | Review, Live (extension), Redrive, Images, Vendor Scorecard, Consistency, Search | Everything about evaluating and improving translations already in the system — in-context review (SDK-tagged app, live browser tab, or any URL), threshold redrive with a worklist and ad-hoc evaluate/METEOR-compare tools, image localization, per-vendor scoring, cross-document term/tone consistency, semantic/keyword search |
+| **Quality Review** | Review, Live (extension), Redrive, Decks, Docs, Images, Vendor Scorecard, Consistency, Search | Everything about evaluating and improving translations already in the system — in-context review (SDK-tagged app, live browser tab, or any URL), the 3-step **Redrive Console** (evaluate → quality report → routed redrive), layout-aware **deck/PDF review** (Decks), the **bilingual reader** for DOCX/flow docs (Docs), image localization + OCR, per-vendor scoring, cross-document term/tone consistency, semantic/keyword search |
 | **Audit** | (single page) | A THIRD-PARTY site compliance tool — genuinely separate from this system's own translations; optionally authenticated (see [Authenticated Crawling/Fetching](#authenticated-crawlingfetching)) |
 | **Analytics** | (single page) | System-wide totals and charts (by-method bar chart, by-status donut chart) aggregating across all three segments above |
 
@@ -530,32 +542,41 @@ version history, no import counterpart).
 | `POST` | `/api/v1/json/import` | Ingest a JSON document (multipart `file` + `source_system`) — creates/updates units and their version history. Lenient: accepts this system's own extensive export, a bare `{"units":[...]}` array, or a single bare unit object, with a few common field-name aliases (`sourceText`/`source`/`text`, etc.). Provenance is always rebuilt fresh server-side rather than trusted from the file, so importing a minimal file and exporting it back is how a plain JSON file becomes the fully provenance-enriched version |
 | `GET`  | `/api/v1/json/ingest-log` | Same ledger as `/api/v1/xliff/ingest-log`, exposed under this prefix too for discoverability |
 
-### Threshold-Quality Redrive
+### Quality Report → Routed Redrive
 
-Score everything in scope, then redrive (retranslate) whatever falls below a
-threshold — the core loop this system is built around, modeled on an offline
-QE-scorer → threshold → MT-fallback-chain pipeline.
+The workflow is **translate → evaluate → report → redrive**. The report is a
+halting checkpoint: it scores everything in scope, buckets each unit, spends no
+translation budget, and is exportable as JSON or a branded PDF. You then route
+each bucket (or override an individual unit) to a human reviewer or a chosen MT
+engine.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/api/v1/redrive/runs` | Create + run a redrive pass (`threshold`, `scope`, `require_human_approval`, `scoring_provider`) |
+| `POST` | `/api/v1/quality/reports` | Evaluate a scope and persist a Quality Report (`scope`, `threshold`, `style_threshold`, `scoring_provider`/`scoring_model`, `reference_mode`) — no retranslation |
+| `GET`  | `/api/v1/quality/reports` / `/{id}` | List recent reports / one report with its per-unit items and bucket counts |
+| `GET`  | `/api/v1/quality/reports/{id}/export.json` / `export.pdf` | Download the report; the PDF stamps every page that leaned on a non-commercial evaluator |
+| `PATCH`| `/api/v1/quality/reports/{id}/items/{item_id}` | A reviewer re-routes one unit (`{"action": "human"\|"mt"\|"none"\|null}`) — honoured ahead of the bucket rule |
+| `POST` | `/api/v1/quality/reports/{id}/attach-xcomet` | Run XCOMET over the report's units and attach localized error spans (`503` if `unbabel-comet` isn't installed; re-marks touched items non-commercial) |
+| `POST` | `/api/v1/quality/reports/{id}/attach-cometkiwi` | Same, from CometKiwi word-level BAD tokens (major-severity spans). Spans are tagged by source so both can coexist on one item. |
+| `POST` | `/api/v1/redrive/runs` | With `from_report_id` + `routing` + `second_review`: consume a report, route each item, gate every mt candidate. Without them: the classic one-shot score→threshold→redrive pass (`threshold`, `scope`, `require_human_approval`, `scoring_provider`) |
 | `GET`  | `/api/v1/redrive/runs/{id}` | Status/results of a run |
-| `POST` | `/api/v1/redrive/runs/{id}/items/{item_id}/approve` | Human-in-the-loop: apply a proposed redrive |
-| `POST` | `/api/v1/redrive/runs/{id}/items/{item_id}/reject` | Human-in-the-loop: decline a proposed redrive |
-| `GET`  | `/api/v1/redrive/preview` | Dry-run forecast — how many units a threshold would catch, no writes/spend |
-| `GET`  | `/api/v1/redrive/queue` | Units currently below a threshold, worst-first — the Redrive Console's "Worklist" table, with a per-row "Evaluate" handoff into the standalone evaluate panel |
+| `POST` | `/api/v1/redrive/runs/{id}/items/{item_id}/approve` \| `/reject` | Human-in-the-loop: apply / decline a proposed or held redrive |
+| `GET`  | `/api/v1/redrive/preview` \| `/queue` | Dry-run forecast / worst-first below-threshold worklist (classic-path helpers) |
 
 Scoring runs deterministic free checks first (untranslated/garbage/placeholder
 issues, wrong script, HTML tag/number mismatches — ported from
 peripateticware's `qa_review_llamacpp.py`), falling through to a configured
-model scorer (any of the six [evaluation backends](#translation--evaluation-backends)
-above) only for pairs those don't resolve. `scoring_provider` (the "evaluate"
-model) and `redrive_provider` (the "retranslate" model) are independent — you
-can evaluate with one model and redrive with a different one. Set
-`require_human_approval: true` on a run to have redrives proposed but not
-applied until a reviewer calls the approve/reject endpoints — useful for
-organizations that want AI-driven changes gated by a human even when the
-score/threshold decision itself is automated.
+model scorer (any of the seven [evaluation backends](#translation--evaluation-backends)
+below) only for pairs those don't resolve.
+
+**Routing** (`RedriveRouting`): a `default` action, per-bucket rules
+(`by_bucket`, each carrying its own MT engine), and per-unit overrides
+(`by_unit`, plus the persisted `route_override` from the PATCH above) — resolved
+later-wins, so `hard_fail → human`, `below_quality → Tower+-9B`, and one
+stubborn unit → Claude is one request. An `mt` route is **applied only if its
+second-pass score clears the report threshold** (and `second_review` is off);
+otherwise it's held as `PENDING_APPROVAL` with the reason. `scoring_provider`
+(evaluate) and the redrive engine (retranslate) stay independent.
 
 ### Style Guides, Glossary & Voice Check (pgGraph retrieval)
 
@@ -581,28 +602,54 @@ retrieval layer automatically when a `style_guide_id` is supplied — rules,
 glossary terms, and prior-translation exemplars are woven into the AI
 translation prompt, not just checked afterward.
 
-### Quality & Evaluation (MQM / COMET / METEOR)
+### Quality & Evaluation (MQM / M-Prometheus / COMET / XCOMET / METEOR)
 
 Formalizes "quality" against real external standards instead of one ad-hoc
 number — full research and primary-source citations in
 [`docs/quality-evaluation-research.md`](docs/quality-evaluation-research.md).
-Three independent, never-blended axes: an LLM-judge scored against a real
-44-error-type **MQM-Core** taxonomy (`app/core/scoring/mqm_types.py`,
-typed `error_type` + severity per error, `hard_fail` on any critical error),
-**COMET-Kiwi** (a trained reference-free QE regression model, not a
-generative judge), and **METEOR** (a lexical regression check comparing a
-redrive candidate against the version it replaces).
+Independent, never-blended axes:
+
+- **MQM-Core LLM judge** — scored against a real 44-error-type taxonomy
+  (`app/core/scoring/mqm_types.py`), typed `error_type` + severity per error,
+  `hard_fail` on any critical error. Provider `claude` (or `openai` / `gemini` /
+  `lmstudio` / `vllm`, same JSON contract). **This is the default**
+  (`SCORING_PROVIDER=claude`) and every evaluate / redrive call falls back to it
+  unless a request picks another provider.
+- **M-Prometheus** (Unbabel) — provider `mprometheus`. An open multilingual
+  **1–5** LLM judge on its own Accuracy/Fluency/Style rubric, run locally via an
+  Ollama GGUF; the 1–5 grade is mapped onto this system's 0–100 band. Optionally
+  reference-grounded from a near-exact TM match (`reference_mode`: `auto` |
+  `reference_free` | `prefer_reference`). Selectable per request (the "Evaluate
+  with" picker, `scoring_provider` on a report/redrive) or as the app default
+  via `SCORING_PROVIDER=mprometheus` — but note its **Qwen Research License →
+  research/non-commercial only**, so its scores are marked `commercial_safe=false`
+  and defaulting to it stamps every report non-commercial.
+- **COMET-Kiwi** — a trained reference-free QE regression model (not a
+  generative judge).
+- **XCOMET** — localized error spans (`minor`/`major`/`critical` + character
+  offsets), the one signal the scalar judges structurally can't give. Attached
+  to a report after the fact via `POST /quality/reports/{id}/attach-xcomet`;
+  `attach-cometkiwi` does the same from CometKiwi word-level BAD tokens, tagged
+  by source so both span sets coexist.
+- **METEOR** — a lexical regression check comparing a redrive candidate against
+  the version it replaces.
+
+Every evaluator is classified commercial-safe or not (`app/core/scoring/licensing.py`):
+the deterministic checks and the hosted judges (Claude / OpenAI / Gemini) are
+safe; M-Prometheus, XCOMET and COMET-Kiwi are non-commercial. A report's totals
+split the two lanes; `SCORER_COMMERCIAL_OVERRIDES` lets the operator assert the
+status of a local Ollama/vLLM checkpoint.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/api/v1/quality/evaluate` | Score one unit with a chosen [evaluation provider](#translation--evaluation-backends) on demand — independent of a redrive run; the Redrive Console's standalone "Evaluate a single unit" panel |
-| `POST` | `/api/v1/quality/meteor-compare` | Ad-hoc METEOR score between any two strings — the Redrive Console's "Compare METEOR" tool |
-| `GET`  | `/api/v1/quality/{unit_id}/automatic` | A unit's automatic-metric (COMET/METEOR) score history — the segment drawer's "Metrics" tab |
-| `POST` | `/api/v1/quality/comet-score` | Batch, offline/admin-triggered COMET-Kiwi scoring — deliberately not on any live-request path (CPU inference on a transformer-scale model doesn't fit a live-latency budget) |
+| `POST` | `/api/v1/quality/evaluate` | Score one unit with a chosen [evaluation provider](#translation--evaluation-backends) on demand — independent of a redrive run; the Redrive Console's standalone "Evaluate a single unit" panel. `reference_mode` for `mprometheus`. |
+| `POST` | `/api/v1/quality/meteor-compare` | Ad-hoc METEOR score between any two strings |
+| `GET`  | `/api/v1/quality/{unit_id}/automatic` | A unit's automatic-metric (COMET-Kiwi / XCOMET / METEOR) score history — the segment drawer's "Metrics" tab |
+| `POST` | `/api/v1/quality/comet-score` | Batch, offline/admin-triggered COMET-Kiwi scoring — deliberately not on any live-request path |
 
-COMET-Kiwi requires `unbabel-comet` (not installed by default — multi-GB,
-CC-BY-NC-SA-4.0 gated checkpoint, see `requirements.txt` and
-`app/core/scoring/automatic/comet_kiwi.py`) and degrades gracefully
+COMET-Kiwi and XCOMET both require `unbabel-comet` (not installed by default —
+multi-GB, CC-BY-NC-SA-4.0 gated checkpoints, see `requirements.txt` and
+`app/core/scoring/automatic/{comet_kiwi,xcomet}.py`) and degrade gracefully
 (`503`, not a crash) when it isn't.
 
 ### Vendor Scorecard & Cross-Document Consistency
@@ -632,6 +679,7 @@ get translated three different ways across the corpus."
 | `POST` | `/api/v1/images/{id}/context-link` | Attach a context screenshot to a translation unit — the segment drawer's "Context screenshots" uploader (distinct from Image Review, which only handles standalone `kind=translatable` banners) |
 | `GET`  | `/api/v1/images/context-links/{unit_id}` | Context images linked to a unit |
 | `POST` | `/api/v1/images/{id}/localize` | Start localizing a source image (optionally with the target file immediately) |
+| `POST` | `/api/v1/images/{id}/ocr` | Phase 7 — OCR the image's text into reviewable child units wired to `overlay_text_unit_ids` (`503` without Tesseract) |
 | `PUT`  | `/api/v1/images/localize/{itu_id}/target` | Attach/replace the localized target image |
 | `GET`  | `/api/v1/images/localize/{itu_id}` | An image translation unit's status + linkage |
 
@@ -640,26 +688,44 @@ inline in the review overlay like any other segment. Translatable images
 (banners, graphics) get their own provenance chain reusing the same PROV-DM
 builder as text (`SourceImage`/`TranslatedImage` entities).
 
-### Documents (plain text / Markdown / CSV)
+### Documents (text / Markdown / CSV / PPTX / PDF / DOCX)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/api/v1/documents/import` | Upload a `.txt`/`.md`/`.csv` file — segmented and translated immediately |
+| `POST` | `/api/v1/documents/import` | Upload a `.txt`/`.md`/`.csv`/`.pptx`/`.pdf`/`.docx` file — segmented and translated immediately |
+| `GET`  | `/api/v1/documents` | Recent imported documents, newest first — the review pickers |
 | `GET`  | `/api/v1/documents/{id}` | Document metadata |
-| `GET`  | `/api/v1/documents/{id}/segments` | Ordered segments for a target language |
+| `GET`  | `/api/v1/documents/{id}/segments` | Ordered segments for a target language (flow-format bilingual reader) |
+| `GET`  | `/api/v1/documents/{id}/structure` | Slides/pages in order, each with its text shapes (`kind`, `reading_order`, fractional bbox `x/y/w/h`) joined to their `TranslationUnit`; speaker notes / flow-doc paragraphs come back as shapes with no geometry |
+| `GET`  | `/api/v1/documents/{id}/export.pptx` \| `export.docx` | Round-trip — the target-language text written back into the original file, layout/styles preserved (`503` when the parser isn't importable) |
 
-Text/Markdown segment on blank lines (each paragraph/heading/multi-item
-list becomes its own unit); CSV segments **one unit per row**, taken from
-an optional `source_column` form field (defaults to the first column) — the
-natural shape for a CMS/spreadsheet export (`key,source_text,notes`, ...).
-Either way, each segment becomes an ordinary `TranslationUnit` (tagged
-`{document_id, position}` in its metadata), so it gets the same
-translation/scoring/redrive/provenance treatment as any other unit. The
-Review Shell's "Documents" tab uploads a file and hands back a ready-made
-target URL/route/locale for the "Review" tab — the document renders as its
-own `data-tu-id`-tagged page at `/documents/{id}`, served from the Review
-Shell's own origin, so the existing overlay SDK reviews it with no changes.
-PDF/PowerPoint/DOCX are tracked but not yet designed — see `ROADMAP.md`.
+Text/Markdown segment on blank lines; CSV segments **one unit per row** (optional
+`source_column`). **PPTX** (`pptx_extract.py`, `python-pptx`) and **PDF**
+(`pdf_extract.py`, PyMuPDF — no lxml, always available) extract one unit per text
+shape / table cell / speaker note / text block, each with a `DocumentShape` row
+holding a page index and a page-fraction bounding box. **DOCX** (`docx_extract.py`,
+`python-docx`) is a flow format — one unit per paragraph / table cell, no
+geometry. Either way each segment is an ordinary `TranslationUnit` (tagged
+`{document_id, position, ...}`), so it gets the same
+translation/scoring/redrive/provenance treatment as any other unit.
+`python-pptx` and `python-docx` both need `lxml`; each is lazy-imported and the
+import endpoint degrades to `503` where it's blocked.
+
+Text/Markdown/CSV render as a `data-tu-id`-tagged page at `/documents/{id}` (the
+"Documents" → "Review" handoff). A **deck or PDF** is reviewed in the **Decks**
+tab (`DeckReview.tsx`): `/structure` reconstructs each page as
+absolutely-positioned `data-tu-id` elements at their real fractional geometry,
+the **same rect-based overlay** the inline review uses draws the score boxes,
+and an expansion badge flags any shape whose translation outgrew its box. A
+**DOCX / flow document** is reviewed in the **Docs** tab (`DocumentReview.tsx`) —
+a bilingual source↔target reader with a score per row. Round-trip export back to
+`.pptx`/`.docx` writes translations into the stored original.
+
+**In-image OCR** — `POST /api/v1/images/{id}/ocr` runs Tesseract over a
+translatable image, creates one `TranslationUnit` per detected line, translates
+each, and wires them into an `ImageTranslationUnit.overlay_text_unit_ids` so the
+overlay can box each label on the image. `503` when the Tesseract binary isn't
+available (`pip install pytesseract` + the OS package, or `TESSERACT_CMD`).
 
 ### Pages (review any URL, no app changes required)
 
@@ -960,7 +1026,7 @@ Redrive Console's "Evaluate with"/"Retranslate with" dropdowns and standalone
 per-unit evaluate panel). `TRANSLATION_PROVIDER`/`SCORING_PROVIDER` in `.env`
 just set the fallback when a request doesn't pick one. Each of those same
 request shapes also accepts a `model` field — **which model to run within a
-provider**, for the six providers that offer more than one (see
+provider**, for every provider that offers more than one (see
 [Model Discovery](#model-discovery) below); ignored for the three
 single-endpoint NMT services (DeepL, Google Translate, MS Translator).
 
@@ -986,17 +1052,18 @@ untranslated/garbage/placeholder-broken pairs without any model call at all):
 
 | Provider | Env var value | Notes |
 |----------|--------------|-------|
-| **Claude** | `claude` | Requires `ANTHROPIC_API_KEY`. MQM-style structured JSON (typed `error_type` + severity per error, `hard_fail` on any critical error). |
-| **OpenAI** | `openai` | Requires `OPENAI_API_KEY`. Same MQM prompt/parsing contract as Claude (`app/core/scoring/mqm_prompt.py`). |
-| **Google Gemini** | `gemini` | Requires `GEMINI_API_KEY`. Same MQM contract. |
+| **Claude** | `claude` | Requires `ANTHROPIC_API_KEY`. MQM-style structured JSON (typed `error_type` + severity per error, `hard_fail` on any critical error). Commercial-safe. |
+| **OpenAI** | `openai` | Requires `OPENAI_API_KEY`. Same MQM prompt/parsing contract as Claude (`app/core/scoring/mqm_prompt.py`). Commercial-safe. |
+| **Google Gemini** | `gemini` | Requires `GEMINI_API_KEY`. Same MQM contract. Commercial-safe. |
+| **M-Prometheus** (Unbabel) | `mprometheus` | Local, via an Ollama GGUF (`MPROMETHEUS_MODEL`, default `M-Prometheus-14B-i1-GGUF:i1-Q4_K_M`). Scalar **1–5** judge on its own rubric — not the MQM-JSON contract; optionally TM-reference-grounded (`MPROMETHEUS_REFERENCE_MODE`). **Qwen Research License → non-commercial.** |
 | **Ollama** (incl. Tower/Tower+) | `ollama` | Local. Coarse pass/fail only (score 40 or 100) — Tower's free-text evaluation output isn't parsed into typed MQM errors; see below. |
 | **LMStudio** | `lmstudio` | Local. Same MQM contract as OpenAI/Gemini/Claude. |
 | **vLLM** | `vllm` | Local. Same MQM contract. |
 
 OpenAI/LMStudio/vLLM share one `OpenAICompatibleClient` (`app/core/llm_clients.py`)
-since all three speak the same `/v1/chat/completions` shape — no per-provider
-SDK dependencies were added for any of the six new providers above; they're
-all thin `httpx` REST clients.
+since all three speak the same `/v1/chat/completions` shape; M-Prometheus reuses
+the Ollama `/api/chat` transport. No per-provider SDK dependencies — they're all
+thin `httpx` REST clients.
 
 ### Tower / Tower+ (Unbabel)
 
@@ -1018,10 +1085,13 @@ deliberately *not* adopted (`Tower-Plus-72B`, upgrading evaluation output to
 typed MQM) — is in
 [`docs/quality-evaluation-research.md` §10](docs/quality-evaluation-research.md).
 
-### Automatic (non-LLM) quality metrics
+### Trained metrics (COMET-Kiwi / XCOMET / METEOR)
 
-A third, independent scoring axis alongside the LLM-judge above — see
-[Quality & Evaluation](#quality--evaluation-mqm--comet--meteor) below.
+Independent scoring axes alongside the LLM judges — COMET-Kiwi (reference-free
+QE), XCOMET (error spans), METEOR (lexical regression). Never blended into the
+score that gates a redrive. See
+[Quality & Evaluation](#quality--evaluation-mqm--m-prometheus--comet--xcomet--meteor)
+above.
 
 ### Model Discovery
 
@@ -1031,7 +1101,7 @@ Ollama model or your OpenAI account gains access to a new one:
 
 | Provider | Source |
 |----------|--------|
-| `ollama` | Ollama's own `GET /api/tags` — whatever's actually pulled locally |
+| `ollama`, `mprometheus` | Ollama's own `GET /api/tags` — whatever's actually pulled locally (`mprometheus` is an alias to the same list) |
 | `lmstudio`, `vllm` | The OpenAI-compatible `GET /v1/models` both servers expose — whatever's currently loaded |
 | `openai` | OpenAI's `GET /v1/models`, filtered to chat-capable-looking ids (`gpt*`/`o1*`/`o3*`) — excludes embeddings/whisper/dall-e |
 | `gemini` | Google's `GET /v1beta/models`, filtered to models supporting `generateContent` |
@@ -1083,7 +1153,7 @@ cd frontend/demo-target && npx tsc -b
 ```
 content-provenance/
 ├── alembic/                        # Schema migrations (source of truth for the DB schema)
-│   └── versions/                   # 0001_initial … 0020_automatic_metric_scores
+│   └── versions/                   # 0001_initial … 0025_document_shapes
 ├── app/
 │   ├── main.py                     # FastAPI app, lifespan, router registration, serves frontend/dist/
 │   ├── api/
@@ -1096,9 +1166,10 @@ content-provenance/
 │   │   ├── json_export.py          # JSON provenance document download and preview — the JSON peer of xliff_export.py
 │   │   ├── json_import.py          # JSON provenance document ingestion — lenient about plain/minimal input shapes
 │   │   ├── integrations.py         # CMS push/pull (Strapi) — app/core/cms_service.py
-│   │   ├── redrive.py              # Threshold-quality redrive runs, preview, queue, human-in-the-loop approve/reject
+│   │   ├── redrive.py              # Redrive runs — classic one-shot pass AND report-gated (from_report_id + routing + second_review), human-in-the-loop approve/reject
+│   │   ├── quality_reports.py      # Quality Report: evaluate a scope, persist/list/export (JSON+PDF), per-unit route override, attach-xcomet / attach-cometkiwi spans
 │   │   ├── images.py               # Image asset upload, context-linking, localization
-│   │   ├── documents.py            # Phase 7a: text/Markdown document import + segments
+│   │   ├── documents.py            # Document import (text/Markdown/CSV + PPTX with shape geometry), segments, deck /structure, list
 │   │   ├── pages.py                # Phase 8/9/10: fetch+rewrite review, page history, page-level notes, pending-proposals list
 │   │   ├── audit.py                # Phase 11: site i18n/l10n/compliance audit runs + findings
 │   │   ├── tm.py                   # Phase 13: TMX 1.4 translation-memory import
@@ -1131,13 +1202,17 @@ content-provenance/
 │   │   │   ├── openai_compatible_scorer.py  # Phase 16: shared scorer for OpenAI/LMStudio/vLLM
 │   │   │   ├── gemini_scorer.py    # Phase 16: Google Gemini judge
 │   │   │   ├── ollama_scorer.py    # Local Ollama QE model (Tower/Tower+, coarse pass/fail)
-│   │   │   ├── factory.py          # CompositeScorer selection — 6-provider registry, per-request override
+│   │   │   ├── mprometheus_prompt.py / mprometheus_scorer.py  # M-Prometheus (Unbabel) — scalar 1–5 judge on its own rubric, via Ollama GGUF, optional TM-reference grounding
+│   │   │   ├── licensing.py        # Per-scorer commercial-safe vs research/non-commercial lane map (+ SCORER_COMMERCIAL_OVERRIDES)
+│   │   │   ├── factory.py          # CompositeScorer selection — 7-provider registry, per-request provider/model/reference_mode override
 │   │   │   ├── style_base.py / style_scorer.py / style_factory.py  # Phase 13: tone/voice/terminology adherence scoring (Claude only)
-│   │   │   └── automatic/          # Phase 15: non-LLM metrics — meteor.py (NLTK), comet_kiwi.py (Unbabel wmt22-cometkiwi-da, optional)
-│   │   ├── redrive/                # Threshold-quality redrive engine
-│   │   │   ├── engine.py           # RedriveEngine — score, threshold, redrive, human-in-the-loop, style-threshold axis
+│   │   │   └── automatic/          # Trained metrics — meteor.py (NLTK), comet_kiwi.py (reference-free QE), xcomet.py (error spans), qe_wordlevel.py (word-level BAD tags) — all but meteor optional (unbabel-comet)
+│   │   ├── redrive/                # Redrive engine
+│   │   │   ├── engine.py           # RedriveEngine — evaluate() → QualityReport, redrive_from_report() with per-bucket/per-unit routing + a pre-apply second-pass gate; plus the classic run()
 │   │   │   ├── ledger.py           # DB-backed per-provider usage budget
 │   │   │   └── propose.py          # Phase 10: a human's own draft, filed as an ad-hoc PENDING_APPROVAL item
+│   │   ├── documents/              # Phase 7: format extraction + round-trip — pptx_extract.py / pdf_extract.py (PyMuPDF) / docx_extract.py (bilingual reader) / reinsert.py (export.pptx/docx) / ocr.py (Tesseract) / storage.py (original bytes)
+│   │   ├── quality_report_pdf.py   # Branded Quality Report PDF (reportlab) — issues worst-first, non-commercial-signal page stamp
 │   │   ├── prov_builder.py         # W3C PROV-DM graph builder (text + image), PROV-JSON
 │   │   ├── page_fetch.py           # Phase 8: Playwright fetch, harvest/match/tag/rewrite an arbitrary URL
 │   │   ├── page_history.py         # Phase 9: point-in-time reconstruction, diff, timeline — no new snapshot storage
@@ -1151,7 +1226,7 @@ content-provenance/
 │   │   ├── haystack_pipeline.py    # Haystack 2.x indexing and search
 │   │   └── translation_backends.py # Phase 16: 10 pluggable providers — Mock/Anthropic/OpenAI/Gemini/DeepL/Google/MS Translator/Ollama/LMStudio/vLLM
 │   ├── models/
-│   │   └── schemas.py              # Pydantic models — PROV, XLIFF, Translation, Deployment, QualityScore, RedriveRun, ImageAsset, ReviewNote, StyleGuide, ScoreError…
+│   │   └── schemas.py              # Pydantic models — PROV, XLIFF, Translation, Deployment, QualityScore, QualityReport, RedriveRun, RedriveRouting, DocumentShape, ImageAsset, ReviewNote, StyleGuide, ScoreError…
 │   ├── tm/
 │   │   └── tmx_import.py           # Phase 13: TMX 1.4 parsing -> TranslationExemplar rows
 │   ├── xliff/
@@ -1166,7 +1241,7 @@ content-provenance/
 │   │   ├── api/client.ts           # Typed fetch wrapper for the whole API
 │   │   ├── components/             # ReviewFrame, SegmentDrawer (Details/History/Provenance/Metrics/Notes tabs), PageFlaggedList, PageHistory, PageNotes, PendingChanges, AuditReport (+ pages-crawled table), ProvenancePanel (+ lineage/exports), MetricsPanel, ContextImages, QualityBadge, VersionHistory, NotesThread, PageIntro, ModelPicker, LocaleSelect, BarChart, DonutChart
 │   │   ├── data/locales.ts         # Phase 18: top-10-most-spoken + broader language list backing LocaleSelect
-│   │   └── pages/                  # ReviewPage, LiveReviewPage, RedriveConsole (+ provider/model dropdowns, worklist, METEOR compare), ImageReview, DocumentsPage (+ CSV), DocumentViewer, AuditPage (+ authenticated crawl), SearchPage, AnalyticsPage, CreateContentPage, StyleGuidesPage (+ version chain), ImportPage (+ ingest ledger), VendorScorecardPage, ConsistencyPage, PublicAuditLanding (branded lead-gen landing, VITE_PUBLIC_SITE builds only)
+│   │   └── pages/                  # ReviewPage, LiveReviewPage, RedriveConsole (3-step wizard: evaluate → quality report + XCOMET/CometKiwi spans → routed redrive), DeckReview (deck/PDF canvas), DocumentReview (DOCX/flow bilingual reader), ImageReview (+ OCR), DocumentsPage, DocumentViewer, AuditPage, SearchPage, AnalyticsPage, CreateContentPage, StyleGuidesPage, ImportPage, VendorScorecardPage, ConsistencyPage, PublicAuditLanding (branded lead-gen landing, VITE_PUBLIC_SITE builds only)
 │   ├── review-sdk/                 # The in-context overlay injected into a cooperative target app, or extracted for Phase 10's extension
 │   │   ├── overlay.ts              # Highlight boxes, score/pending coloring, pluggable transport (postMessage or chrome.runtime)
 │   │   ├── harvest.ts              # Phase 10: shared harvest/rewrite DOM walk — compiled once, used by both Playwright and the extension

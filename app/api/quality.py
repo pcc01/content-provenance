@@ -39,14 +39,18 @@ class CometScoreRequest(BaseModel):
 class EvaluateRequest(BaseModel):
     unit_id: str
     # Phase 16 — any LLM-judge scoring provider: "claude" | "ollama" |
-    # "openai" | "gemini" | "lmstudio" | "vllm". None = settings.scoring_provider.
-    # Runs through the same CompositeScorer as redrive (get_scorer()), so
-    # deterministic.py's free checks still short-circuit obvious cases
-    # before spending a model call.
+    # "mprometheus" | "openai" | "gemini" | "lmstudio" | "vllm".
+    # None = settings.scoring_provider. Runs through the same CompositeScorer
+    # as redrive (get_scorer()), so deterministic.py's free checks still
+    # short-circuit obvious cases before spending a model call.
     provider: Optional[str] = None
     # Phase 18 — which model to run within provider, for ollama/lmstudio/
     # vllm (see GET /api/v1/models/{provider}). Ignored otherwise.
     model: Optional[str] = None
+    # Phase 1 (report-gated redrive) — mprometheus only: auto |
+    # reference_free | prefer_reference. How the judge sources its
+    # "Score 5" reference. Ignored by every other provider.
+    reference_mode: Optional[str] = None
 
 
 @router.post("/meteor-compare", response_model=MeteorCompareResponse)
@@ -125,7 +129,7 @@ async def evaluate_unit(request: EvaluateRequest):
 
     scorer_name = (request.provider or settings.scoring_provider).lower()
     try:
-        scorer = get_scorer(request.provider, request.model)
+        scorer = get_scorer(request.provider, request.model, request.reference_mode)
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

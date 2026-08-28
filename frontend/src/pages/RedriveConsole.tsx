@@ -12,7 +12,12 @@ import { PageIntro } from "../components/PageIntro";
 import { QualityBadge } from "../components/QualityBadge";
 
 type Step = "evaluate" | "report" | "redrive";
-type BucketRoute = { action: RecommendedAction | ""; provider: string; model: string };
+type BucketRoute = {
+  action: RecommendedAction | "";
+  override: boolean; // false = inherit the pipeline retranslate engine
+  provider: string;
+  model: string;
+};
 
 const STEP_TITLE: Record<Step, string> = {
   evaluate: "1 · Evaluate",
@@ -29,8 +34,12 @@ const ACTION_OPTIONS: { value: RecommendedAction | ""; label: string }[] = [
 
 function emptyBucketRoutes(): Record<string, BucketRoute> {
   return Object.fromEntries(
-    ACTIONABLE_BUCKETS.map((b) => [b, { action: "", provider: "", model: "" } as BucketRoute]),
+    ACTIONABLE_BUCKETS.map((b) => [b, { action: "", override: false, provider: "", model: "" } as BucketRoute]),
   );
+}
+
+function providerLabel(list: { value: string; label: string }[], value: string): string {
+  return list.find((p) => p.value === value)?.label ?? value;
 }
 
 // Client-side "what if" — recompute a unit's bucket at a different quality
@@ -54,6 +63,20 @@ export function RedriveConsole() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // ── Pipeline: models for each step + approval gates ─────────────────
+  // One place to say "this model evaluates, this model retranslates" —
+  // the per-bucket pickers in step 3 inherit the retranslate engine
+  // unless a bucket explicitly overrides it.
+  const [scoringProvider, setScoringProvider] = useState("");
+  const [scoringModel, setScoringModel] = useState("");
+  const [referenceMode, setReferenceMode] = useState("auto");
+  const [redriveProvider, setRedriveProvider] = useState("");
+  const [redriveModel, setRedriveModel] = useState("");
+  const [gatePauseOnReport, setGatePauseOnReport] = useState(true);
+  const [gateApprovePlan, setGateApprovePlan] = useState(false);
+  const [secondReview, setSecondReview] = useState(false);
+  const [planApproved, setPlanApproved] = useState(false);
+
   // ── Step 1: evaluate inputs ─────────────────────────────────────────
   const [targetLanguage, setTargetLanguage] = useState("");
   const [threshold, setThreshold] = useState(80);
@@ -61,9 +84,6 @@ export function RedriveConsole() {
   const [styleThreshold, setStyleThreshold] = useState(70);
   const [styleGuideId, setStyleGuideId] = useState("");
   const [guides, setGuides] = useState<StyleGuide[]>([]);
-  const [scoringProvider, setScoringProvider] = useState("");
-  const [scoringModel, setScoringModel] = useState("");
-  const [referenceMode, setReferenceMode] = useState("auto");
   const [triggeredBy, setTriggeredBy] = useState("reviewer@example.com");
   const [recent, setRecent] = useState<QualityReport[]>([]);
 
@@ -74,7 +94,6 @@ export function RedriveConsole() {
   // ── Step 3: redrive ─────────────────────────────────────────────────
   const [defaultAction, setDefaultAction] = useState<RecommendedAction | "">("");
   const [bucketRoutes, setBucketRoutes] = useState<Record<string, BucketRoute>>(emptyBucketRoutes());
-  const [secondReview, setSecondReview] = useState(false);
   const [run, setRun] = useState<RedriveRun | null>(null);
   const [actor, setActor] = useState("reviewer@example.com");
 
@@ -93,7 +112,15 @@ export function RedriveConsole() {
   useEffect(() => { api.listStyleGuides().then(setGuides).catch(() => {}); }, []);
   useEffect(() => { api.listQualityReports(10).then(setRecent).catch(() => {}); }, []);
 
+  // Any change to the routing plan invalidates a prior approval.
+  useEffect(() => {
+    setPlanApproved(false);
+  }, [defaultAction, bucketRoutes, redriveProvider, redriveModel, secondReview]);
+
   const isMprometheus = scoringProvider === "mprometheus";
+  const pipelineEngineLabel = redriveProvider
+    ? `${providerLabel(TRANSLATE_PROVIDERS, redriveProvider)}${redriveModel ? ` / ${redriveModel}` : ""}`
+    : "app default engine";
 
   async function buildReport() {
     setBusy(true);
@@ -112,7 +139,9 @@ export function RedriveConsole() {
       setReport(r);
       setProjThreshold(r.quality_threshold);
       setRun(null);
-      setStep("report");
+      // The "pause on the report" gate decides whether we stop here for a
+      // human to eyeball the buckets, or drop straight into routing.
+      setStep(gatePauseOnReport ? "report" : "redrive");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -159,26 +188,57 @@ export function RedriveConsole() {
     }
   }
 
+  // Resolve what actually happens to a bucket, mirroring the backend's
+  // precedence: an explicit per-bucket action wins, else the default
+  // action, else the report's own per-item recommendation. The engine is
+  // the bucket's own override, else the pipeline retranslate engine.
+  function bucketPlan(b: string): { action: string; engine: string } {
+    const r = bucketRoutes[b];
+    const action = r.action || defaultAction || "";
+    const actionLabel = action
+      ? (ACTION_OPTIONS.find((o) => o.value === action)?.label ?? action)
+      : "report's recommendation";
+    let engine = "—";
+    if (action === "mt" || action === "human" || action === "") {
+      engine = r.override && r.provider ? `${providerLabel(TRANSLATE_PROVIDERS, r.provider)}${r.model ? ` / ${r.model}` : ""}` : pipelineEngineLabel;
+    }
+    if (action === "none") engine = "—";
+    return { action: actionLabel, engine };
+  }
+
+  function buildRouting(): RedriveRouting {
+    const routing: RedriveRouting = {};
+    if (defaultAction) {
+      routing.default = {
+        action: defaultAction,
+        provider: redriveProvider || undefined,
+        model: redriveModel || undefined,
+      };
+    }
+    const byBucket: Record<string, RoutingTarget> = {};
+    for (const b of ACTIONABLE_BUCKETS) {
+      const r = bucketRoutes[b];
+      if (!r.action) continue; // no explicit rule → falls through to default / recommendation
+      byBucket[b] = {
+        action: r.action,
+        provider: (r.override && r.provider) || redriveProvider || undefined,
+        model: (r.override && r.model) || (!r.override ? redriveModel : "") || undefined,
+      };
+    }
+    if (Object.keys(byBucket).length) routing.by_bucket = byBucket;
+    return routing;
+  }
+
   async function runRedrive() {
     if (!report) return;
+    if (gateApprovePlan && !planApproved) {
+      setError("Approve the routing plan below before running the redrive.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
-      const routing: RedriveRouting = {};
-      if (defaultAction) routing.default = { action: defaultAction };
-      const byBucket: Record<string, RoutingTarget> = {};
-      for (const b of ACTIONABLE_BUCKETS) {
-        const r = bucketRoutes[b];
-        if (r.action) {
-          byBucket[b] = {
-            action: r.action,
-            provider: r.provider || undefined,
-            model: r.model || undefined,
-          };
-        }
-      }
-      if (Object.keys(byBucket).length) routing.by_bucket = byBucket;
-
+      const routing = buildRouting();
       const result = await api.createRedriveRun({
         threshold: report.quality_threshold, scope: {},
         from_report_id: report.id,
@@ -254,6 +314,66 @@ export function RedriveConsole() {
         whether each issue goes to a human reviewer or straight to an MT engine.
       </PageIntro>
 
+      {/* ── Pipeline: models per step + approval gates ─────────────────── */}
+      <details open style={{ margin: "4px 0 16px", border: "1px solid #e5e7eb", borderRadius: 8 }}>
+        <summary style={{ cursor: "pointer", padding: "10px 14px", fontSize: 13, fontWeight: 600, userSelect: "none" }}>
+          Pipeline — models &amp; approval gates
+        </summary>
+        <div style={{ padding: "4px 14px 14px", display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ fontSize: 12, color: "#6b7280" }}>
+            Pick the model for each step once. The retranslate engine below is the default for every MT / human-draft
+            route in step 3; a bucket can still override it. (The initial <em>translate</em> engine is chosen on the
+            Content Creation / Import screens.)
+          </div>
+
+          <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
+            <div>
+              <ModelPicker
+                providers={EVALUATE_PROVIDERS} provider={scoringProvider} model={scoringModel}
+                onProviderChange={setScoringProvider} onModelChange={setScoringModel} label="Evaluate with"
+              />
+              {isMprometheus && (
+                <div style={{ marginTop: 6, fontSize: 12, color: "#92400e", maxWidth: 300 }}>
+                  Research/non-commercial (Qwen Research License) — its scores are stamped non-commercial on the report.
+                  <label style={{ display: "block", marginTop: 6, color: "#374151" }}>
+                    Reference mode
+                    <select value={referenceMode} onChange={(e) => setReferenceMode(e.target.value)}
+                            style={{ display: "block", padding: 4, marginTop: 4, minWidth: 260 }}>
+                      {MPROMETHEUS_REFERENCE_MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+                    </select>
+                  </label>
+                </div>
+              )}
+            </div>
+            <div>
+              <ModelPicker
+                providers={TRANSLATE_PROVIDERS} provider={redriveProvider} model={redriveModel}
+                onProviderChange={setRedriveProvider} onModelChange={setRedriveModel} label="Retranslate with"
+              />
+              <div style={{ marginTop: 6, fontSize: 12, color: "#6b7280", maxWidth: 300 }}>
+                Default for every routed MT / human-draft in step 3.
+              </div>
+            </div>
+          </div>
+
+          <fieldset style={{ border: "1px solid #e5e7eb", borderRadius: 6, padding: "8px 12px 12px", margin: 0 }}>
+            <legend style={{ fontSize: 12, fontWeight: 600, color: "#374151", padding: "0 6px" }}>Approval gates</legend>
+            <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+              <input type="checkbox" checked={gatePauseOnReport} onChange={(e) => setGatePauseOnReport(e.target.checked)} />
+              Pause on the quality report before routing anything <span style={{ color: "#9ca3af" }}>(recommended)</span>
+            </label>
+            <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
+              <input type="checkbox" checked={gateApprovePlan} onChange={(e) => setGateApprovePlan(e.target.checked)} />
+              Require me to approve the routing plan before the redrive runs
+            </label>
+            <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
+              <input type="checkbox" checked={secondReview} onChange={(e) => setSecondReview(e.target.checked)} />
+              Second review — hold every MT candidate for human sign-off, even when it clears the threshold
+            </label>
+          </fieldset>
+        </div>
+      </details>
+
       {/* Step nav */}
       <div style={{ display: "flex", gap: 6, margin: "8px 0 20px" }}>
         {(["evaluate", "report", "redrive"] as Step[]).map((s) => {
@@ -314,23 +434,10 @@ export function RedriveConsole() {
             </div>
           )}
 
-          <ModelPicker
-            providers={EVALUATE_PROVIDERS} provider={scoringProvider} model={scoringModel}
-            onProviderChange={setScoringProvider} onModelChange={setScoringModel} label="Evaluate with"
-          />
-          {isMprometheus && (
-            <div style={{ paddingLeft: 4, fontSize: 12.5, color: "#92400e" }}>
-              M-Prometheus is research/non-commercial (Qwen Research License) — its scores are marked
-              non-commercial on the report.
-              <label style={{ display: "block", marginTop: 6, color: "#374151" }}>
-                Reference mode
-                <select value={referenceMode} onChange={(e) => setReferenceMode(e.target.value)}
-                        style={{ display: "block", padding: 4, marginTop: 4, minWidth: 260 }}>
-                  {MPROMETHEUS_REFERENCE_MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
-                </select>
-              </label>
-            </div>
-          )}
+          <div style={{ fontSize: 12.5, color: "#6b7280" }}>
+            Evaluator: <strong>{scoringProvider || "app default"}{scoringModel ? ` / ${scoringModel}` : ""}</strong>
+            {" "}— change it in the <em>Pipeline</em> panel above.
+          </div>
 
           <label style={{ fontSize: 13 }}>
             Triggered by
@@ -508,7 +615,8 @@ export function RedriveConsole() {
           <div style={{ fontSize: 13, color: "#6b7280" }}>
             Routing the {issues.length} issue(s) from report{" "}
             <span style={{ fontFamily: "monospace" }}>{report.id.slice(0, 8)}</span>. A per-unit override set in step 2
-            wins over the bucket rule below.
+            wins over the bucket rule below. Buckets with no rule use the retranslate engine from the{" "}
+            <em>Pipeline</em> panel: <strong>{pipelineEngineLabel}</strong>.
           </div>
 
           <label style={{ fontSize: 13 }}>
@@ -523,6 +631,7 @@ export function RedriveConsole() {
             {ACTIONABLE_BUCKETS.map((b) => {
               const r = bucketRoutes[b];
               const count = report.summary[b] ?? 0;
+              const effectiveAction = r.action || defaultAction;
               return (
                 <div key={b} style={{ padding: 10, background: "#f9fafb", borderRadius: 6, opacity: count === 0 ? 0.5 : 1 }}>
                   <div style={{ fontSize: 13, fontWeight: 600, color: BUCKET_COLOR[b], marginBottom: 6 }}>
@@ -535,14 +644,29 @@ export function RedriveConsole() {
                   >
                     {ACTION_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                   </select>
-                  {(r.action === "mt" || r.action === "human") && (
+                  {(effectiveAction === "mt" || effectiveAction === "human") && (
                     <div style={{ marginTop: 8 }}>
-                      <ModelPicker
-                        providers={TRANSLATE_PROVIDERS} provider={r.provider} model={r.model}
-                        onProviderChange={(p) => setBucketRoutes({ ...bucketRoutes, [b]: { ...bucketRoutes[b], provider: p } })}
-                        onModelChange={(m) => setBucketRoutes({ ...bucketRoutes, [b]: { ...bucketRoutes[b], model: m } })}
-                        label={r.action === "mt" ? "Retranslate with" : "Draft for the reviewer with"}
-                      />
+                      <label style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 6 }}>
+                        <input
+                          type="checkbox" checked={r.override}
+                          onChange={(e) => setBucketRoutes({ ...bucketRoutes, [b]: { ...r, override: e.target.checked } })}
+                        />
+                        Override the pipeline engine for this bucket
+                      </label>
+                      {r.override ? (
+                        <div style={{ marginTop: 6 }}>
+                          <ModelPicker
+                            providers={TRANSLATE_PROVIDERS} provider={r.provider} model={r.model}
+                            onProviderChange={(p) => setBucketRoutes({ ...bucketRoutes, [b]: { ...bucketRoutes[b], provider: p } })}
+                            onModelChange={(m) => setBucketRoutes({ ...bucketRoutes, [b]: { ...bucketRoutes[b], model: m } })}
+                            label={effectiveAction === "mt" ? "Retranslate with" : "Draft for the reviewer with"}
+                          />
+                        </div>
+                      ) : (
+                        <div style={{ fontSize: 12, color: "#6b7280", marginTop: 4 }}>
+                          Uses the pipeline engine: <strong>{pipelineEngineLabel}</strong>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -550,14 +674,45 @@ export function RedriveConsole() {
             })}
           </div>
 
-          <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
-            <input type="checkbox" checked={secondReview} onChange={(e) => setSecondReview(e.target.checked)} />
-            Second review — hold every MT candidate for human sign-off, even when it clears the threshold
-          </label>
-          <div style={{ fontSize: 12, color: "#6b7280", marginTop: -8, paddingLeft: 22 }}>
-            When off, an MT candidate that clears the report threshold on a second-pass score goes live immediately;
-            one that doesn't is held as a pending approval rather than replacing the unit.
+          {/* Routing plan — what will actually happen, engine included */}
+          <div style={{ padding: 12, background: "#f8fafc", border: "1px solid #e5e7eb", borderRadius: 6 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Routing plan</div>
+            <table style={{ width: "100%", fontSize: 12.5, borderCollapse: "collapse" }}>
+              <thead>
+                <tr style={{ textAlign: "left", borderBottom: "1px solid #e5e7eb" }}>
+                  <th style={{ padding: "3px 6px" }}>Bucket</th>
+                  <th style={{ padding: "3px 6px" }}>Units</th>
+                  <th style={{ padding: "3px 6px" }}>Action</th>
+                  <th style={{ padding: "3px 6px" }}>Engine</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ACTIONABLE_BUCKETS.filter((b) => (report.summary[b] ?? 0) > 0).map((b) => {
+                  const plan = bucketPlan(b);
+                  return (
+                    <tr key={b} style={{ borderBottom: "1px solid #f3f4f6" }}>
+                      <td style={{ padding: "3px 6px", color: BUCKET_COLOR[b], fontWeight: 600 }}>{BUCKET_LABEL[b]}</td>
+                      <td style={{ padding: "3px 6px" }}>{report.summary[b] ?? 0}</td>
+                      <td style={{ padding: "3px 6px" }}>{plan.action}</td>
+                      <td style={{ padding: "3px 6px", color: "#6b7280" }}>{plan.engine}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            <div style={{ fontSize: 11.5, color: "#9ca3af", marginTop: 6 }}>
+              {secondReview
+                ? "Second review is on — every MT candidate is held for sign-off regardless of its score."
+                : "MT candidates that clear the threshold on a second-pass score go live immediately; the rest are held as pending approvals."}
+            </div>
           </div>
+
+          {gateApprovePlan && (
+            <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", background: "#fffbeb", borderRadius: 6 }}>
+              <input type="checkbox" checked={planApproved} onChange={(e) => setPlanApproved(e.target.checked)} />
+              I have reviewed the routing plan above and approve running the redrive
+            </label>
+          )}
 
           <label style={{ fontSize: 13 }}>
             Approving/rejecting as
@@ -566,7 +721,14 @@ export function RedriveConsole() {
           </label>
 
           <div>
-            <button disabled={busy} onClick={runRedrive} style={{ padding: "7px 16px", cursor: "pointer", fontWeight: 600 }}>
+            <button
+              disabled={busy || (gateApprovePlan && !planApproved)}
+              onClick={runRedrive}
+              style={{
+                padding: "7px 16px", fontWeight: 600,
+                cursor: busy || (gateApprovePlan && !planApproved) ? "not-allowed" : "pointer",
+              }}
+            >
               {busy ? "Running…" : "Run redrive from report"}
             </button>
           </div>

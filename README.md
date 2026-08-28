@@ -578,6 +578,19 @@ second-pass score clears the report threshold** (and `second_review` is off);
 otherwise it's held as `PENDING_APPROVAL` with the reason. `scoring_provider`
 (evaluate) and the redrive engine (retranslate) stay independent.
 
+**In the Console** these choices are collected in one **Pipeline — models &
+approval gates** panel at the top: an *Evaluate with* picker and a *Retranslate
+with* picker (each a provider dropdown plus a live model dropdown from
+[Model Discovery](#model-discovery)), where the retranslate engine is the
+default for every routed MT / human-draft in step 3 and any bucket can tick
+*Override the pipeline engine* to pick its own. Three toggles gate the run:
+*pause on the quality report before routing* (on by default — off drops
+straight from evaluate to routing), *require me to approve the routing plan*
+(surfaces a per-bucket **action + engine** plan table and a confirm checkbox
+that must be ticked before "Run redrive" enables), and *second review* (holds
+every MT candidate for sign-off regardless of score). Held items show
+Approve / Reject buttons inline on the run's results table.
+
 ### Style Guides, Glossary & Voice Check (pgGraph retrieval)
 
 Structured brand-voice facts that ground AI translation *before* it happens
@@ -1247,7 +1260,7 @@ content-provenance/
 │   │   ├── api/client.ts           # Typed fetch wrapper for the whole API
 │   │   ├── components/             # ReviewFrame, SegmentDrawer (Details/History/Provenance/Metrics/Notes tabs), PageFlaggedList, PageHistory, PageNotes, PendingChanges, AuditReport (+ pages-crawled table), ProvenancePanel (+ lineage/exports), MetricsPanel, ContextImages, QualityBadge, VersionHistory, NotesThread, PageIntro, ModelPicker, LocaleSelect, BarChart, DonutChart
 │   │   ├── data/locales.ts         # Phase 18: top-10-most-spoken + broader language list backing LocaleSelect
-│   │   └── pages/                  # ReviewPage, LiveReviewPage, RedriveConsole (3-step wizard: evaluate → quality report + XCOMET/CometKiwi spans → routed redrive), DeckReview (deck/PDF canvas), DocumentReview (DOCX/flow bilingual reader), ImageReview (+ OCR), DocumentsPage, DocumentViewer, AuditPage, SearchPage, AnalyticsPage, CreateContentPage, StyleGuidesPage, ImportPage, VendorScorecardPage, ConsistencyPage, PublicAuditLanding (branded lead-gen landing, VITE_PUBLIC_SITE builds only)
+│   │   └── pages/                  # ReviewPage, LiveReviewPage, RedriveConsole (3-step wizard: evaluate → quality report + XCOMET/CometKiwi spans → routed redrive; top "Pipeline" panel picks the evaluate/retranslate model per step + toggles the pause/approve-plan/second-review gates), DeckReview (deck/PDF canvas), DocumentReview (DOCX/flow bilingual reader), ImageReview (+ OCR), DocumentsPage, DocumentViewer, AuditPage, SearchPage, AnalyticsPage, CreateContentPage, StyleGuidesPage, ImportPage, VendorScorecardPage, ConsistencyPage, PublicAuditLanding (branded lead-gen landing, VITE_PUBLIC_SITE builds only)
 │   ├── review-sdk/                 # The in-context overlay injected into a cooperative target app, or extracted for Phase 10's extension
 │   │   ├── overlay.ts              # Highlight boxes, score/pending coloring, pluggable transport (postMessage or chrome.runtime)
 │   │   ├── harvest.ts              # Phase 10: shared harvest/rewrite DOM walk — compiled once, used by both Playwright and the extension

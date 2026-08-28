@@ -16,6 +16,7 @@ env/
 
 # ── Runtime data ────────────────────────────────────────────────────────────
 data/images/
+data/documents/
 
 # ── Frontend (Review Shell / demo-target / review-sdk) ─────────────────────
 node_modules/

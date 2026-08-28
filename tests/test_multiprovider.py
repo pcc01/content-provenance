@@ -105,12 +105,29 @@ async def test_mock_translation_backend_round_trips_without_credentials():
 
 # ── Scoring provider registry ───────────────────────────────────────────────
 
-EXPECTED_SCORE_PROVIDERS = {"claude", "ollama", "gemini", "openai", "lmstudio", "vllm"}
+EXPECTED_SCORE_PROVIDERS = {"claude", "ollama", "mprometheus", "gemini", "openai", "lmstudio", "vllm"}
 
 
 def test_get_scorer_unknown_provider_raises():
     with pytest.raises(RuntimeError, match="Unknown scoring provider"):
         get_scorer("carrier-pigeon")
+
+
+def test_get_scorer_mprometheus_builds_fresh_composite_scorer():
+    """mprometheus is local (Ollama GGUF) — no credential check, same
+    "explicit provider always builds fresh" contract as the others."""
+    a = get_scorer("mprometheus")
+    b = get_scorer("mprometheus", reference_mode="reference_free")
+    assert isinstance(a, CompositeScorer)
+    assert a is not b
+
+
+def test_get_scorer_mprometheus_reference_mode_reaches_the_scorer():
+    from app.core.scoring.mprometheus_scorer import MPrometheusQualityScorer
+
+    scorer = get_scorer("mprometheus", reference_mode="prefer_reference")
+    assert isinstance(scorer.model_scorer, MPrometheusQualityScorer)
+    assert scorer.model_scorer.reference_mode == "prefer_reference"
 
 
 def test_get_scorer_explicit_provider_builds_fresh_composite_scorer():
@@ -195,7 +212,10 @@ async def test_evaluate_endpoint_scores_and_persists(client, monkeypatch):
     )
     await db.save_translation_unit(unit)
 
-    monkeypatch.setattr("app.api.quality.get_scorer", lambda provider=None, model=None: _StubEvaluateScorer())
+    monkeypatch.setattr(
+        "app.api.quality.get_scorer",
+        lambda provider=None, model=None, reference_mode=None: _StubEvaluateScorer(),
+    )
 
     resp = await client.post("/api/v1/quality/evaluate", json={"unit_id": unit.id, "provider": "claude"})
     assert resp.status_code == 200

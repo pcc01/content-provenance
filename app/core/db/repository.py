@@ -33,6 +33,7 @@ from app.core.db.models import (
     AutomaticMetricScoreRow,
     DeploymentRecordRow,
     DocumentRow,
+    DocumentShapeRow,
     GlossaryTermRow,
     GraphEdgeRow,
     GraphNodeRow,
@@ -46,6 +47,8 @@ from app.core.db.models import (
     ProvenanceEntityRow,
     ProvenanceRelationRow,
     ProviderUsageLedgerRow,
+    QualityReportItemRow,
+    QualityReportRow,
     QualityScoreRow,
     RedriveRunItemRow,
     RedriveRunRow,
@@ -68,6 +71,8 @@ from app.models.schemas import (
     DeploymentRecord,
     Document,
     DocumentFormat,
+    DocumentShape,
+    DocumentShapeKind,
     ExemplarOrigin,
     GlossaryTerm,
     GraphEdge,
@@ -83,7 +88,12 @@ from app.models.schemas import (
     ProvenanceAgent,
     ProvenanceEntity,
     ProvenanceRecord,
+    QualityReport,
+    QualityReportBucket,
+    QualityReportItem,
+    QualityReportStatus,
     QualityScore,
+    RecommendedAction,
     RedriveOutcome,
     RedriveRun,
     RedriveRunItem,
@@ -761,6 +771,38 @@ class PostgresRepository:
             row = await session.get(DocumentRow, document_id)
             return _row_to_document(row) if row else None
 
+    async def list_documents(self, limit: int = 50) -> List[Document]:
+        async with self._session_factory() as session:
+            rows = (
+                await session.execute(
+                    select(DocumentRow).order_by(DocumentRow.created_at.desc()).limit(limit)
+                )
+            ).scalars().all()
+            return [_row_to_document(r) for r in rows]
+
+    async def save_document_shapes(self, shapes: List[DocumentShape]) -> List[DocumentShape]:
+        async with self._session_factory() as session:
+            for s in shapes:
+                session.add(DocumentShapeRow(
+                    id=s.id, document_id=s.document_id, page_index=s.page_index,
+                    page_width=s.page_width, page_height=s.page_height,
+                    shape_index=s.shape_index, reading_order=s.reading_order, kind=s.kind.value,
+                    x=s.x, y=s.y, w=s.w, h=s.h, unit_id=s.unit_id, created_at=s.created_at,
+                ))
+            await session.commit()
+        return shapes
+
+    async def list_document_shapes(self, document_id: str) -> List[DocumentShape]:
+        async with self._session_factory() as session:
+            rows = (
+                await session.execute(
+                    select(DocumentShapeRow)
+                    .where(DocumentShapeRow.document_id == document_id)
+                    .order_by(DocumentShapeRow.page_index.asc(), DocumentShapeRow.reading_order.asc())
+                )
+            ).scalars().all()
+            return [_row_to_document_shape(r) for r in rows]
+
     async def list_translation_units_for_document(
         self, document_id: str, target_language: Optional[str] = None,
     ) -> List[TranslationUnit]:
@@ -990,6 +1032,8 @@ class PostgresRepository:
                 redrive_provider=run.redrive_provider,
                 require_human_approval=run.require_human_approval,
                 triggered_by=run.triggered_by,
+                from_report_id=run.from_report_id, routing=run.routing,
+                second_review=run.second_review,
                 started_at=run.started_at, finished_at=run.finished_at, summary=run.summary,
             ))
             await session.commit()
@@ -1067,6 +1111,8 @@ class PostgresRepository:
                 redrive_provider=row.redrive_provider,
                 require_human_approval=row.require_human_approval,
                 triggered_by=row.triggered_by,
+                from_report_id=row.from_report_id, routing=row.routing,
+                second_review=row.second_review,
                 started_at=row.started_at, finished_at=row.finished_at, summary=row.summary,
                 items=[_row_to_redrive_run_item(i) for i in items],
             )
@@ -1087,6 +1133,129 @@ class PostgresRepository:
                 )
             ).scalars().all()
             return [_row_to_redrive_run_item(r) for r in rows]
+
+    # ── Quality Reports ──────────────────────────────────────────────────
+
+    async def create_quality_report(self, report: QualityReport) -> QualityReport:
+        async with self._session_factory() as session:
+            session.add(QualityReportRow(
+                id=report.id, status=report.status.value, scope=report.scope,
+                quality_threshold=report.quality_threshold, style_threshold=report.style_threshold,
+                style_guide_id=report.style_guide_id, scoring_provider=report.scoring_provider,
+                scoring_model=report.scoring_model, reference_mode=report.reference_mode,
+                triggered_by=report.triggered_by, created_at=report.created_at,
+                finished_at=report.finished_at, summary=report.summary, totals=report.totals,
+            ))
+            await session.commit()
+        return report
+
+    async def update_quality_report(
+        self, report_id: str, status: Optional[QualityReportStatus] = None,
+        finished_at: Optional[datetime] = None, summary: Optional[Dict[str, Any]] = None,
+        totals: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        async with self._session_factory() as session:
+            row = await session.get(QualityReportRow, report_id)
+            if not row:
+                return
+            if status is not None:
+                row.status = status.value
+            if finished_at is not None:
+                row.finished_at = finished_at
+            if summary is not None:
+                row.summary = summary
+            if totals is not None:
+                row.totals = totals
+            await session.commit()
+
+    async def add_quality_report_item(self, item: QualityReportItem) -> QualityReportItem:
+        async with self._session_factory() as session:
+            session.add(QualityReportItemRow(
+                id=item.id, report_id=item.report_id, unit_id=item.unit_id,
+                quality_score_id=item.quality_score_id, scorer=item.scorer,
+                before_score=item.before_score, style_score=item.style_score,
+                reasons=item.reasons, errors=[e.model_dump(mode="json") for e in item.errors],
+                hard_fail=item.hard_fail, needs_review=item.needs_review,
+                bucket=item.bucket.value, recommended_action=item.recommended_action.value,
+                route_override=item.route_override.value if item.route_override else None,
+                commercial_safe=item.commercial_safe, source_text_len=item.source_text_len,
+                error_spans=item.error_spans,
+            ))
+            await session.commit()
+        return item
+
+    async def merge_quality_report_item_error_spans(
+        self, item_id: str, source: str, spans: List[Dict[str, Any]],
+        mark_non_commercial: bool = True,
+    ) -> Optional[QualityReportItem]:
+        """Replace the spans previously attached from `source` (xcomet /
+        cometkiwi) with this batch, keeping spans from other sources. Each
+        span is tagged with its source so several span-producing metrics can
+        coexist on one item."""
+        async with self._session_factory() as session:
+            row = await session.get(QualityReportItemRow, item_id)
+            if not row:
+                return None
+            kept = [s for s in (row.error_spans or []) if s.get("source") != source]
+            tagged = [{**s, "source": source} for s in spans]
+            row.error_spans = kept + tagged
+            if mark_non_commercial:
+                # a CC-BY-NC-SA metric now backs this item's row
+                row.commercial_safe = False
+            await session.commit()
+            return _row_to_quality_report_item(row)
+
+    async def get_quality_report(self, report_id: str) -> Optional[QualityReport]:
+        async with self._session_factory() as session:
+            row = await session.get(QualityReportRow, report_id)
+            if not row:
+                return None
+            items = (
+                await session.execute(
+                    select(QualityReportItemRow)
+                    .where(QualityReportItemRow.report_id == report_id)
+                    .order_by(QualityReportItemRow.before_score.asc().nulls_first())
+                )
+            ).scalars().all()
+            return QualityReport(
+                id=row.id, status=QualityReportStatus(row.status), scope=row.scope,
+                quality_threshold=row.quality_threshold, style_threshold=row.style_threshold,
+                style_guide_id=row.style_guide_id, scoring_provider=row.scoring_provider,
+                scoring_model=row.scoring_model, reference_mode=row.reference_mode,
+                triggered_by=row.triggered_by, created_at=row.created_at, finished_at=row.finished_at,
+                summary=row.summary, totals=row.totals,
+                items=[_row_to_quality_report_item(i) for i in items],
+            )
+
+    async def list_quality_reports(self, limit: int = 25) -> List[QualityReport]:
+        async with self._session_factory() as session:
+            rows = (
+                await session.execute(
+                    select(QualityReportRow).order_by(QualityReportRow.created_at.desc()).limit(limit)
+                )
+            ).scalars().all()
+            return [
+                QualityReport(
+                    id=r.id, status=QualityReportStatus(r.status), scope=r.scope,
+                    quality_threshold=r.quality_threshold, style_threshold=r.style_threshold,
+                    style_guide_id=r.style_guide_id, scoring_provider=r.scoring_provider,
+                    scoring_model=r.scoring_model, reference_mode=r.reference_mode,
+                    triggered_by=r.triggered_by, created_at=r.created_at, finished_at=r.finished_at,
+                    summary=r.summary, totals=r.totals, items=[],
+                )
+                for r in rows
+            ]
+
+    async def set_quality_report_item_route_override(
+        self, item_id: str, action: Optional[RecommendedAction],
+    ) -> Optional[QualityReportItem]:
+        async with self._session_factory() as session:
+            row = await session.get(QualityReportItemRow, item_id)
+            if not row:
+                return None
+            row.route_override = action.value if action else None
+            await session.commit()
+            return _row_to_quality_report_item(row)
 
     # ── Provider Usage Ledger ────────────────────────────────────────────
 
@@ -1723,6 +1892,21 @@ def _row_to_quality_score(row: QualityScoreRow) -> QualityScore:
     )
 
 
+def _row_to_quality_report_item(row: QualityReportItemRow) -> QualityReportItem:
+    return QualityReportItem(
+        id=row.id, report_id=row.report_id, unit_id=row.unit_id,
+        quality_score_id=row.quality_score_id, scorer=row.scorer,
+        before_score=row.before_score, style_score=row.style_score,
+        reasons=row.reasons, errors=[ScoreError(**e) for e in row.errors],
+        hard_fail=row.hard_fail, needs_review=row.needs_review,
+        bucket=QualityReportBucket(row.bucket),
+        recommended_action=RecommendedAction(row.recommended_action),
+        route_override=RecommendedAction(row.route_override) if row.route_override else None,
+        commercial_safe=row.commercial_safe, source_text_len=row.source_text_len,
+        error_spans=row.error_spans or [],
+    )
+
+
 def _row_to_review_note(row: ReviewNoteRow) -> ReviewNote:
     return ReviewNote(
         id=row.id, unit_id=row.unit_id, page_url=row.page_url, target_language=row.target_language,
@@ -1770,6 +1954,16 @@ def _row_to_document(row: DocumentRow) -> Document:
         id=row.id, title=row.title, original_filename=row.original_filename,
         format=DocumentFormat(row.format), source_language=row.source_language,
         created_at=row.created_at, uploaded_by=row.uploaded_by, metadata=row.meta,
+    )
+
+
+def _row_to_document_shape(row: DocumentShapeRow) -> DocumentShape:
+    return DocumentShape(
+        id=row.id, document_id=row.document_id, page_index=row.page_index,
+        page_width=row.page_width, page_height=row.page_height,
+        shape_index=row.shape_index, reading_order=row.reading_order,
+        kind=DocumentShapeKind(row.kind), x=row.x, y=row.y, w=row.w, h=row.h,
+        unit_id=row.unit_id, created_at=row.created_at,
     )
 
 

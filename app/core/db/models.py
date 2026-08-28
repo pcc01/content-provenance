@@ -270,6 +270,9 @@ class RedriveRunRow(Base):
     redrive_provider: Mapped[str] = mapped_column(String)
     require_human_approval: Mapped[bool] = mapped_column(Boolean, default=False)
     triggered_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    from_report_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    routing: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    second_review: Mapped[bool] = mapped_column(Boolean, default=False)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     summary: Mapped[dict] = mapped_column(JSON, default=dict)
@@ -288,6 +291,50 @@ class RedriveRunItemRow(Base):
     proposed_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     approved_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class QualityReportRow(Base):
+    """The persisted "produce a report" step — parent row + child
+    QualityReportItemRow, same parent-run/child-rows shape as
+    RedriveRunRow/RedriveRunItemRow."""
+    __tablename__ = "quality_reports"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    status: Mapped[str] = mapped_column(String, default="pending")
+    scope: Mapped[dict] = mapped_column(JSON, default=dict)
+    quality_threshold: Mapped[float] = mapped_column(Float)
+    style_threshold: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    style_guide_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    scoring_provider: Mapped[str] = mapped_column(String)
+    scoring_model: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    reference_mode: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    triggered_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    summary: Mapped[dict] = mapped_column(JSON, default=dict)
+    totals: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class QualityReportItemRow(Base):
+    __tablename__ = "quality_report_items"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    report_id: Mapped[str] = mapped_column(String, ForeignKey("quality_reports.id"), index=True)
+    unit_id: Mapped[str] = mapped_column(String, index=True)
+    quality_score_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    scorer: Mapped[str] = mapped_column(String)
+    before_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    style_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    reasons: Mapped[list] = mapped_column(JSON, default=list)
+    errors: Mapped[list] = mapped_column(JSON, default=list)
+    hard_fail: Mapped[bool] = mapped_column(Boolean, default=False)
+    needs_review: Mapped[bool] = mapped_column(Boolean, default=False)
+    bucket: Mapped[str] = mapped_column(String, index=True)
+    recommended_action: Mapped[str] = mapped_column(String)
+    route_override: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    commercial_safe: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    source_text_len: Mapped[int] = mapped_column(Integer, default=0)
+    error_spans: Mapped[list] = mapped_column(JSON, default=list)
 
 
 class ProviderUsageLedgerRow(Base):
@@ -389,6 +436,27 @@ class DocumentRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     uploaded_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     meta: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
+
+
+class DocumentShapeRow(Base):
+    """Phase 7 — a text-bearing shape on a slide, with geometry, for the
+    layout-aware deck review. See app/models/schemas.py's DocumentShape."""
+    __tablename__ = "document_shapes"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    document_id: Mapped[str] = mapped_column(String, ForeignKey("documents.id"), index=True)
+    page_index: Mapped[int] = mapped_column(Integer, index=True)
+    page_width: Mapped[float] = mapped_column(Float)
+    page_height: Mapped[float] = mapped_column(Float)
+    shape_index: Mapped[int] = mapped_column(Integer)
+    reading_order: Mapped[int] = mapped_column(Integer)
+    kind: Mapped[str] = mapped_column(String, default="other")
+    x: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    y: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    w: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    h: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    unit_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 class PageSnapshotRow(Base):

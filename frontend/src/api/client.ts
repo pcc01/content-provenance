@@ -206,10 +206,112 @@ export interface RedriveRun {
   scoring_provider: string;
   redrive_provider: string;
   require_human_approval: boolean;
+  // Phase 3/4 — present on runs launched from a saved QualityReport
+  from_report_id?: string | null;
+  routing?: RedriveRouting | null;
+  second_review?: boolean;
   started_at: string;
   finished_at: string | null;
   summary: Record<string, number>;
   items: RedriveRunItem[];
+}
+
+// ── Phase 1–4: Quality Report + report-gated redrive ───────────────────────
+
+export type QualityBucket =
+  | "pass" | "below_quality" | "hard_fail" | "below_style" | "needs_review";
+export type RecommendedAction = "none" | "human" | "mt";
+
+export const ACTIONABLE_BUCKETS: QualityBucket[] = [
+  "below_quality", "hard_fail", "below_style", "needs_review",
+];
+export const BUCKET_LABEL: Record<QualityBucket, string> = {
+  pass: "Pass",
+  below_quality: "Below quality",
+  hard_fail: "Critical error",
+  below_style: "Below style",
+  needs_review: "Needs review",
+};
+export const BUCKET_COLOR: Record<QualityBucket, string> = {
+  pass: "#30a46c",
+  below_quality: "#f5a524",
+  hard_fail: "#e5484d",
+  below_style: "#f5a524",
+  needs_review: "#8a8a8a",
+};
+
+export interface ScoreError {
+  severity: string;
+  count: number;
+  error_type: string | null;
+}
+
+export interface ErrorSpan {
+  text: string | null;
+  severity: string; // minor | major | critical
+  start: number | null;
+  end: number | null;
+  source?: string; // "xcomet" | "cometkiwi"
+}
+
+export interface QualityReportItem {
+  id: string;
+  report_id: string;
+  unit_id: string;
+  quality_score_id: string | null;
+  scorer: string;
+  before_score: number | null;
+  style_score: number | null;
+  reasons: string[];
+  errors: ScoreError[];
+  hard_fail: boolean;
+  needs_review: boolean;
+  bucket: QualityBucket;
+  recommended_action: RecommendedAction;
+  route_override: RecommendedAction | null;
+  commercial_safe: boolean | null;
+  source_text_len: number;
+  error_spans: ErrorSpan[];
+}
+
+export interface QualityReport {
+  id: string;
+  status: string;
+  scope: Record<string, unknown>;
+  quality_threshold: number;
+  style_threshold: number | null;
+  style_guide_id: string | null;
+  scoring_provider: string;
+  scoring_model: string | null;
+  reference_mode: string | null;
+  triggered_by: string | null;
+  created_at: string;
+  finished_at: string | null;
+  summary: Record<string, number>;
+  totals: Record<string, number>;
+  items: QualityReportItem[];
+}
+
+export interface RoutingTarget {
+  action: RecommendedAction;
+  provider?: string;
+  model?: string;
+}
+
+export interface RedriveRouting {
+  default?: RoutingTarget;
+  by_bucket?: Record<string, RoutingTarget>;
+  by_unit?: Record<string, RoutingTarget>;
+}
+
+export function qualityReportJsonUrl(id: string): string {
+  return `${API_BASE}/quality/reports/${id}/export.json`;
+}
+export function qualityReportPdfUrl(id: string): string {
+  return `${API_BASE}/quality/reports/${id}/export.pdf`;
+}
+export function documentExportUrl(id: string, fmt: "pptx" | "docx", targetLanguage: string): string {
+  return `${API_BASE}/documents/${id}/export.${fmt}?target_language=${encodeURIComponent(targetLanguage)}`;
 }
 
 export interface RedrivePreview {
@@ -276,15 +378,40 @@ export interface DocumentMeta {
   id: string;
   title: string;
   original_filename: string | null;
-  format: "text" | "markdown" | "csv";
+  format: "text" | "markdown" | "csv" | "pptx" | "pdf" | "docx";
   source_language: string;
   created_at: string;
   uploaded_by: string | null;
+  metadata?: Record<string, unknown>;
 }
 
 export interface DocumentSegments {
   document: DocumentMeta;
   segments: TranslationUnit[];
+}
+
+// Phase 7 — layout-aware structure for a slide deck.
+export interface DeckShape {
+  id: string;
+  kind: string; // DocumentShapeKind
+  reading_order: number;
+  x: number | null;
+  y: number | null;
+  w: number | null;
+  h: number | null;
+  unit: TranslationUnit | null;
+}
+
+export interface DeckPage {
+  index: number;
+  width: number;
+  height: number;
+  shapes: DeckShape[];
+}
+
+export interface DocumentStructure {
+  document: DocumentMeta;
+  pages: DeckPage[];
 }
 
 export interface PageHistory {
@@ -519,8 +646,19 @@ export const EVALUATE_PROVIDERS: { value: string; label: string }[] = [
   { value: "openai", label: "OpenAI" },
   { value: "gemini", label: "Google Gemini" },
   { value: "ollama", label: "Ollama — Tower+ (local)" },
+  // M-Prometheus is a scalar 1-5 MQM-quality judge on its own rubric, run
+  // locally via Ollama GGUF. Qwen Research License — non-commercial only;
+  // its scores are marked commercial_safe=false on the report.
+  { value: "mprometheus", label: "M-Prometheus (local · non-commercial)" },
   { value: "lmstudio", label: "LMStudio (local)" },
   { value: "vllm", label: "vLLM (local)" },
+];
+
+// mprometheus only — how the judge sources its "Score 5" reference.
+export const MPROMETHEUS_REFERENCE_MODES: { value: string; label: string }[] = [
+  { value: "auto", label: "Auto (use a TM match when found)" },
+  { value: "reference_free", label: "Reference-free" },
+  { value: "prefer_reference", label: "Prefer reference (flag if none)" },
 ];
 
 export interface EvaluateResult {
@@ -543,7 +681,7 @@ export interface EvaluateResult {
 // pure single-endpoint NMT — no model to pick, so they're excluded and
 // ModelPicker.tsx never shows a model dropdown for them.
 export const MODEL_DISCOVERABLE_PROVIDERS = new Set([
-  "anthropic", "claude", "openai", "gemini", "ollama", "lmstudio", "vllm",
+  "anthropic", "claude", "openai", "gemini", "ollama", "mprometheus", "lmstudio", "vllm",
 ]);
 
 export interface ModelListResponse {
@@ -656,10 +794,40 @@ const phase13to15Api = {
 
   // Phase 16 — standalone "evaluate" action: score one unit with a chosen
   // LLM-judge provider on demand, independent of a redrive run.
-  evaluateUnit: (unitId: string, provider?: string, model?: string) =>
+  // referenceMode is mprometheus-only (see MPROMETHEUS_REFERENCE_MODES).
+  evaluateUnit: (unitId: string, provider?: string, model?: string, referenceMode?: string) =>
     request<EvaluateResult>("/quality/evaluate", {
-      method: "POST", body: JSON.stringify({ unit_id: unitId, provider: provider || undefined, model: model || undefined }),
+      method: "POST",
+      body: JSON.stringify({
+        unit_id: unitId, provider: provider || undefined, model: model || undefined,
+        reference_mode: referenceMode || undefined,
+      }),
     }),
+
+  // ── Quality Reports (Phase 1–4) ──────────────────────────────────────
+  createQualityReport: (body: {
+    scope: Record<string, unknown>;
+    threshold: number;
+    style_threshold?: number;
+    style_guide_id?: string;
+    scoring_provider?: string;
+    scoring_model?: string;
+    reference_mode?: string;
+    triggered_by?: string;
+  }) => request<QualityReport>("/quality/reports", { method: "POST", body: JSON.stringify(body) }),
+  getQualityReport: (id: string) => request<QualityReport>(`/quality/reports/${id}`),
+  listQualityReports: (limit = 25) =>
+    request<QualityReport[]>(`/quality/reports?limit=${limit}`),
+  setReportItemRoute: (reportId: string, itemId: string, action: RecommendedAction | null) =>
+    request<QualityReportItem>(`/quality/reports/${reportId}/items/${itemId}`, {
+      method: "PATCH", body: JSON.stringify({ action }),
+    }),
+  // Phase 6 — attach localized error spans to a report (503 if unbabel-comet
+  // / the checkpoint isn't available).
+  attachReportXcomet: (reportId: string) =>
+    request<QualityReport>(`/quality/reports/${reportId}/attach-xcomet`, { method: "POST" }),
+  attachReportCometkiwi: (reportId: string) =>
+    request<QualityReport>(`/quality/reports/${reportId}/attach-cometkiwi`, { method: "POST" }),
 };
 
 export const api = {
@@ -718,6 +886,15 @@ export const api = {
     redrive_provider?: string; // Phase 16 — the "retranslate" model — see TRANSLATE_PROVIDERS
     scoring_model?: string; // Phase 18 — which model within scoring_provider
     redrive_model?: string; // Phase 18 — which model within redrive_provider
+    // Phase 3/4 — launch from a saved QualityReport instead of re-scoring a
+    // scope. When from_report_id is set, threshold/scope/scoring all come
+    // from the report; `routing` decides per bucket / per unit whether each
+    // issue goes to a human or an MT engine; second_review holds every mt
+    // candidate for sign-off.
+    from_report_id?: string;
+    routing?: RedriveRouting;
+    second_review?: boolean;
+    triggered_by?: string;
   }) => request<RedriveRun>("/redrive/runs", { method: "POST", body: JSON.stringify(body) }),
   getRedriveRun: (id: string) => request<RedriveRun>(`/redrive/runs/${id}`),
   approveRedriveItem: (runId: string, itemId: string, actor: string) =>
@@ -775,6 +952,21 @@ export const api = {
   },
   getContextImages: (unitId: string) => request<ImageAsset[]>(`/images/context-links/${unitId}`),
 
+  // Phase 7 — OCR a raster image's text into reviewable child units wired to
+  // an ImageTranslationUnit's overlay_text_unit_ids. 503 without Tesseract.
+  ocrImage: (
+    imageId: string,
+    body: { source_language: string; target_language: string; method?: string; itu_id?: string; ocr_lang?: string },
+  ) => {
+    const form = new FormData();
+    form.append("source_language", body.source_language);
+    form.append("target_language", body.target_language);
+    form.append("method", body.method ?? "ai");
+    if (body.itu_id) form.append("itu_id", body.itu_id);
+    if (body.ocr_lang) form.append("ocr_lang", body.ocr_lang);
+    return requestForm<ImageTranslationUnit>(`/images/${imageId}/ocr`, form);
+  },
+
   importDocument: (
     file: File,
     body: {
@@ -792,9 +984,15 @@ export const api = {
     return requestForm<DocumentMeta>("/documents/import", form);
   },
   getDocument: (documentId: string) => request<DocumentMeta>(`/documents/${documentId}`),
+  listDocuments: () => request<DocumentMeta[]>("/documents"),
   getDocumentSegments: (documentId: string, targetLanguage: string) =>
     request<DocumentSegments>(
       `/documents/${documentId}/segments?target_language=${encodeURIComponent(targetLanguage)}`,
+    ),
+  // Phase 7 — the deck laid out for review (slides + shape geometry + units).
+  getDocumentStructure: (documentId: string, targetLanguage: string) =>
+    request<DocumentStructure>(
+      `/documents/${documentId}/structure?target_language=${encodeURIComponent(targetLanguage)}`,
     ),
 
   revertVersion: (unitId: string, versionId: string, revertedBy?: string) =>

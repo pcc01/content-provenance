@@ -1,10 +1,26 @@
 """
 Application configuration loaded from environment variables.
-Uses pydantic-settings for type-safe env var parsing.
+
+Every field below reads os.getenv at class-definition time, so a local .env
+has to be loaded into the process environment *before* this module's body
+runs. load_dotenv() here does that for every entry point (uvicorn, pytest,
+one-off scripts) — previously only docker-compose injected .env, so
+`make run` / bare `uvicorn` silently fell back to the built-in defaults
+(notably POSTGRES_PORT=5432, which collides with an unrelated local stack).
 """
 
 import os
+from pathlib import Path
 from typing import List
+
+from dotenv import load_dotenv
+
+# Resolved relative to the repo root (app/core/config.py -> parents[2]) so it
+# works regardless of the process CWD. No-op if the file is absent, and it
+# never overrides a variable already set in the environment — so real
+# container/production env vars and `uvicorn --env-file` still take
+# precedence over a stray .env on disk.
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 
 class Settings:

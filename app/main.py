@@ -181,4 +181,12 @@ async def spa_fallback(full_path: str):
 
 
 if __name__ == "__main__":
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+    # settings.* already reflects .env (config.py runs load_dotenv on import).
+    # Don't hardcode 8000 here — it collides with an unrelated local stack;
+    # the documented port is 8001 (APP_PORT in .env / docker-compose.yml).
+    from app.core.config import settings
+
+    uvicorn.run(
+        "app.main:app", host=settings.app_host, port=settings.app_port,
+        reload=settings.app_reload,
+    )

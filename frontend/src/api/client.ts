@@ -313,6 +313,10 @@ export function qualityReportPdfUrl(id: string): string {
 export function documentExportUrl(id: string, fmt: "pptx" | "docx", targetLanguage: string): string {
   return `${API_BASE}/documents/${id}/export.${fmt}?target_language=${encodeURIComponent(targetLanguage)}`;
 }
+// Translate Workbench — assemble a whole document's segments as one XLIFF 2.0.
+export function documentXliffUrl(id: string, targetLanguage: string): string {
+  return `${API_BASE}/documents/${id}/export.xliff?target_language=${encodeURIComponent(targetLanguage)}`;
+}
 
 export interface RedrivePreview {
   scope_count: number;
@@ -839,6 +843,20 @@ export const api = {
       `/translations/batch?ids=${encodeURIComponent(ids.join(","))}`,
     ),
   getVersions: (id: string) => request<TranslationUnitVersion[]>(`/translations/${id}/versions`),
+  // Translate Workbench — list existing units (the "from units" source uses
+  // status=pending), edit a target inline, or (re)translate a unit in place.
+  listTranslations: (params?: {
+    source_language?: string; target_language?: string; method?: string; status?: string; limit?: number;
+  }) => request<TranslationUnit[]>(`/translations/?${new URLSearchParams(cleanParams(params ?? {}))}`),
+  updateTranslationTarget: (unitId: string, targetText: string, editedBy?: string) =>
+    request<TranslationUnit>(`/translations/${unitId}`, {
+      method: "PATCH", body: JSON.stringify({ target_text: targetText, edited_by: editedBy }),
+    }),
+  translateUnitInPlace: (
+    unitId: string, body: { provider?: string; model?: string; style_guide_id?: string },
+  ) => request<TranslationUnit>(`/translations/${unitId}/translate`, {
+    method: "POST", body: JSON.stringify(body),
+  }),
   getProvenance: (id: string) => request<ProvenanceResponse>(`/provenance/${id}`),
   getLineage: (id: string) => request<LineageGraph>(`/provenance/${id}/lineage`),
   getDeployments: (id: string) => request<DeploymentRecord[]>(`/provenance/${id}/deployments`),
@@ -972,6 +990,7 @@ export const api = {
     body: {
       source_language: string; target_language: string; method: string; title?: string;
       source_column?: string; // Phase 18 — CSV only: which column holds the source text
+      provider?: string; model?: string; // Translate Workbench — per-request engine override
     },
   ) => {
     const form = new FormData();
@@ -981,6 +1000,8 @@ export const api = {
     form.append("method", body.method);
     if (body.title) form.append("title", body.title);
     if (body.source_column) form.append("source_column", body.source_column);
+    if (body.provider) form.append("provider", body.provider);
+    if (body.model) form.append("model", body.model);
     return requestForm<DocumentMeta>("/documents/import", form);
   },
   getDocument: (documentId: string) => request<DocumentMeta>(`/documents/${documentId}`),
@@ -989,6 +1010,18 @@ export const api = {
     request<DocumentSegments>(
       `/documents/${documentId}/segments?target_language=${encodeURIComponent(targetLanguage)}`,
     ),
+  // Translate Workbench — pasted copy becomes a first-class Document (one unit
+  // per paragraph); append more text into the same document later.
+  createTextDocument: (body: {
+    title: string; source_language: string; target_language: string; text: string;
+    method?: string; provider?: string; model?: string; style_guide_id?: string; segmentation?: string;
+  }) => request<DocumentMeta>("/documents", { method: "POST", body: JSON.stringify(body) }),
+  appendDocumentSegments: (
+    documentId: string,
+    body: { text: string; provider?: string; model?: string; style_guide_id?: string },
+  ) => request<DocumentSegments>(`/documents/${documentId}/segments`, {
+    method: "POST", body: JSON.stringify(body),
+  }),
   // Phase 7 — the deck laid out for review (slides + shape geometry + units).
   getDocumentStructure: (documentId: string, targetLanguage: string) =>
     request<DocumentStructure>(

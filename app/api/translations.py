@@ -1,10 +1,12 @@
 """
 Translations API endpoints
-POST /api/v1/translations/          - Submit a new translation
-GET  /api/v1/translations/          - List all translations
-GET  /api/v1/translations/{id}      - Get a specific translation
-POST /api/v1/translations/{id}/deploy - Record a deployment
-GET  /api/v1/translations/stats     - Aggregated statistics
+POST  /api/v1/translations/            - Submit a new translation
+GET   /api/v1/translations/            - List all translations
+GET   /api/v1/translations/{id}        - Get a specific translation
+PATCH /api/v1/translations/{id}        - Edit a unit's target text inline (new version)
+POST  /api/v1/translations/{id}/translate - (Re)translate an existing unit in place
+POST  /api/v1/translations/{id}/deploy - Record a deployment
+GET   /api/v1/translations/stats       - Aggregated statistics
 """
 
 from datetime import datetime
@@ -14,7 +16,8 @@ import uuid
 
 from app.models.schemas import (
     TranslateRequest, TranslateResponse, TranslationUnit, DeploymentRecord,
-    TranslationMethod, TranslationStatus, DeploymentContext
+    TranslationMethod, TranslationStatus, DeploymentContext,
+    UpdateTargetRequest, TranslateUnitRequest,
 )
 from app.core.config import settings
 from app.core.database import get_db
@@ -276,6 +279,75 @@ async def revert_translation_version(unit_id: str, version_id: str, reverted_by:
     await db.save_provenance_record(prov_record)
     await db.delete_xliff(unit_id)  # cached export is now stale — force regeneration
 
+    return unit.model_dump()
+
+
+@router.patch("/{unit_id}")
+async def update_translation_target(unit_id: str, request: UpdateTargetRequest):
+    """Inline edit of a unit's target text from the Translate Workbench review
+    grid. save_translation_unit diffs target_text and writes this as a new
+    version (source_event='human_edit'), the same way revert / redrive do —
+    history is never rewritten. Rebuilds provenance and busts the XLIFF cache."""
+    db = get_db()
+    unit = await db.get_translation_unit(unit_id)
+    if not unit:
+        raise HTTPException(status_code=404, detail=f"Translation unit {unit_id} not found")
+
+    if request.target_text == unit.target_text:
+        return unit.model_dump()  # no-op — nothing to version
+
+    unit.target_text = request.target_text
+    note = f"Edited by {request.edited_by or 'reviewer'}"
+    await db.save_translation_unit(unit, version_source_event="human_edit", version_note=note)
+
+    deps = await db.get_deployments_for_unit(unit_id)
+    await db.save_provenance_record(await build_provenance_record(unit, deps))
+    await db.delete_xliff(unit_id)
+    return unit.model_dump()
+
+
+@router.post("/{unit_id}/translate")
+async def translate_unit_in_place(unit_id: str, request: TranslateUnitRequest):
+    """(Re)translate an existing unit's source_text with a chosen engine,
+    replacing its target in place — the workbench's 'from units' path for
+    content that's already in the system but untranslated. Grounds the
+    translation in retrieved style/glossary/TM context first, exactly like
+    POST /translations/."""
+    db = get_db()
+    unit = await db.get_translation_unit(unit_id)
+    if not unit:
+        raise HTTPException(status_code=404, detail=f"Translation unit {unit_id} not found")
+
+    style_retrieval = None
+    if settings.graph_retrieval_enabled:
+        style_retrieval = await retrieve_style_context(
+            unit.source_text, unit.source_language, unit.target_language,
+            style_guide_id=request.style_guide_id, top_k=settings.graph_retrieval_top_k,
+        )
+
+    backend = get_translation_backend(request.provider, request.model)
+    translated_text, confidence = await backend.translate(
+        unit.source_text, unit.source_language, unit.target_language,
+        style_context=(
+            style_retrieval.as_prompt_context()
+            if style_retrieval and not style_retrieval.is_empty else None
+        ),
+    )
+
+    label = request.provider or "app default"
+    if request.model:
+        label += f"/{request.model}"
+    unit.target_text = translated_text
+    unit.confidence_score = confidence
+    unit.status = TranslationStatus.COMPLETED
+    await db.save_translation_unit(unit, version_source_event="mt", version_note=f"Translated via {label}")
+
+    if style_retrieval and not style_retrieval.is_empty:
+        await record_unit_style_context(unit.id, style_retrieval)
+
+    deps = await db.get_deployments_for_unit(unit_id)
+    await db.save_provenance_record(await build_provenance_record(unit, deps))
+    await db.delete_xliff(unit_id)
     return unit.model_dump()
 
 

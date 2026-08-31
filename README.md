@@ -78,8 +78,10 @@ Claude/OpenAI/Gemini API key actually has access to.
 
 The Review Shell is segmented into four workflows matching how the work
 actually happens: **Content Creation** (define voice, import legacy content
-— TMX, XLIFF, CSV, or documents — write/check/translate new copy), **Quality
-Review** (in-context review, the 3-step Redrive Console, layout-aware
+— TMX, XLIFF, CSV, or documents — write/check new copy, and the Translate
+workbench: batch-translate + inline-review with a chosen engine, TM
+suggestions, XLIFF assembly), **Quality Review** (in-context review, the
+3-step Redrive Console, layout-aware
 deck/PDF review, the DOCX bilingual reader, image localization + OCR, vendor
 scorecard, cross-document consistency), **Audit** (third-party site
 i18n/compliance review, a separate concern, optionally crawling as an
@@ -425,7 +427,7 @@ arbitrary grouping:
 
 | Segment | Pages | What it's for |
 |---------|-------|----------------|
-| **Content Creation** | Create, Style Guides, Import, Documents | Everything BEFORE a translation exists: define brand voice (Style Guides), bring in legacy vendor content (Import — TMX, XLIFF, and the Import page's ingest ledger), write/check/translate new copy (Create), or bulk-import a `.txt`/`.md`/`.csv` file (Documents) |
+| **Content Creation** | Create, Translate, Style Guides, Import, Documents | Everything BEFORE a translation exists: define brand voice (Style Guides), bring in legacy vendor content (Import — TMX, XLIFF, and the Import page's ingest ledger), write/check a single string (Create), batch-translate + inline-review pasted copy / untranslated units / a document with a chosen engine (**Translate**), or bulk-import a `.txt`/`.md`/`.csv` file (Documents) |
 | **Quality Review** | Review, Live (extension), Redrive, Decks, Docs, Images, Vendor Scorecard, Consistency, Search | Everything about evaluating and improving translations already in the system — in-context review (SDK-tagged app, live browser tab, or any URL), the 3-step **Redrive Console** (evaluate → quality report → routed redrive), layout-aware **deck/PDF review** (Decks), the **bilingual reader** for DOCX/flow docs (Docs), image localization + OCR, per-vendor scoring, cross-document term/tone consistency, semantic/keyword search |
 | **Audit** | (single page) | A THIRD-PARTY site compliance tool — genuinely separate from this system's own translations; optionally authenticated (see [Authenticated Crawling/Fetching](#authenticated-crawlingfetching)) |
 | **Analytics** | (single page) | System-wide totals and charts (by-method bar chart, by-status donut chart) aggregating across all three segments above |
@@ -450,7 +452,9 @@ live-populated model dropdown — see [Model Discovery](#model-discovery).
 | `GET`  | `/api/v1/translations/` | List all translation units (filter by language, method, status) |
 | `GET`  | `/api/v1/translations/batch?ids=a,b,c` | Bulk lookup with latest quality score — what the review overlay uses to score a whole page in one call |
 | `GET`  | `/api/v1/translations/{id}` | Get a specific translation unit |
-| `GET`  | `/api/v1/translations/{id}/versions` | Full edit history (initial / human_edit / import / redrive / revert), each version attributed to its own named agent — human or AI |
+| `PATCH`| `/api/v1/translations/{id}` | Edit a unit's `target_text` inline (Translate Workbench review grid) — persisted as a new `human_edit` version, never an in-place rewrite |
+| `POST` | `/api/v1/translations/{id}/translate` | (Re)translate an existing unit's source in place with a chosen `provider`/`model` — the workbench's "from units" path for content already in the system but untranslated |
+| `GET`  | `/api/v1/translations/{id}/versions` | Full edit history (initial / human_edit / mt / import / redrive / revert), each version attributed to its own named agent — human or AI |
 | `POST` | `/api/v1/translations/{id}/versions/{version_id}/revert` | Phase 9: restore an earlier version's text as a new version (never rewrites history) |
 | `POST` | `/api/v1/translations/{id}/deploy` | Record a new deployment location |
 | `PUT`  | `/api/v1/translations/{id}/review` | Mark as human-reviewed — takes a `reviewer_name`, resolved to a named `Person` agent, not just a boolean flag |
@@ -705,12 +709,15 @@ builder as text (`SourceImage`/`TranslatedImage` entities).
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/api/v1/documents/import` | Upload a `.txt`/`.md`/`.csv`/`.pptx`/`.pdf`/`.docx` file — segmented and translated immediately |
+| `POST` | `/api/v1/documents/import` | Upload a `.txt`/`.md`/`.csv`/`.pptx`/`.pdf`/`.docx` file — segmented and translated immediately (optional `provider`/`model` engine override) |
+| `POST` | `/api/v1/documents` | Turn pasted copy into a first-class document (one unit per paragraph) with a chosen engine — the Translate Workbench's "paste text" source; `segmentation` (`paragraph`\|`document`) is a review-grouping hint only |
+| `POST` | `/api/v1/documents/{id}/segments` | Append more source text to an existing document as further paragraph segments — "subsequent content integrates into the more comprehensive document" |
 | `GET`  | `/api/v1/documents` | Recent imported documents, newest first — the review pickers |
 | `GET`  | `/api/v1/documents/{id}` | Document metadata |
 | `GET`  | `/api/v1/documents/{id}/segments` | Ordered segments for a target language (flow-format bilingual reader) |
 | `GET`  | `/api/v1/documents/{id}/structure` | Slides/pages in order, each with its text shapes (`kind`, `reading_order`, fractional bbox `x/y/w/h`) joined to their `TranslationUnit`; speaker notes / flow-doc paragraphs come back as shapes with no geometry |
 | `GET`  | `/api/v1/documents/{id}/export.pptx` \| `export.docx` | Round-trip — the target-language text written back into the original file, layout/styles preserved (`503` when the parser isn't importable) |
+| `GET`  | `/api/v1/documents/{id}/export.xliff?target_language=…` | Assemble the whole document's segments into one XLIFF 2.0 document (reuses the per-project XLIFF builder); logged in the ingest ledger |
 
 Text/Markdown segment on blank lines; CSV segments **one unit per row** (optional
 `source_column`). **PPTX** (`pptx_extract.py`, `python-pptx`) and **PDF**
@@ -739,6 +746,30 @@ translatable image, creates one `TranslationUnit` per detected line, translates
 each, and wires them into an `ImageTranslationUnit.overlay_text_unit_ids` so the
 overlay can box each label on the image. `503` when the Tesseract binary isn't
 available (`pip install pytesseract` + the OS package, or `TESSERACT_CMD`).
+
+### Translate Workbench (Content Creation → Translate)
+
+Step 1 of the **translate → evaluate → report → redrive** pipeline, and the
+first UI home for initial translation as a batch (the older Create tab does one
+string at a time). `TranslateWorkbench.tsx` has three sources — **paste text**
+(→ `POST /documents`, one unit per paragraph), **from units** (list
+`status=pending` units → `POST /translations/{id}/translate` each, in place), and
+**existing document** (load its segments, then `POST /documents/{id}/segments` to
+grow it). One `ModelPicker` (`TRANSLATE_PROVIDERS`) sets the engine for whichever
+source; segmentation is **always paragraph-level** on the backend, and the "Review
+by" toggle (`paragraph` | `document`) only decides whether the review grid
+approves row-by-row or collapses to one **Approve all**.
+
+Reviewing is inline: each target is an editable box saved via
+`PATCH /translations/{id}` (a new `human_edit` version), approved via the existing
+`PUT /translations/{id}/review`. Uploading a **TMX** here (same `POST /tm/import`
+as the Import tab) means any segment whose source is ≥ 0.90 similar
+(`difflib.SequenceMatcher`) to a memory entry is stored with the **TM target
+verbatim** (`translation_method=hybrid`, `status=pending`) and the machine
+translation kept alongside as `metadata.mt_suggestion` — the row shows a `TM nn%`
+chip and a **use MT suggestion** button. When the source is a document, the
+footer links **Export XLIFF 2.0** (`/documents/{id}/export.xliff`) and, for a
+`.docx`, the round-trip `.docx`.
 
 ### Pages (review any URL, no app changes required)
 
@@ -1176,7 +1207,7 @@ content-provenance/
 ├── app/
 │   ├── main.py                     # FastAPI app, lifespan, router registration, serves frontend/dist/
 │   ├── api/
-│   │   ├── translations.py         # CRUD + deploy + review + batch + versions
+│   │   ├── translations.py         # CRUD + deploy + review + batch + versions; PATCH target (human_edit version) + POST {id}/translate (re-translate in place)
 │   │   ├── notes.py                # Review notes thread
 │   │   ├── provenance.py           # PROV record, PROV-JSON, PROV-N, lineage
 │   │   ├── search.py               # Haystack semantic/BM25 search
@@ -1188,7 +1219,7 @@ content-provenance/
 │   │   ├── redrive.py              # Redrive runs — classic one-shot pass AND report-gated (from_report_id + routing + second_review), human-in-the-loop approve/reject
 │   │   ├── quality_reports.py      # Quality Report: evaluate a scope, persist/list/export (JSON+PDF), per-unit route override, attach-xcomet / attach-cometkiwi spans
 │   │   ├── images.py               # Image asset upload, context-linking, localization
-│   │   ├── documents.py            # Document import (text/Markdown/CSV + PPTX with shape geometry), segments, deck /structure, list
+│   │   ├── documents.py            # Import (text/Markdown/CSV + PPTX/PDF/DOCX geometry) + POST from pasted text + append segments; deck /structure, bilingual /segments, export.{pptx,docx,xliff}; shared _translate_blocks + _tm_prefill (TMX near-match suggestion)
 │   │   ├── pages.py                # Phase 8/9/10: fetch+rewrite review, page history, page-level notes, pending-proposals list
 │   │   ├── audit.py                # Phase 11: site i18n/l10n/compliance audit runs + findings
 │   │   ├── tm.py                   # Phase 13: TMX 1.4 translation-memory import
@@ -1260,7 +1291,7 @@ content-provenance/
 │   │   ├── api/client.ts           # Typed fetch wrapper for the whole API
 │   │   ├── components/             # ReviewFrame, SegmentDrawer (Details/History/Provenance/Metrics/Notes tabs), PageFlaggedList, PageHistory, PageNotes, PendingChanges, AuditReport (+ pages-crawled table), ProvenancePanel (+ lineage/exports), MetricsPanel, ContextImages, QualityBadge, VersionHistory, NotesThread, PageIntro, ModelPicker, LocaleSelect, BarChart, DonutChart
 │   │   ├── data/locales.ts         # Phase 18: top-10-most-spoken + broader language list backing LocaleSelect
-│   │   └── pages/                  # ReviewPage, LiveReviewPage, RedriveConsole (3-step wizard: evaluate → quality report + XCOMET/CometKiwi spans → routed redrive; top "Pipeline" panel picks the evaluate/retranslate model per step + toggles the pause/approve-plan/second-review gates), DeckReview (deck/PDF canvas), DocumentReview (DOCX/flow bilingual reader), ImageReview (+ OCR), DocumentsPage, DocumentViewer, AuditPage, SearchPage, AnalyticsPage, CreateContentPage, StyleGuidesPage, ImportPage, VendorScorecardPage, ConsistencyPage, PublicAuditLanding (branded lead-gen landing, VITE_PUBLIC_SITE builds only)
+│   │   └── pages/                  # ReviewPage, LiveReviewPage, RedriveConsole (3-step wizard: evaluate → quality report + XCOMET/CometKiwi spans → routed redrive; top "Pipeline" panel picks the evaluate/retranslate model per step + toggles the pause/approve-plan/second-review gates), DeckReview (deck/PDF canvas), DocumentReview (DOCX/flow bilingual reader), ImageReview (+ OCR), DocumentsPage, DocumentViewer, AuditPage, SearchPage, AnalyticsPage, CreateContentPage, TranslateWorkbench (initial-translation tab: paste / units / document source, chosen engine, inline edit+approve, TM suggestions, XLIFF assembly), StyleGuidesPage, ImportPage, VendorScorecardPage, ConsistencyPage, PublicAuditLanding (branded lead-gen landing, VITE_PUBLIC_SITE builds only)
 │   ├── review-sdk/                 # The in-context overlay injected into a cooperative target app, or extracted for Phase 10's extension
 │   │   ├── overlay.ts              # Highlight boxes, score/pending coloring, pluggable transport (postMessage or chrome.runtime)
 │   │   ├── harvest.ts              # Phase 10: shared harvest/rewrite DOM walk — compiled once, used by both Playwright and the extension
@@ -1287,6 +1318,7 @@ content-provenance/
 │   ├── test_redrive.py             # Redrive engine tests incl. human-in-the-loop
 │   ├── test_images.py              # Image asset API tests
 │   ├── test_documents.py           # Document import/segments API tests
+│   ├── test_translate_workbench.py # PATCH target / translate-in-place / POST-from-text / append segments / export.xliff / TM pre-fill
 │   ├── test_pages.py               # Page fetch/harvest/render + history/diff/as_of tests (real headless-browser render)
 │   ├── test_revert.py              # Version revert API tests
 │   ├── test_propose.py             # Phase 10: human-drafted proposal -> pending -> approve/reject tests

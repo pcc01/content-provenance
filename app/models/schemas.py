@@ -1022,6 +1022,48 @@ class SearchRequest(BaseModel):
     top_k: int = Field(10, ge=1, le=50)
 
 
+# ─── Translate Workbench (initial-translation tab) ───────────────────────────
+
+class UpdateTargetRequest(BaseModel):
+    """Inline edit of a unit's target_text from the review grid — persisted as
+    a new `human_edit` version by save_translation_unit's diff check."""
+    target_text: str = Field(..., min_length=1, max_length=50000)
+    edited_by: Optional[str] = None
+
+
+class TranslateUnitRequest(BaseModel):
+    """(Re)translate an existing unit in place with a chosen engine — the
+    workbench's 'from units' source. provider/model override the app default
+    for this call only (see TranslateRequest)."""
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    style_guide_id: Optional[str] = None
+
+
+class CreateTextDocumentRequest(BaseModel):
+    """Turn pasted copy into a first-class Document (one unit per paragraph),
+    so subsequent text can be appended into the same comprehensive document."""
+    title: str = Field(..., min_length=1)
+    source_language: str = Field(..., example="en-US")
+    target_language: str = Field(..., example="fr-FR")
+    text: str = Field(..., min_length=1)
+    method: TranslationMethod = TranslationMethod.AI
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    style_guide_id: Optional[str] = None
+    # Review-grouping hint only ("paragraph" | "document"); units are always
+    # split paragraph-wise regardless — see app/api/documents.py.
+    segmentation: str = "paragraph"
+
+
+class AppendDocumentSegmentsRequest(BaseModel):
+    """Append more source text to an existing document as further segments."""
+    text: str = Field(..., min_length=1)
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    style_guide_id: Optional[str] = None
+
+
 # ─── Phase 13 API request/response schemas ───────────────────────────────────
 
 class CreateStyleGuideRequest(BaseModel):

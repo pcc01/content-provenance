@@ -14,6 +14,7 @@ import { RedriveConsole } from "./pages/RedriveConsole";
 import { ReviewPage } from "./pages/ReviewPage";
 import { SearchPage } from "./pages/SearchPage";
 import { StyleGuidesPage } from "./pages/StyleGuidesPage";
+import { TranslateWorkbench } from "./pages/TranslateWorkbench";
 import { VendorScorecardPage } from "./pages/VendorScorecardPage";
 
 // A public-facing deployment (audit.thewordinbits.com) bakes VITE_PUBLIC_SITE
@@ -48,7 +49,7 @@ export default function App() {
 //     Review — it was only ever nested there because that segment existed
 //     first, not because the data is Quality-Review-specific.
 type Segment = "create" | "review" | "audit" | "analytics";
-type CreateTab = "create" | "style-guides" | "import" | "documents";
+type CreateTab = "create" | "translate" | "style-guides" | "import" | "documents";
 type ReviewTab = "review" | "live" | "redrive" | "decks" | "docs" | "images" | "vendors" | "consistency" | "search";
 
 const SEGMENTS: [Segment, string][] = [
@@ -60,6 +61,7 @@ const SEGMENTS: [Segment, string][] = [
 
 const CREATE_TABS: [CreateTab, string][] = [
   ["create", "Create"],
+  ["translate", "Translate"],
   ["style-guides", "Style Guides"],
   ["import", "Import"],
   ["documents", "Documents"],
@@ -126,6 +128,7 @@ function InternalApp() {
         {segment === "create" && (
           <>
             {createTab === "create" && <div style={{ overflowY: "auto", height: "100%" }}><CreateContentPage /></div>}
+            {createTab === "translate" && <div style={{ overflowY: "auto", height: "100%" }}><TranslateWorkbench /></div>}
             {createTab === "style-guides" && <div style={{ overflowY: "auto", height: "100%" }}><StyleGuidesPage /></div>}
             {createTab === "import" && <div style={{ overflowY: "auto", height: "100%" }}><ImportPage /></div>}
             {createTab === "documents" && <div style={{ overflowY: "auto", height: "100%" }}><DocumentsPage /></div>}

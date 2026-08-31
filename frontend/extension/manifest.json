@@ -12,6 +12,7 @@
     "type": "module"
   },
   "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": ["http://localhost:8001/*"],
   "content_scripts": [
     {
       "matches": ["http://localhost:5173/*", "http://localhost:8001/*"],

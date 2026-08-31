@@ -71,3 +71,25 @@ Re-run `npm run build:extension`, then reload the extension:
   `about:debugging#/runtime/this-firefox`.
 
 Neither browser hot-reloads an unpacked / temporary extension.
+
+## Troubleshooting ("Waiting for the extension…" never turns to Connected)
+
+The `tu:ready` message has to travel: reviewed tab → background → Review
+Shell tab. Check each hop:
+
+1. **Reviewed tab's own console** (F12 on that page) — look for
+   `[review-extension] harvested N element(s)` then `harvest matching
+   failed`. A failed `fetch` to `http://localhost:8001` is the usual
+   culprit; the manifest's `host_permissions: ["http://localhost:8001/*"]`
+   is what makes that fetch bypass the page's CSP/CORS. Firefox may ask you
+   to grant that host permission the first time — accept it (`about:addons`
+   → the add-on → Permissions).
+2. **Background script console** — `about:debugging#/runtime/this-firefox`
+   (or `chrome://extensions`) → the add-on's **Inspect** button. You should
+   see `Review Shell registered on tab …` and `now reviewing tab …`.
+3. **Review Shell must be on `localhost:5173` or `localhost:8001`** — the
+   `bridge-content-script` only auto-injects on those origins (manifest
+   `content_scripts.matches`). A different port = no bridge = never
+   connects.
+4. The backend must be reachable at `http://localhost:8001` (the API base
+   is hard-coded — see `harvest-content-script.ts` / `popup.ts`).

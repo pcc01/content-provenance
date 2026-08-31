@@ -827,7 +827,10 @@ full design.
 Phase 10 adds a browser extension (`frontend/extension/`, Manifest V3) that
 runs this same harvest/match engine against a real tab's live DOM instead of
 an anonymous fetch — cookies, session, and client-side routing all work for
-free. It tags matched elements with `data-tu-id` but never swaps a live
+free. `npm run build:extension` produces both a Chrome/Chromium build
+(`extension/dist/`, `background.service_worker`) and a Firefox build
+(`extension/dist-firefox/`, `background.scripts` + a `gecko` add-on id) from
+the same `chrome.*`-namespace code — see `frontend/extension/README.md`. It tags matched elements with `data-tu-id` but never swaps a live
 page's text (unlike the fetch mode above). A reviewer using either mode can
 also type their own draft for a segment (`SegmentDrawer`'s "Propose
 translation") or leave a page-level note; proposals show as a dashed-purple
@@ -1309,7 +1312,9 @@ content-provenance/
 │   │   ├── background.ts           # Service worker relaying messages between the reviewed tab and the Review Shell's tab
 │   │   ├── harvest-content-script.ts  # Injected on demand into the reviewed tab; tags elements, never swaps live text
 │   │   ├── bridge-content-script.ts   # Injected into the Review Shell's own page; relays chrome.runtime <-> window.postMessage
-│   │   └── popup.html / popup.ts   # Toolbar popup — target language, start/stop, mini notes panel
+│   │   ├── popup.html / popup.ts   # Toolbar popup — target language, start/stop, mini notes panel
+│   │   ├── manifest.json / manifest.firefox.json  # Chrome (background.service_worker) / Firefox (background.scripts + gecko id)
+│   │   └── build.mjs               # `npm run build:extension` -> dist/ (Chrome) + dist-firefox/ (Firefox), both gitignored
 │   └── demo-target/                # Minimal fixture app the Review Shell iframes for local verification
 ├── docs/
 │   ├── architecture.svg            # System architecture diagram

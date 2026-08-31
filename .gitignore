@@ -21,6 +21,7 @@ data/documents/
 # ── Frontend (Review Shell / demo-target / review-sdk) ─────────────────────
 node_modules/
 dist/
+dist-firefox/
 *.tsbuildinfo
 
 # ── ML model cache ──────────────────────────────────────────────────────────

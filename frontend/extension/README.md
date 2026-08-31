@@ -14,13 +14,33 @@ npm run build:extension
 ```
 
 This builds `review-sdk/dist/{overlay,harvest}.js` first, then compiles the
-extension's own scripts and assembles everything into `extension/dist/`.
+extension's own scripts and assembles **both** loadable builds:
+
+| Folder | Browser | Manifest difference |
+|--------|---------|---------------------|
+| `extension/dist/` | Chrome / Chromium / Edge | MV3 with `background.service_worker` |
+| `extension/dist-firefox/` | Firefox | MV3 with a `background.scripts` event page + `browser_specific_settings.gecko.id` |
+
+The extension's own code is identical for both — it uses the `chrome.*`
+namespace, which Firefox also implements for MV3. Only the manifest differs
+(`manifest.json` vs `manifest.firefox.json`).
 
 ## Load it
+
+### Chrome / Chromium / Edge
 
 1. Open `chrome://extensions`.
 2. Enable **Developer mode** (top right).
 3. **Load unpacked** → select `frontend/extension/dist/`.
+
+### Firefox
+
+1. Open `about:debugging#/runtime/this-firefox`.
+2. **Load Temporary Add-on…** → select `frontend/extension/dist-firefox/manifest.json`.
+3. It stays loaded until Firefox restarts (temporary add-ons aren't
+   persisted). For a persistent install you'd need to package + sign it
+   (`web-ext sign`, or upload to addons.mozilla.org) — out of scope for a
+   dev tool.
 
 ## Use it
 
@@ -43,6 +63,11 @@ for now, matching this project's other dev-focused defaults (e.g.
 
 ## Rebuilding after a change
 
-Re-run `npm run build:extension`, then click the refresh icon on the
-extension's card in `chrome://extensions` (Chrome doesn't hot-reload
-unpacked extensions).
+Re-run `npm run build:extension`, then reload the extension:
+
+- **Chrome**: click the refresh icon on the extension's card in
+  `chrome://extensions`.
+- **Firefox**: click **Reload** next to the add-on in
+  `about:debugging#/runtime/this-firefox`.
+
+Neither browser hot-reloads an unpacked / temporary extension.

@@ -1056,6 +1056,20 @@ class CreateTextDocumentRequest(BaseModel):
     segmentation: str = "paragraph"
 
 
+class CreateUrlDocumentRequest(BaseModel):
+    """Fetch a web page's readable text and translate it as a document — the
+    workbench's "from URL" source."""
+    url: str = Field(..., min_length=1)
+    source_language: str = Field(..., example="en-US")
+    target_language: str = Field(..., example="fr-FR")
+    method: TranslationMethod = TranslationMethod.AI
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    style_guide_id: Optional[str] = None
+    segmentation: str = "paragraph"
+    title: Optional[str] = None
+
+
 class AppendDocumentSegmentsRequest(BaseModel):
     """Append more source text to an existing document as further segments."""
     text: str = Field(..., min_length=1)

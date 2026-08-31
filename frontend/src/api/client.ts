@@ -1016,6 +1016,13 @@ export const api = {
     title: string; source_language: string; target_language: string; text: string;
     method?: string; provider?: string; model?: string; style_guide_id?: string; segmentation?: string;
   }) => request<DocumentMeta>("/documents", { method: "POST", body: JSON.stringify(body) }),
+  // Translate Workbench — fetch a URL's readable text (headless Chromium) and
+  // translate it as a document. 503 if Playwright isn't installed.
+  createDocumentFromUrl: (body: {
+    url: string; source_language: string; target_language: string;
+    method?: string; provider?: string; model?: string; style_guide_id?: string;
+    segmentation?: string; title?: string;
+  }) => request<DocumentMeta>("/documents/from-url", { method: "POST", body: JSON.stringify(body) }),
   appendDocumentSegments: (
     documentId: string,
     body: { text: string; provider?: string; model?: string; style_guide_id?: string },

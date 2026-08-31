@@ -39,12 +39,14 @@ from app.core.documents.docx_extract import docx_available, extract_docx
 from app.core.documents.pdf_extract import extract_pdf, pdf_available
 from app.core.documents.pptx_extract import extract_pptx, pptx_available
 from app.core.documents.reinsert import reinsert_docx, reinsert_pptx
+from app.core.documents.url_fetch import fetch_url_blocks, url_fetch_available
 from app.core.graph.builder import record_unit_style_context
 from app.core.graph.retrieval import retrieve_style_context
+from app.core.page_fetch import PageFetchError
 from app.core.prov_builder import build_provenance_record
 from app.core.translation_backends import get_translation_backend
 from app.models.schemas import (
-    AppendDocumentSegmentsRequest, CreateTextDocumentRequest,
+    AppendDocumentSegmentsRequest, CreateTextDocumentRequest, CreateUrlDocumentRequest,
     Document, DocumentFormat, DocumentShape, DocumentShapeKind, IngestDirection,
     TranslationMethod, TranslationStatus, TranslationUnit,
 )
@@ -363,6 +365,37 @@ async def create_text_document(request: CreateTextDocumentRequest):
         title=request.title, format=DocumentFormat.TEXT,
         source_language=request.source_language,
         metadata={"segmentation": request.segmentation or "paragraph"},
+    )
+    await db.save_document(document)
+    await _translate_blocks(
+        document, blocks,
+        source_language=request.source_language, target_language=request.target_language,
+        method=request.method, provider=request.provider, model=request.model,
+        style_guide_id=request.style_guide_id,
+    )
+    return document
+
+
+@router.post("/from-url", response_model=Document, status_code=201)
+async def create_document_from_url(request: CreateUrlDocumentRequest):
+    """Fetch a URL's readable text (headless Chromium, so JS-rendered pages
+    work) and translate it as a first-class document — the workbench's "from
+    URL" source. `503` if Playwright isn't importable."""
+    if not url_fetch_available():
+        raise HTTPException(
+            status_code=503,
+            detail="Playwright isn't available for URL fetch — `pip install playwright` + `playwright install chromium`.",
+        )
+    try:
+        page_title, blocks = await fetch_url_blocks(request.url)
+    except PageFetchError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e))
+
+    db = get_db()
+    document = Document(
+        title=request.title or page_title, format=DocumentFormat.TEXT,
+        source_language=request.source_language,
+        metadata={"segmentation": request.segmentation or "paragraph", "source_url": request.url},
     )
     await db.save_document(document)
     await _translate_blocks(

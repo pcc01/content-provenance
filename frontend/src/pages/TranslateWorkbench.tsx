@@ -14,8 +14,16 @@ import { QualityBadge } from "../components/QualityBadge";
 // TM suggestion, approve per paragraph or the whole document — and assemble
 // the result as one XLIFF 2.0.
 
-type SourceMode = "paste" | "units" | "document";
+type SourceMode = "paste" | "upload" | "url" | "units" | "document";
 type Segmentation = "paragraph" | "document";
+
+const SOURCE_LABEL: Record<SourceMode, string> = {
+  paste: "Paste text",
+  upload: "Upload file",
+  url: "From URL",
+  units: "From units",
+  document: "Existing document",
+};
 
 function tmMatch(u: TranslationUnit): number | null {
   const v = u.metadata?.tm_match;
@@ -52,6 +60,9 @@ export function TranslateWorkbench() {
   // paste
   const [title, setTitle] = useState("");
   const [pasteText, setPasteText] = useState("");
+
+  // url
+  const [urlInput, setUrlInput] = useState("");
 
   // units
   const [pendingUnits, setPendingUnits] = useState<TranslationUnit[]>([]);
@@ -118,6 +129,38 @@ export function TranslateWorkbench() {
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally { setBusy(false); }
+  }
+
+  async function runUrlTranslate() {
+    if (!urlInput.trim()) return;
+    setBusy(true); setError(null);
+    try {
+      const doc = await api.createDocumentFromUrl({
+        url: urlInput.trim(), source_language: sourceLanguage, target_language: targetLanguage,
+        method: "ai", segmentation, title: title.trim() || undefined, ...engineBody(),
+      });
+      await loadDocSegments(doc.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally { setBusy(false); }
+  }
+
+  async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setBusy(true); setError(null);
+    try {
+      const doc = await api.importDocument(file, {
+        source_language: sourceLanguage, target_language: targetLanguage, method: "ai",
+        title: title.trim() || undefined, provider: provider || undefined, model: model || undefined,
+      });
+      await loadDocSegments(doc.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+      e.target.value = "";
+    }
   }
 
   async function loadPendingUnits() {
@@ -327,8 +370,8 @@ export function TranslateWorkbench() {
       </div>
 
       {/* ── Source mode ────────────────────────────────────────────── */}
-      <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
-        {(["paste", "units", "document"] as SourceMode[]).map((m) => (
+      <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
+        {(["paste", "upload", "url", "units", "document"] as SourceMode[]).map((m) => (
           <button key={m} onClick={() => setSourceMode(m)}
                   style={{
                     padding: "5px 12px", fontSize: 13, cursor: "pointer", borderRadius: 6,
@@ -336,7 +379,7 @@ export function TranslateWorkbench() {
                     background: sourceMode === m ? "#111827" : "#fff",
                     color: sourceMode === m ? "#fff" : "#374151",
                   }}>
-            {m === "paste" ? "Paste text" : m === "units" ? "From units" : "Existing document"}
+            {SOURCE_LABEL[m]}
           </button>
         ))}
       </div>
@@ -353,6 +396,36 @@ export function TranslateWorkbench() {
                     style={{ padding: "7px 16px", cursor: "pointer", fontWeight: 600 }}>
               {busy ? "Translating…" : "Translate →"}
             </button>
+          </div>
+        </div>
+      )}
+
+      {sourceMode === "upload" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
+          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Document title (optional — defaults to the filename)"
+                 style={{ padding: 6, fontSize: 13, maxWidth: 420 }} />
+          <div style={{ fontSize: 12.5, color: "#6b7280" }}>
+            <input type="file" accept=".txt,.md,.markdown,.csv,.pptx,.pdf,.docx" disabled={busy} onChange={handleFileUpload} />
+            {" "}— .txt / .md / .csv / .pptx / .pdf / .docx, translated with the engine above on upload
+          </div>
+        </div>
+      )}
+
+      {sourceMode === "url" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
+          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Document title (optional — defaults to the page title)"
+                 style={{ padding: 6, fontSize: 13, maxWidth: 420 }} />
+          <div style={{ display: "flex", gap: 8 }}>
+            <input value={urlInput} onChange={(e) => setUrlInput(e.target.value)} placeholder="https://example.com/page-to-translate"
+                   style={{ flex: 1, maxWidth: 520, padding: 6, fontSize: 13 }} />
+            <button disabled={busy || !urlInput.trim()} onClick={runUrlTranslate}
+                    style={{ padding: "7px 16px", cursor: "pointer", fontWeight: 600 }}>
+              {busy ? "Fetching…" : "Fetch & translate →"}
+            </button>
+          </div>
+          <div style={{ fontSize: 12, color: "#9ca3af" }}>
+            Readable text (paragraphs, headings, list items) is fetched with a headless browser, one
+            segment per block. Needs Playwright on the server.
           </div>
         </div>
       )}

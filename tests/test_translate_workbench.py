@@ -99,6 +99,45 @@ async def test_export_xliff_contains_every_segment(client):
     assert any(e["direction"] == "out" and e["format"] == "xliff" for e in log)
 
 
+# ── POST /documents/from-url ─────────────────────────────────────────────
+
+async def test_from_url_rejects_a_non_http_scheme(client):
+    resp = await client.post("/api/v1/documents/from-url", json={
+        "url": "file:///etc/passwd", "source_language": "en-US", "target_language": "fr-FR",
+    })
+    assert resp.status_code == 400
+
+
+async def test_from_url_creates_a_document_from_fetched_blocks(client, monkeypatch):
+    async def fake_fetch(url):
+        return "Fetched Article", ["Opening paragraph.", "A second paragraph.", "Closing line."]
+
+    monkeypatch.setattr("app.api.documents.url_fetch_available", lambda: True)
+    monkeypatch.setattr("app.api.documents.fetch_url_blocks", fake_fetch)
+
+    resp = await client.post("/api/v1/documents/from-url", json={
+        "url": "https://example.com/article", "source_language": "en-US", "target_language": "fr-FR",
+    })
+    assert resp.status_code == 201
+    doc = resp.json()
+    assert doc["title"] == "Fetched Article"
+    assert doc["metadata"]["source_url"] == "https://example.com/article"
+
+    seg = (await client.get(f"/api/v1/documents/{doc['id']}/segments?target_language=fr-FR")).json()
+    assert [s["source_text"] for s in seg["segments"]] == [
+        "Opening paragraph.", "A second paragraph.", "Closing line.",
+    ]
+    assert all(s["target_text"].startswith("[FR]") for s in seg["segments"])
+
+
+async def test_from_url_503_when_playwright_unavailable(client, monkeypatch):
+    monkeypatch.setattr("app.api.documents.url_fetch_available", lambda: False)
+    resp = await client.post("/api/v1/documents/from-url", json={
+        "url": "https://example.com", "source_language": "en-US", "target_language": "fr-FR",
+    })
+    assert resp.status_code == 503
+
+
 async def test_export_xliff_unknown_target_404s(client):
     doc = (await client.post("/api/v1/documents", json={
         "title": "NoTarget", "source_language": "en-US", "target_language": "fr-FR", "text": "Hi there.",

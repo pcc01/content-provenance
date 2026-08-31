@@ -711,6 +711,7 @@ builder as text (`SourceImage`/`TranslatedImage` entities).
 |--------|----------|-------------|
 | `POST` | `/api/v1/documents/import` | Upload a `.txt`/`.md`/`.csv`/`.pptx`/`.pdf`/`.docx` file — segmented and translated immediately (optional `provider`/`model` engine override) |
 | `POST` | `/api/v1/documents` | Turn pasted copy into a first-class document (one unit per paragraph) with a chosen engine — the Translate Workbench's "paste text" source; `segmentation` (`paragraph`\|`document`) is a review-grouping hint only |
+| `POST` | `/api/v1/documents/from-url` | Fetch a web page's readable text (headless Chromium — JS-rendered pages work) and translate it as a document; `503` without Playwright, `400`/`403`/`422` for bad scheme / robots.txt / no text |
 | `POST` | `/api/v1/documents/{id}/segments` | Append more source text to an existing document as further paragraph segments — "subsequent content integrates into the more comprehensive document" |
 | `GET`  | `/api/v1/documents` | Recent imported documents, newest first — the review pickers |
 | `GET`  | `/api/v1/documents/{id}` | Document metadata |
@@ -751,14 +752,17 @@ available (`pip install pytesseract` + the OS package, or `TESSERACT_CMD`).
 
 Step 1 of the **translate → evaluate → report → redrive** pipeline, and the
 first UI home for initial translation as a batch (the older Create tab does one
-string at a time). `TranslateWorkbench.tsx` has three sources — **paste text**
-(→ `POST /documents`, one unit per paragraph), **from units** (list
-`status=pending` units → `POST /translations/{id}/translate` each, in place), and
-**existing document** (load its segments, then `POST /documents/{id}/segments` to
-grow it). One `ModelPicker` (`TRANSLATE_PROVIDERS`) sets the engine for whichever
-source; segmentation is **always paragraph-level** on the backend, and the "Review
-by" toggle (`paragraph` | `document`) only decides whether the review grid
-approves row-by-row or collapses to one **Approve all**.
+string at a time). `TranslateWorkbench.tsx` has five sources — **paste text**
+(→ `POST /documents`, one unit per paragraph), **upload a file** (→
+`POST /documents/import`, any of `.txt`/`.md`/`.csv`/`.pptx`/`.pdf`/`.docx`),
+**from URL** (→ `POST /documents/from-url`, readable page text via headless
+Chromium), **from units** (list `status=pending` units →
+`POST /translations/{id}/translate` each, in place), and **existing document**
+(load its segments, then `POST /documents/{id}/segments` to grow it). One
+`ModelPicker` (`TRANSLATE_PROVIDERS`) sets the engine for whichever source;
+segmentation is **always paragraph-level** on the backend, and the "Review by"
+toggle (`paragraph` | `document`) only decides whether the review grid approves
+row-by-row or collapses to one **Approve all**.
 
 Reviewing is inline: each target is an editable box saved via
 `PATCH /translations/{id}` (a new `human_edit` version), approved via the existing
@@ -1219,7 +1223,7 @@ content-provenance/
 │   │   ├── redrive.py              # Redrive runs — classic one-shot pass AND report-gated (from_report_id + routing + second_review), human-in-the-loop approve/reject
 │   │   ├── quality_reports.py      # Quality Report: evaluate a scope, persist/list/export (JSON+PDF), per-unit route override, attach-xcomet / attach-cometkiwi spans
 │   │   ├── images.py               # Image asset upload, context-linking, localization
-│   │   ├── documents.py            # Import (text/Markdown/CSV + PPTX/PDF/DOCX geometry) + POST from pasted text + append segments; deck /structure, bilingual /segments, export.{pptx,docx,xliff}; shared _translate_blocks + _tm_prefill (TMX near-match suggestion)
+│   │   ├── documents.py            # Import (text/Markdown/CSV + PPTX/PDF/DOCX geometry) + POST from pasted text / from-url + append segments; deck /structure, bilingual /segments, export.{pptx,docx,xliff}; shared _translate_blocks + _tm_prefill (TMX near-match suggestion)
 │   │   ├── pages.py                # Phase 8/9/10: fetch+rewrite review, page history, page-level notes, pending-proposals list
 │   │   ├── audit.py                # Phase 11: site i18n/l10n/compliance audit runs + findings
 │   │   ├── tm.py                   # Phase 13: TMX 1.4 translation-memory import
@@ -1261,7 +1265,7 @@ content-provenance/
 │   │   │   ├── engine.py           # RedriveEngine — evaluate() → QualityReport, redrive_from_report() with per-bucket/per-unit routing + a pre-apply second-pass gate; plus the classic run()
 │   │   │   ├── ledger.py           # DB-backed per-provider usage budget
 │   │   │   └── propose.py          # Phase 10: a human's own draft, filed as an ad-hoc PENDING_APPROVAL item
-│   │   ├── documents/              # Phase 7: format extraction + round-trip — pptx_extract.py / pdf_extract.py (PyMuPDF) / docx_extract.py (bilingual reader) / reinsert.py (export.pptx/docx) / ocr.py (Tesseract) / storage.py (original bytes)
+│   │   ├── documents/              # Phase 7: format extraction + round-trip — pptx_extract.py / pdf_extract.py (PyMuPDF) / docx_extract.py (bilingual reader) / reinsert.py (export.pptx/docx) / ocr.py (Tesseract) / storage.py (original bytes) / url_fetch.py (readable page text via headless Chromium, for POST /documents/from-url)
 │   │   ├── quality_report_pdf.py   # Branded Quality Report PDF (reportlab) — issues worst-first, non-commercial-signal page stamp
 │   │   ├── prov_builder.py         # W3C PROV-DM graph builder (text + image), PROV-JSON
 │   │   ├── page_fetch.py           # Phase 8: Playwright fetch, harvest/match/tag/rewrite an arbitrary URL
@@ -1291,7 +1295,7 @@ content-provenance/
 │   │   ├── api/client.ts           # Typed fetch wrapper for the whole API
 │   │   ├── components/             # ReviewFrame, SegmentDrawer (Details/History/Provenance/Metrics/Notes tabs), PageFlaggedList, PageHistory, PageNotes, PendingChanges, AuditReport (+ pages-crawled table), ProvenancePanel (+ lineage/exports), MetricsPanel, ContextImages, QualityBadge, VersionHistory, NotesThread, PageIntro, ModelPicker, LocaleSelect, BarChart, DonutChart
 │   │   ├── data/locales.ts         # Phase 18: top-10-most-spoken + broader language list backing LocaleSelect
-│   │   └── pages/                  # ReviewPage, LiveReviewPage, RedriveConsole (3-step wizard: evaluate → quality report + XCOMET/CometKiwi spans → routed redrive; top "Pipeline" panel picks the evaluate/retranslate model per step + toggles the pause/approve-plan/second-review gates), DeckReview (deck/PDF canvas), DocumentReview (DOCX/flow bilingual reader), ImageReview (+ OCR), DocumentsPage, DocumentViewer, AuditPage, SearchPage, AnalyticsPage, CreateContentPage, TranslateWorkbench (initial-translation tab: paste / units / document source, chosen engine, inline edit+approve, TM suggestions, XLIFF assembly), StyleGuidesPage, ImportPage, VendorScorecardPage, ConsistencyPage, PublicAuditLanding (branded lead-gen landing, VITE_PUBLIC_SITE builds only)
+│   │   └── pages/                  # ReviewPage, LiveReviewPage, RedriveConsole (3-step wizard: evaluate → quality report + XCOMET/CometKiwi spans → routed redrive; top "Pipeline" panel picks the evaluate/retranslate model per step + toggles the pause/approve-plan/second-review gates), DeckReview (deck/PDF canvas), DocumentReview (DOCX/flow bilingual reader), ImageReview (+ OCR), DocumentsPage, DocumentViewer, AuditPage, SearchPage, AnalyticsPage, CreateContentPage, TranslateWorkbench (initial-translation tab: paste / file upload / URL / units / existing-document source, chosen engine, inline edit+approve, TM suggestions, XLIFF assembly), StyleGuidesPage, ImportPage, VendorScorecardPage, ConsistencyPage, PublicAuditLanding (branded lead-gen landing, VITE_PUBLIC_SITE builds only)
 │   ├── review-sdk/                 # The in-context overlay injected into a cooperative target app, or extracted for Phase 10's extension
 │   │   ├── overlay.ts              # Highlight boxes, score/pending coloring, pluggable transport (postMessage or chrome.runtime)
 │   │   ├── harvest.ts              # Phase 10: shared harvest/rewrite DOM walk — compiled once, used by both Playwright and the extension
@@ -1318,7 +1322,7 @@ content-provenance/
 │   ├── test_redrive.py             # Redrive engine tests incl. human-in-the-loop
 │   ├── test_images.py              # Image asset API tests
 │   ├── test_documents.py           # Document import/segments API tests
-│   ├── test_translate_workbench.py # PATCH target / translate-in-place / POST-from-text / append segments / export.xliff / TM pre-fill
+│   ├── test_translate_workbench.py # PATCH target / translate-in-place / POST-from-text / from-url / append segments / export.xliff / TM pre-fill
 │   ├── test_pages.py               # Page fetch/harvest/render + history/diff/as_of tests (real headless-browser render)
 │   ├── test_revert.py              # Version revert API tests
 │   ├── test_propose.py             # Phase 10: human-drafted proposal -> pending -> approve/reject tests

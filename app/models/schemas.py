@@ -72,6 +72,7 @@ class RedriveOutcome(str, Enum):
     NO_BUDGET = "no_budget"
     PENDING_APPROVAL = "pending_approval"  # human-in-the-loop: redriven text proposed, not yet applied
     REJECTED = "rejected"                  # a human reviewer declined the proposed redrive
+    SENT_TO_TMS = "sent_to_tms"            # routed to a TMS (Crowdin) for human review — resolved by its webhook
 
 
 class QualityReportStatus(str, Enum):
@@ -365,6 +366,10 @@ class RoutingTarget(BaseModel):
     action: RecommendedAction
     provider: Optional[str] = None  # a translation-backend provider name
     model: Optional[str] = None
+    # For action=human: where the review happens. None / "in_app" = the
+    # built-in PENDING_APPROVAL queue; "crowdin" = push to the TMS instead
+    # (app/core/tms_service.send_unit_for_review), resolved by its webhook.
+    review_venue: Optional[str] = None
 
 
 class RedriveRouting(BaseModel):

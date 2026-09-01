@@ -5,17 +5,23 @@ POST /api/v1/integrations/tms/send           push a unit's source string
                                              (+ MT draft as a suggestion,
                                              + quality score/flags as a comment)
 POST /api/v1/integrations/tms/setup-webhook  register the approval webhook
+POST /api/v1/integrations/tms/webhook        receive an approved translation
+                                             (verified by ?secret=)
+GET  /api/v1/integrations/tms/pull           polling fallback: fetch + apply a
+                                             unit's approved translation
 GET  /api/v1/integrations/tms/status         is the provider configured?
-
-Phase 2 adds POST /webhook and GET /pull to bring approved translations back.
 """
 
-from fastapi import APIRouter, HTTPException
+import hmac
+
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from app.core.config import settings
-from app.core.tms_service import send_unit_for_review
+from app.core.tms_service import apply_approved_translation, apply_from_poll, send_unit_for_review
 from app.core.integrations.factory import get_tms_integration
-from app.models.schemas import TMSSendRequest, TMSSendResponse, TMSStatusResponse
+from app.models.schemas import (
+    TMSSendRequest, TMSSendResponse, TMSStatusResponse, TMSWebhookResult,
+)
 
 router = APIRouter()
 
@@ -53,6 +59,39 @@ async def tms_setup_webhook(payload: dict):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"events": _WEBHOOK_EVENTS, **result}
+
+
+@router.post("/webhook", response_model=TMSWebhookResult)
+async def tms_webhook(request: Request, secret: str = Query("")):
+    """Inbound approval webhook. Auth is the shared `?secret=` appended to
+    the callback URL at setup time; the body is parsed by the provider
+    connector into a normalized approval event and applied."""
+    expected = settings.crowdin_webhook_secret
+    if not expected or not hmac.compare_digest(secret, expected):
+        raise HTTPException(status_code=401, detail="bad or missing webhook secret")
+
+    body = await request.body()
+    try:
+        integration = get_tms_integration()
+        event = integration.parse_webhook_event(dict(request.headers), body, expected)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if event is None:
+        return TMSWebhookResult(applied=False, detail="event ignored")
+    return TMSWebhookResult(**await apply_approved_translation(event))
+
+
+@router.get("/pull", response_model=TMSWebhookResult)
+async def tms_pull(unit_id: str = Query(...)):
+    """Polling fallback: fetch this unit's current approved translation from
+    the TMS and apply it if there is one and it differs."""
+    try:
+        return TMSWebhookResult(**await apply_from_poll(unit_id))
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/status", response_model=TMSStatusResponse)

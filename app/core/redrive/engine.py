@@ -51,6 +51,7 @@ def _resolve_routing_target(routing: RedriveRouting, item: QualityReportItem) ->
     action = item.recommended_action
     provider: Optional[str] = None
     model: Optional[str] = None
+    review_venue: Optional[str] = None
     layers = [
         routing.default,
         routing.by_bucket.get(item.bucket.value),
@@ -65,7 +66,9 @@ def _resolve_routing_target(routing: RedriveRouting, item: QualityReportItem) ->
             provider = layer.provider
         if layer.model is not None:
             model = layer.model
-    return RoutingTarget(action=action, provider=provider, model=model)
+        if layer.review_venue is not None:
+            review_venue = layer.review_venue
+    return RoutingTarget(action=action, provider=provider, model=model, review_venue=review_venue)
 
 
 def _classify_bucket(
@@ -514,6 +517,34 @@ class RedriveEngine:
             return False, f"second-pass score {result.score:.0f} < {threshold:.0f}"
         return True, f"second-pass score {result.score:.0f}"
 
+    async def _send_to_tms(self, unit, item, draft_text: str, backend_label: str) -> tuple:
+        """A `human` route with review_venue="crowdin" — push the string +
+        MT draft + quality note to the TMS instead of the in-app queue.
+        Falls back to PENDING_APPROVAL if the TMS is unconfigured / errors,
+        so a misconfiguration never fails the whole run."""
+        from app.core import tms_service  # local import: engine has no TMS dep otherwise
+
+        fallback = (
+            RedriveOutcome.PENDING_APPROVAL,
+            f"proposed via {backend_label} (bucket={item.bucket.value}) — awaiting human approval",
+        )
+        note = (
+            f"score {item.before_score}; "
+            f"{', '.join(item.reasons) or 'bucket:' + item.bucket.value}; "
+            f"flagged by {self.scorer_label} — via Content Provenance"
+        )
+        try:
+            res = await tms_service.send_unit_for_review(
+                unit.id, mt_draft=draft_text, quality_note=note,
+            )
+        except (ValueError, LookupError) as e:
+            return (fallback[0], f"{fallback[1]} (TMS unavailable: {e})")
+        return (
+            RedriveOutcome.SENT_TO_TMS,
+            f"sent to {res['provider']} string {res['string_id']} for human review "
+            f"(bucket={item.bucket.value})",
+        )
+
     async def redrive_from_report(
         self, report: QualityReport, routing: Optional[RedriveRouting] = None,
         triggered_by: Optional[str] = None, second_review: bool = False,
@@ -599,10 +630,16 @@ class RedriveEngine:
 
             if target.action == RecommendedAction.HUMAN:
                 pending += 1
+                if target.review_venue == "crowdin":
+                    outcome, detail = await self._send_to_tms(unit, item, new_text, backend_label)
+                else:
+                    outcome, detail = (
+                        RedriveOutcome.PENDING_APPROVAL,
+                        f"proposed via {backend_label} (bucket={item.bucket.value}) — awaiting human approval",
+                    )
                 await db.add_redrive_run_item(RedriveRunItem(
                     run_id=run.id, unit_id=unit.id, before_score=item.before_score, after_score=None,
-                    outcome=RedriveOutcome.PENDING_APPROVAL, proposed_text=new_text,
-                    detail=f"proposed via {backend_label} (bucket={item.bucket.value}) — awaiting human approval",
+                    outcome=outcome, proposed_text=new_text, detail=detail,
                 ))
                 continue
 

@@ -17,6 +17,7 @@ type BucketRoute = {
   override: boolean; // false = inherit the pipeline retranslate engine
   provider: string;
   model: string;
+  sendToCrowdin: boolean; // action=human only: review in Crowdin, not the in-app queue
 };
 
 const STEP_TITLE: Record<Step, string> = {
@@ -34,7 +35,7 @@ const ACTION_OPTIONS: { value: RecommendedAction | ""; label: string }[] = [
 
 function emptyBucketRoutes(): Record<string, BucketRoute> {
   return Object.fromEntries(
-    ACTIONABLE_BUCKETS.map((b) => [b, { action: "", override: false, provider: "", model: "" } as BucketRoute]),
+    ACTIONABLE_BUCKETS.map((b) => [b, { action: "", override: false, provider: "", model: "", sendToCrowdin: false } as BucketRoute]),
   );
 }
 
@@ -108,9 +109,24 @@ export function RedriveConsole() {
   const [meteorRef, setMeteorRef] = useState("");
   const [meteorScore, setMeteorScore] = useState<number | null | undefined>(undefined);
   const [meteorBusy, setMeteorBusy] = useState(false);
+  const [crowdin, setCrowdin] = useState<{ configured: boolean; project_id: string | null; detail: string | null } | null>(null);
+  const [webhookUrl, setWebhookUrl] = useState("");
+  const [webhookMsg, setWebhookMsg] = useState<string | null>(null);
 
   useEffect(() => { api.listStyleGuides().then(setGuides).catch(() => {}); }, []);
   useEffect(() => { api.listQualityReports(10).then(setRecent).catch(() => {}); }, []);
+  useEffect(() => { api.tmsStatus().then(setCrowdin).catch(() => {}); }, []);
+
+  async function setupCrowdinWebhook() {
+    if (!webhookUrl.trim()) return;
+    setWebhookMsg(null);
+    try {
+      const r = await api.tmsSetupWebhook(webhookUrl.trim());
+      setWebhookMsg(`${r.created ? "Registered" : "Already registered"} for ${r.events.join(", ")}.`);
+    } catch (e) {
+      setWebhookMsg(e instanceof Error ? e.message : String(e));
+    }
+  }
 
   // Any change to the routing plan invalidates a prior approval.
   useEffect(() => {
@@ -223,6 +239,7 @@ export function RedriveConsole() {
         action: r.action,
         provider: (r.override && r.provider) || redriveProvider || undefined,
         model: (r.override && r.model) || (!r.override ? redriveModel : "") || undefined,
+        review_venue: r.action === "human" && r.sendToCrowdin ? "crowdin" : undefined,
       };
     }
     if (Object.keys(byBucket).length) routing.by_bucket = byBucket;
@@ -667,6 +684,17 @@ export function RedriveConsole() {
                           Uses the pipeline engine: <strong>{pipelineEngineLabel}</strong>
                         </div>
                       )}
+                      {effectiveAction === "human" && (
+                        <label style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 6, marginTop: 6 }}>
+                          <input
+                            type="checkbox" checked={r.sendToCrowdin}
+                            onChange={(e) => setBucketRoutes({ ...bucketRoutes, [b]: { ...r, sendToCrowdin: e.target.checked } })}
+                          />
+                          Send to Crowdin for review <span style={{ color: "#9ca3af" }}>
+                            (instead of the in-app approval queue — the draft goes as a suggestion)
+                          </span>
+                        </label>
+                      )}
                     </div>
                   )}
                 </div>
@@ -773,6 +801,31 @@ export function RedriveConsole() {
       {/* ── Ancillary tools ────────────────────────────────────────── */}
       <hr style={{ margin: "28px 0 18px", border: "none", borderTop: "1px solid #e5e7eb" }} />
       <h3 style={{ fontSize: 14, color: "#6b7280" }}>Tools</h3>
+
+      <div style={{ marginBottom: 20, padding: 12, background: "#f9fafb", borderRadius: 6 }}>
+        <h4 style={{ marginTop: 0, fontSize: 14 }}>Crowdin (TMS)</h4>
+        <p style={{ color: "#6b7280", fontSize: 13, marginTop: 0 }}>
+          {crowdin === null
+            ? "Checking…"
+            : crowdin.configured
+              ? <>Connected to project <strong>{crowdin.project_id}</strong>. A <em>human</em> bucket above can be
+                sent to Crowdin for review; approved translations return via the webhook below.</>
+              : <>Not configured — set <code>CROWDIN_PROJECT_ID</code> / <code>CROWDIN_API_TOKEN</code> in <code>.env</code>. {crowdin.detail}</>}
+        </p>
+        {crowdin?.configured && (
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <input
+              value={webhookUrl} onChange={(e) => setWebhookUrl(e.target.value)}
+              placeholder="https://<public-host>/api/v1/integrations/tms/webhook?secret=<CROWDIN_WEBHOOK_SECRET>"
+              style={{ flex: 1, minWidth: 360, fontSize: 12, padding: 5 }}
+            />
+            <button onClick={setupCrowdinWebhook} disabled={!webhookUrl.trim()} style={{ fontSize: 12, cursor: "pointer" }}>
+              Set up webhook
+            </button>
+            {webhookMsg && <span style={{ fontSize: 12, color: "#6b7280" }}>{webhookMsg}</span>}
+          </div>
+        )}
+      </div>
 
       <div id="evaluate-single-unit" style={{ marginBottom: 20, padding: 12, background: "#f9fafb", borderRadius: 6 }}>
         <h4 style={{ marginTop: 0, fontSize: 14 }}>Evaluate a single unit</h4>

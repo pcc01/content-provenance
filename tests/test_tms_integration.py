@@ -42,7 +42,7 @@ class _StubTMS:
         self.comments.append({"string_id": string_id, "text": text})
         return {}
 
-    async def fetch_approved_translation(self, *, string_id, language):
+    async def fetch_approved_translation(self, *, key, language):
         return self._approved_text
 
     async def ensure_webhook(self, *, callback_url, events):
@@ -154,6 +154,94 @@ async def test_status_unconfigured(client, monkeypatch):
     assert r.json()["configured"] is False
 
 
+# ── /webhook ────────────────────────────────────────────────────────────
+
+async def test_webhook_applies_approved_translation(client, monkeypatch):
+    _configure_crowdin(monkeypatch)
+    unit_id = await _create_unit(client, "Webhook approval content.")
+    ev = TMSApprovalEvent(key=unit_id, language="fr", approved_text="Contenu approuvé.", translator="bob")
+    monkeypatch.setattr("app.api.tms.get_tms_integration", lambda provider=None: _StubTMS(event=ev))
+
+    r = await client.post("/api/v1/integrations/tms/webhook?secret=s3cr3t", json={"event": "suggestion.approved"})
+    assert r.status_code == 200
+    assert r.json()["applied"] is True and r.json()["unit_id"] == unit_id
+
+    unit = (await client.get(f"/api/v1/translations/{unit_id}")).json()
+    assert unit["target_text"] == "Contenu approuvé."
+    assert unit["translation_method"] == "hybrid" and unit["status"] == "reviewed"
+
+    versions = (await client.get(f"/api/v1/translations/{unit_id}/versions")).json()
+    assert versions[-1]["source_event"] == "tms_review"
+    assert "bob" in (versions[-1]["note"] or "")
+
+    log = (await client.get("/api/v1/xliff/ingest-log")).json()
+    assert any(e["direction"] == "in" and e["format"] == "crowdin" for e in log)
+
+
+async def test_webhook_bad_secret_401(client, monkeypatch):
+    _configure_crowdin(monkeypatch)
+    unit_id = await _create_unit(client)
+    ev = TMSApprovalEvent(key=unit_id, language="fr", approved_text="X.")
+    monkeypatch.setattr("app.api.tms.get_tms_integration", lambda provider=None: _StubTMS(event=ev))
+
+    r = await client.post("/api/v1/integrations/tms/webhook?secret=wrong", json={})
+    assert r.status_code == 401
+    unit = (await client.get(f"/api/v1/translations/{unit_id}")).json()
+    assert unit["target_text"].startswith("[FR]")  # untouched
+
+
+async def test_webhook_unknown_key_noop(client, monkeypatch):
+    _configure_crowdin(monkeypatch)
+    ev = TMSApprovalEvent(key="not-a-real-unit", language="fr", approved_text="X.")
+    monkeypatch.setattr("app.api.tms.get_tms_integration", lambda provider=None: _StubTMS(event=ev))
+    r = await client.post("/api/v1/integrations/tms/webhook?secret=s3cr3t", json={})
+    assert r.status_code == 200 and r.json()["applied"] is False
+
+
+async def test_webhook_ignored_event(client, monkeypatch):
+    _configure_crowdin(monkeypatch)
+    monkeypatch.setattr("app.api.tms.get_tms_integration", lambda provider=None: _StubTMS(event=None))
+    r = await client.post("/api/v1/integrations/tms/webhook?secret=s3cr3t", json={"event": "string.added"})
+    assert r.status_code == 200 and r.json()["applied"] is False
+
+
+async def test_webhook_signature_mismatch_400(client, monkeypatch):
+    _configure_crowdin(monkeypatch)
+    monkeypatch.setattr(
+        "app.api.tms.get_tms_integration", lambda provider=None: _StubTMS(raise_on_parse=True),
+    )
+    r = await client.post("/api/v1/integrations/tms/webhook?secret=s3cr3t", json={})
+    assert r.status_code == 400
+
+
+# ── /pull ───────────────────────────────────────────────────────────────
+
+async def test_pull_applies_approved_translation(client, monkeypatch):
+    unit_id = await _create_unit(client, "Poll approval content.")
+    stub = _StubTMS(approved_text="Traduction validée.")
+    monkeypatch.setattr("app.core.tms_service.get_tms_integration", lambda provider=None: stub)
+
+    r = await client.get(f"/api/v1/integrations/tms/pull?unit_id={unit_id}")
+    assert r.status_code == 200 and r.json()["applied"] is True
+    unit = (await client.get(f"/api/v1/translations/{unit_id}")).json()
+    assert unit["target_text"] == "Traduction validée."
+
+
+async def test_pull_no_approval_yet(client, monkeypatch):
+    unit_id = await _create_unit(client)
+    monkeypatch.setattr(
+        "app.core.tms_service.get_tms_integration", lambda provider=None: _StubTMS(approved_text=None),
+    )
+    r = await client.get(f"/api/v1/integrations/tms/pull?unit_id={unit_id}")
+    assert r.status_code == 200 and r.json()["applied"] is False
+
+
+async def test_pull_missing_unit_404(client, monkeypatch):
+    monkeypatch.setattr("app.core.tms_service.get_tms_integration", lambda provider=None: _StubTMS())
+    r = await client.get("/api/v1/integrations/tms/pull?unit_id=nope")
+    assert r.status_code == 404
+
+
 # ── crowdin_lang mapping ────────────────────────────────────────────────
 
 def test_crowdin_lang_mapping():
@@ -184,3 +272,69 @@ def test_crowdin_parse_webhook_ignores_other_events():
     from app.core.integrations.crowdin import CrowdinIntegration
     integ = CrowdinIntegration("https://api.crowdin.com/api/v2", "1", "tok")
     assert integ.parse_webhook_event({}, b'{"event":"string.added","string":{}}', "x") is None
+
+
+# ── redrive routing: a `human` bucket -> Crowdin ───────────────────────
+
+def _redrive_engine():
+    from app.core.redrive.engine import RedriveEngine
+    from app.core.translation_backends import MockTranslationBackend
+    from tests.test_quality_reports import _MarkerScorer
+    return RedriveEngine(
+        scorer=_MarkerScorer(), scorer_label="stub-judge",
+        redrive_backend=MockTranslationBackend(), redrive_label="mock",
+    )
+
+
+async def test_redrive_human_route_to_crowdin_sends_instead_of_pending(client, monkeypatch):
+    from app.core.database import get_db, init_db
+    from app.models.schemas import RecommendedAction, RedriveRouting, RoutingTarget
+    from tests.test_quality_reports import _mk_unit
+
+    await init_db()
+    db = get_db()
+    stub = _StubTMS()
+    monkeypatch.setattr("app.core.tms_service.get_tms_integration", lambda provider=None: stub)
+
+    unit = await _mk_unit(db, "low")  # -> below_quality
+    report = await _redrive_engine().evaluate(scope={"unit_ids": [unit.id]}, quality_threshold=80)
+    run = await _redrive_engine().redrive_from_report(
+        report,
+        RedriveRouting(by_bucket={
+            "below_quality": RoutingTarget(action=RecommendedAction.HUMAN, review_venue="crowdin"),
+        }),
+    )
+
+    item = run.items[0]
+    assert item.outcome.value == "sent_to_tms"
+    assert "crowdin" in item.detail
+    assert stub.strings and stub.strings[0]["key"] == unit.id
+    assert stub.suggestions and stub.suggestions[0]["text"].startswith("[FR]")  # the fresh redrive draft
+    # nothing left in the in-app pending queue for this unit
+    assert await db.list_pending_redrive_items_for_units([unit.id]) == []
+
+
+async def test_redrive_crowdin_route_falls_back_when_unconfigured(client, monkeypatch):
+    from app.core.database import get_db, init_db
+    from app.models.schemas import RecommendedAction, RedriveRouting, RoutingTarget
+    from tests.test_quality_reports import _mk_unit
+
+    await init_db()
+    db = get_db()
+
+    def _raise(provider=None):
+        raise ValueError("Crowdin integration is not configured")
+    monkeypatch.setattr("app.core.tms_service.get_tms_integration", _raise)
+
+    unit = await _mk_unit(db, "low")
+    report = await _redrive_engine().evaluate(scope={"unit_ids": [unit.id]}, quality_threshold=80)
+    run = await _redrive_engine().redrive_from_report(
+        report,
+        RedriveRouting(by_bucket={
+            "below_quality": RoutingTarget(action=RecommendedAction.HUMAN, review_venue="crowdin"),
+        }),
+    )
+
+    item = run.items[0]
+    assert item.outcome.value == "pending_approval"
+    assert "TMS unavailable" in item.detail

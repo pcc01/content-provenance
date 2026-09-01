@@ -1117,6 +1117,32 @@ class PostgresRepository:
                 items=[_row_to_redrive_run_item(i) for i in items],
             )
 
+    async def resolve_tms_redrive_items(
+        self, unit_id: str, resolution_text: str, resolved_by: str,
+    ) -> int:
+        """Close any open redrive item for a unit once its translation was
+        approved out-of-band in a TMS (the Crowdin webhook / poll). Matches
+        both PENDING_APPROVAL and SENT_TO_TMS. Returns how many were closed."""
+        async with self._session_factory() as session:
+            rows = (
+                await session.execute(
+                    select(RedriveRunItemRow).where(
+                        RedriveRunItemRow.unit_id == unit_id,
+                        RedriveRunItemRow.outcome.in_([
+                            RedriveOutcome.PENDING_APPROVAL.value,
+                            RedriveOutcome.SENT_TO_TMS.value,
+                        ]),
+                    )
+                )
+            ).scalars().all()
+            for row in rows:
+                row.outcome = RedriveOutcome.REDRIVEN.value
+                row.detail = f"approved in TMS — {resolution_text}"
+                row.approved_by = resolved_by
+                row.approved_at = datetime.utcnow()
+            await session.commit()
+            return len(rows)
+
     async def list_pending_redrive_items_for_units(self, unit_ids: List[str]) -> List[RedriveRunItem]:
         """Phase 10's editor view: every PENDING_APPROVAL item touching any
         of a page's harvested units, regardless of which (possibly ad-hoc,

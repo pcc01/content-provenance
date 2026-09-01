@@ -296,6 +296,9 @@ export interface RoutingTarget {
   action: RecommendedAction;
   provider?: string;
   model?: string;
+  // action="human" only: "crowdin" pushes the unit to the TMS for review
+  // instead of the in-app PENDING_APPROVAL queue.
+  review_venue?: "in_app" | "crowdin";
 }
 
 export interface RedriveRouting {
@@ -832,6 +835,20 @@ const phase13to15Api = {
     request<QualityReport>(`/quality/reports/${reportId}/attach-xcomet`, { method: "POST" }),
   attachReportCometkiwi: (reportId: string) =>
     request<QualityReport>(`/quality/reports/${reportId}/attach-cometkiwi`, { method: "POST" }),
+
+  // ── TMS integration (Crowdin) ────────────────────────────────────────
+  tmsStatus: () =>
+    request<{ provider: string; configured: boolean; project_id: string | null; detail: string | null }>(
+      "/integrations/tms/status",
+    ),
+  tmsSend: (unitId: string, opts?: { include_mt_draft?: boolean; include_quality_note?: boolean }) =>
+    request<{ unit_id: string; provider: string; string_id: string; created: boolean; suggestion_added: boolean; comment_added: boolean }>(
+      "/integrations/tms/send", { method: "POST", body: JSON.stringify({ unit_id: unitId, ...opts }) },
+    ),
+  tmsSetupWebhook: (callbackUrl: string) =>
+    request<{ events: string[]; webhook_id: string; created: boolean }>(
+      "/integrations/tms/setup-webhook", { method: "POST", body: JSON.stringify({ callback_url: callbackUrl }) },
+    ),
 };
 
 export const api = {

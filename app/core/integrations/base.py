@@ -107,9 +107,10 @@ class TMSIntegration(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def fetch_approved_translation(self, *, string_id: str, language: str) -> Optional[str]:
-        """The current approved translation for a string + language, or
-        None. The polling fallback for deployments without a public webhook."""
+    async def fetch_approved_translation(self, *, key: str, language: str) -> Optional[str]:
+        """The current approved translation for the string with this stable
+        `key` (identifier) + language, or None. The polling fallback for
+        deployments without a public webhook."""
         raise NotImplementedError
 
     @abstractmethod

@@ -109,7 +109,11 @@ class CrowdinIntegration(TMSIntegration):
 
     # ── approved-translation retrieval (polling fallback) ─────────────────
 
-    async def fetch_approved_translation(self, *, string_id: str, language: str) -> Optional[str]:
+    async def fetch_approved_translation(self, *, key: str, language: str) -> Optional[str]:
+        found = await self._find_string(key)
+        if not found:
+            return None
+        string_id = found["id"]
         raw = await self._request(
             "GET", f"/projects/{self.project_id}/approvals",
             params={"stringId": int(string_id), "languageId": crowdin_lang(language), "limit": 1},

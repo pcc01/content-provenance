@@ -1021,9 +1021,21 @@ section.
 
 Configure via `.env` — `TMS_PROVIDER`, `CROWDIN_BASE_URL` (crowdin.com vs
 Enterprise), `CROWDIN_PROJECT_ID`, `CROWDIN_API_TOKEN` (a Personal Access
-Token with `project` scope), `CROWDIN_WEBHOOK_SECRET`. A string-based Crowdin
-project is assumed (file-based projects and Phrase/Lokalise/Transifex
-providers are prepared for in the contract but not built).
+Token with `project` scope), `CROWDIN_WEBHOOK_SECRET`, and optionally
+`CROWDIN_BRANCH` (blank = the project's first branch, usually `main`). A
+**string-based** Crowdin project is assumed — its strings are attached to a
+branch, which `CrowdinIntegration` resolves/creates automatically. File-based
+projects and Phrase/Lokalise/Transifex providers are prepared for in the
+contract but not built.
+
+Verified end-to-end against a real crowdin.com project: `/status` → `/send`
+(string + suggestion + comment land, confirmed via the Crowdin API) → approve
+in Crowdin → `/pull` applies it as a `tms_review` HYBRID version → and the
+full **Redrive Console → Crowdin → approve → pull** loop closing the
+`SENT_TO_TMS` redrive item. The graceful fallback (Crowdin error → in-app
+`pending_approval`, run still completes) is verified too. The `/webhook`
+endpoint shares `/pull`'s apply path; a live webhook check just needs a
+public callback URL.
 
 ---
 
@@ -1286,7 +1298,7 @@ content-provenance/
 │   │   │   └── retrieval.py        # Hybrid vector+graph style/glossary/exemplar context retrieval, pre-translation
 │   │   ├── vendors/                # Phase 14: vendor scorecard aggregation
 │   │   ├── consistency/            # Phase 14: term-drift / term-inconsistency / tone-spread checker
-│   │   ├── integrations/           # CMS + TMS provider abstractions — base.py (CMSIntegration + TMSIntegration ABCs), strapi.py, crowdin.py, factory.py (Directus/Payload + Phrase/Lokalise/Transifex prepared for, not built)
+│   │   ├── integrations/           # CMS + TMS provider abstractions — base.py (CMSIntegration + TMSIntegration ABCs), strapi.py, crowdin.py (branch auto-resolve, string upsert-by-identifier, suggestion/comment, approvals poll, webhook parse), factory.py (Directus/Payload + Phrase/Lokalise/Transifex prepared for, not built)
 │   │   ├── cms_service.py          # CMS push/pull orchestration — provenance + DeploymentRecord bookkeeping around the integration call
 │   │   ├── tms_service.py          # TMS orchestration — send_unit_for_review (push string + suggestion + quality note) / apply_approved_translation (webhook -> tms_review version + close redrive item)
 │   │   ├── scoring/                # Quality scoring — deterministic + pluggable LLM-judge + automatic metrics

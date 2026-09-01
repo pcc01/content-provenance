@@ -959,9 +959,8 @@ _These features were discussed in the design phase but not yet implemented._
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Phrase (Memsource) API connector | 💡 | Bi-directional XLIFF exchange |
-| Lokalise API connector | 💡 | Push/pull translations with provenance |
-| Transifex API connector | 💡 | |
+| Crowdin connector (`TMSIntegration` + `CrowdinIntegration`) | ✅ | Sits *around* the TMS, not replacing it: `POST /integrations/tms/send` pushes a source string + MT-draft suggestion + quality-note comment; a `suggestion.approved` webhook (`POST /integrations/tms/webhook`, shared-secret auth) brings the approved translation back as a `tms_review` HYBRID version and closes any open redrive item; `GET /pull` is the no-public-URL fallback. The Redrive Console can route a whole `human` bucket to Crowdin (`RoutingTarget.review_venue`) with automatic fallback to the in-app queue. String-based projects only. `app/core/integrations/crowdin.py`, `app/core/tms_service.py`, `app/api/tms.py`, `tests/test_tms_integration.py`. |
+| Phrase (Memsource) / Lokalise / Transifex connectors | 💡 | The `TMSIntegration` contract (`app/core/integrations/base.py`) is shaped for these — a per-provider port of `CrowdinIntegration` plus that provider's webhook payload shape |
 | SDL Trados plugin concept | 💡 | CAT tool provenance injection |
 | Non-cooperative review overlay (browser extension / rewriting proxy) | 💡 | For pages we don't control or that block iframing — see Review Environment above |
 | CMS push/pull content API (Strapi) | ✅ | Built in Phase 20 — see the built-features section above. Distinct from the TMS connectors above (a CMS publishes content, a TMS manages the translation workflow around it) |

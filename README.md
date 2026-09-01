@@ -989,6 +989,42 @@ the bootstrap script grants public read access to — push a translation,
 refresh the page, watch the CMS entry's live text and provenance panel
 update with no rebuild step.
 
+### TMS Integration (Crowdin)
+
+Sits **around** a team's existing TMS rather than replacing it: quality-gate
+and pre-translate before strings reach the human queue, then pull approved
+translations back into this system's provenance/redrive pipeline. A TMS
+manages the translation *workflow* (Crowdin, Phrase, Lokalise, ...) —
+distinct from the CMS integration above, which publishes finished content.
+Provider-abstracted the same way (`TMSIntegration` + `get_tms_integration()`,
+`app/core/integrations/base.py` / `crowdin.py` / `factory.py`); **Crowdin** is
+the only working provider. The source string's `identifier` is the
+`TranslationUnit` id, so an approval finds its way home.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/v1/integrations/tms/send` | Push a unit's source string to the TMS, with its `target_text` as a **translation suggestion** and its latest quality score/flags as a **comment** (`unit_id`, `provider?`, `include_mt_draft?`, `include_quality_note?`). Logs an outbound `crowdin` ingest event. |
+| `POST` | `/api/v1/integrations/tms/setup-webhook` | One-time: register the project's `suggestion.approved` webhook (`callback_url`, which must already carry `?secret=<CROWDIN_WEBHOOK_SECRET>`). Idempotent. |
+| `POST` | `/api/v1/integrations/tms/webhook` | Inbound approval webhook. Auth is the shared `?secret=` (`hmac.compare_digest`; `401` on mismatch). An approved translation becomes a new **HYBRID, reviewed** version of the unit (`source_event="tms_review"`), provenance is rebuilt, and any open redrive item for the unit is closed. |
+| `GET`  | `/api/v1/integrations/tms/pull?unit_id=` | Polling fallback for deployments with no public webhook URL — fetch the unit's current approved translation and apply it if it differs. |
+| `GET`  | `/api/v1/integrations/tms/status` | Whether the provider is configured — never echoes the token. |
+
+**Redrive routing → Crowdin.** `RoutingTarget.review_venue` (`in_app` \|
+`crowdin`) lets the **Redrive Console** send a whole `human` bucket to Crowdin
+for review instead of the in-app `PENDING_APPROVAL` queue: the fresh redrive
+draft goes as a suggestion, the item is marked `SENT_TO_TMS`, and its
+`suggestion.approved` webhook later closes it. If Crowdin is unconfigured or
+errors, the route **falls back** to the in-app queue — a misconfiguration
+never fails a run. In the UI it's a per-bucket "Send to Crowdin for review"
+checkbox, with a Crowdin status / webhook-setup panel in the console's Tools
+section.
+
+Configure via `.env` — `TMS_PROVIDER`, `CROWDIN_BASE_URL` (crowdin.com vs
+Enterprise), `CROWDIN_PROJECT_ID`, `CROWDIN_API_TOKEN` (a Personal Access
+Token with `project` scope), `CROWDIN_WEBHOOK_SECRET`. A string-based Crowdin
+project is assumed (file-based projects and Phrase/Lokalise/Transifex
+providers are prepared for in the contract but not built).
+
 ---
 
 ## Production Deployment
@@ -1223,6 +1259,7 @@ content-provenance/
 │   │   ├── json_export.py          # JSON provenance document download and preview — the JSON peer of xliff_export.py
 │   │   ├── json_import.py          # JSON provenance document ingestion — lenient about plain/minimal input shapes
 │   │   ├── integrations.py         # CMS push/pull (Strapi) — app/core/cms_service.py
+│   │   ├── tms.py                  # TMS (Crowdin): /send, /setup-webhook, /webhook, /pull, /status — app/core/tms_service.py
 │   │   ├── redrive.py              # Redrive runs — classic one-shot pass AND report-gated (from_report_id + routing + second_review), human-in-the-loop approve/reject
 │   │   ├── quality_reports.py      # Quality Report: evaluate a scope, persist/list/export (JSON+PDF), per-unit route override, attach-xcomet / attach-cometkiwi spans
 │   │   ├── images.py               # Image asset upload, context-linking, localization
@@ -1249,8 +1286,9 @@ content-provenance/
 │   │   │   └── retrieval.py        # Hybrid vector+graph style/glossary/exemplar context retrieval, pre-translation
 │   │   ├── vendors/                # Phase 14: vendor scorecard aggregation
 │   │   ├── consistency/            # Phase 14: term-drift / term-inconsistency / tone-spread checker
-│   │   ├── integrations/           # CMS provider abstraction — base.py (CMSIntegration ABC), strapi.py, factory.py (Directus/Payload prepared for, not built)
+│   │   ├── integrations/           # CMS + TMS provider abstractions — base.py (CMSIntegration + TMSIntegration ABCs), strapi.py, crowdin.py, factory.py (Directus/Payload + Phrase/Lokalise/Transifex prepared for, not built)
 │   │   ├── cms_service.py          # CMS push/pull orchestration — provenance + DeploymentRecord bookkeeping around the integration call
+│   │   ├── tms_service.py          # TMS orchestration — send_unit_for_review (push string + suggestion + quality note) / apply_approved_translation (webhook -> tms_review version + close redrive item)
 │   │   ├── scoring/                # Quality scoring — deterministic + pluggable LLM-judge + automatic metrics
 │   │   │   ├── deterministic.py    # Free floor-checks (ported from peripateticware's QE scorer)
 │   │   │   ├── mqm_types.py        # Phase 15: official 44-item MQM-Core error taxonomy (7 dimensions)
@@ -1298,7 +1336,7 @@ content-provenance/
 │   │   ├── api/client.ts           # Typed fetch wrapper for the whole API
 │   │   ├── components/             # ReviewFrame, SegmentDrawer (Details/History/Provenance/Metrics/Notes tabs), PageFlaggedList, PageHistory, PageNotes, PendingChanges, AuditReport (+ pages-crawled table), ProvenancePanel (+ lineage/exports), MetricsPanel, ContextImages, QualityBadge, VersionHistory, NotesThread, PageIntro, ModelPicker, LocaleSelect, BarChart, DonutChart
 │   │   ├── data/locales.ts         # Phase 18: top-10-most-spoken + broader language list backing LocaleSelect
-│   │   └── pages/                  # ReviewPage, LiveReviewPage, RedriveConsole (3-step wizard: evaluate → quality report + XCOMET/CometKiwi spans → routed redrive; top "Pipeline" panel picks the evaluate/retranslate model per step + toggles the pause/approve-plan/second-review gates), DeckReview (deck/PDF canvas), DocumentReview (DOCX/flow bilingual reader), ImageReview (+ OCR), DocumentsPage, DocumentViewer, AuditPage, SearchPage, AnalyticsPage, CreateContentPage, TranslateWorkbench (initial-translation tab: paste / file upload / URL / units / existing-document source, chosen engine, inline edit+approve, TM suggestions, XLIFF assembly), StyleGuidesPage, ImportPage, VendorScorecardPage, ConsistencyPage, PublicAuditLanding (branded lead-gen landing, VITE_PUBLIC_SITE builds only)
+│   │   └── pages/                  # ReviewPage, LiveReviewPage, RedriveConsole (3-step wizard: evaluate → quality report + XCOMET/CometKiwi spans → routed redrive; top "Pipeline" panel picks the evaluate/retranslate model per step + toggles the pause/approve-plan/second-review gates; per-bucket "send to Crowdin for review" + a Crowdin status/webhook panel in Tools), DeckReview (deck/PDF canvas), DocumentReview (DOCX/flow bilingual reader), ImageReview (+ OCR), DocumentsPage, DocumentViewer, AuditPage, SearchPage, AnalyticsPage, CreateContentPage, TranslateWorkbench (initial-translation tab: paste / file upload / URL / units / existing-document source, chosen engine, inline edit+approve, TM suggestions, XLIFF assembly), StyleGuidesPage, ImportPage, VendorScorecardPage, ConsistencyPage, PublicAuditLanding (branded lead-gen landing, VITE_PUBLIC_SITE builds only)
 │   ├── review-sdk/                 # The in-context overlay injected into a cooperative target app, or extracted for Phase 10's extension
 │   │   ├── overlay.ts              # Highlight boxes, score/pending coloring, pluggable transport (postMessage or chrome.runtime)
 │   │   ├── harvest.ts              # Phase 10: shared harvest/rewrite DOM walk — compiled once, used by both Playwright and the extension
@@ -1341,6 +1379,7 @@ content-provenance/
 │   ├── test_notifications.py       # Audit lead-alert email — smtplib fully mocked, no real SMTP connection made
 │   ├── test_json_export.py         # JSON provenance document export/import, incl. lenient minimal-input import
 │   └── test_cms_integration.py     # CMS push/pull API — offline-stubbed CMSIntegration, no live Strapi needed
+│   └── test_tms_integration.py     # TMS (Crowdin): send / webhook apply / pull / redrive->Crowdin routing — offline-stubbed TMSIntegration
 ├── docker/
 │   └── strapi/Dockerfile           # Generates a real Strapi project via create-strapi-app at build time — see CONTRIBUTING.md
 ├── scripts/

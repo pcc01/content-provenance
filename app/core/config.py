@@ -171,6 +171,21 @@ class Settings:
     strapi_api_token: str = os.getenv("STRAPI_API_TOKEN", "")
     strapi_timeout_seconds: float = float(os.getenv("STRAPI_TIMEOUT_SECONDS", "15"))
 
+    # ── TMS Integration (app/core/integrations/, app/core/tms_service.py) ─────
+    # A TMS manages the translation/review workflow (Crowdin, Phrase,
+    # Lokalise, ...) — distinct from a CMS, which publishes content. Only
+    # "crowdin" is implemented; others fail loudly via get_tms_integration().
+    tms_provider: str = os.getenv("TMS_PROVIDER", "crowdin")
+    # crowdin.com: https://api.crowdin.com/api/v2 ; Crowdin Enterprise:
+    # https://{organization}.api.crowdin.com/api/v2
+    crowdin_base_url: str = os.getenv("CROWDIN_BASE_URL", "https://api.crowdin.com/api/v2")
+    crowdin_project_id: str = os.getenv("CROWDIN_PROJECT_ID", "")
+    crowdin_api_token: str = os.getenv("CROWDIN_API_TOKEN", "")
+    # Shared secret appended as ?secret=… to the webhook callback URL and
+    # verified (hmac.compare_digest) on every inbound POST /integrations/tms/webhook.
+    crowdin_webhook_secret: str = os.getenv("CROWDIN_WEBHOOK_SECRET", "")
+    crowdin_timeout_seconds: float = float(os.getenv("CROWDIN_TIMEOUT_SECONDS", "20"))
+
     # ── CORS ──────────────────────────────────────────────────────────────────
     @property
     def cors_origins(self) -> List[str]:

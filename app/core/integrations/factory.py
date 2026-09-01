@@ -1,18 +1,20 @@
-"""get_cms_integration(provider) — picks the active CMSIntegration, same
-"one active provider, selectable, more can be added later" shape as
-app/core/translation_backends.py's get_translation_backend.
+"""get_cms_integration(provider) / get_tms_integration(provider) — pick the
+active CMS / TMS connector, same "one active provider, selectable, more can
+be added later" shape as app/core/translation_backends.py's
+get_translation_backend.
 
-Only Strapi is a working provider today. Directus and Payload are the
-next two candidates (see ROADMAP.md's CMS Integration section) — both
-genuinely FOSS, both REST-based, both natively multilingual — and are
-listed here so selecting them fails loudly with exactly what's missing,
-rather than silently falling through to Strapi or a generic 404.
+CMS: only Strapi works today; Directus/Payload fail loudly with what's
+missing rather than silently falling through.
+
+TMS: only Crowdin works today; Phrase/Lokalise/Transifex are shaped for by
+the TMSIntegration contract but not built.
 """
 
 from typing import Optional
 
 from app.core.config import settings
-from app.core.integrations.base import CMSIntegration
+from app.core.integrations.base import CMSIntegration, TMSIntegration
+from app.core.integrations.crowdin import CrowdinIntegration
 from app.core.integrations.strapi import StrapiIntegration
 
 
@@ -52,3 +54,25 @@ def get_cms_integration(provider: Optional[str] = None) -> CMSIntegration:
         raise ValueError("payload CMS integration is not implemented yet")
 
     raise ValueError(f"Unknown CMS provider: {provider!r} (known: strapi, directus, payload)")
+
+
+def get_tms_integration(provider: Optional[str] = None) -> TMSIntegration:
+    provider = (provider or settings.tms_provider or "crowdin").lower()
+
+    if provider == "crowdin":
+        if not settings.crowdin_project_id or not settings.crowdin_api_token:
+            raise ValueError(
+                "Crowdin integration is not configured — set CROWDIN_PROJECT_ID and "
+                "CROWDIN_API_TOKEN (see .env.example)."
+            )
+        return CrowdinIntegration(
+            base_url=settings.crowdin_base_url,
+            project_id=settings.crowdin_project_id,
+            api_token=settings.crowdin_api_token,
+            timeout=settings.crowdin_timeout_seconds,
+        )
+
+    if provider in ("phrase", "lokalise", "transifex"):
+        raise ValueError(f"{provider} TMS integration is not implemented yet")
+
+    raise ValueError(f"Unknown TMS provider: {provider!r} (known: crowdin)")

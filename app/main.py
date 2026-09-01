@@ -26,7 +26,7 @@ from app.api import (
     translations, provenance, search, xliff_export, xliff_import, redrive, images,
     notes, documents, pages, audit, style, tm, vendors, consistency, quality,
     quality_reports, models,
-    json_export, json_import, integrations,
+    json_export, json_import, integrations, tms,
 )
 from app.core.database import init_db
 from app.core.haystack_pipeline import init_haystack
@@ -99,6 +99,7 @@ app.include_router(quality_reports.router, prefix="/api/v1/quality", tags=["Qual
 app.include_router(quality.router, prefix="/api/v1/quality", tags=["Automatic Quality Metrics"])
 app.include_router(models.router, prefix="/api/v1/models", tags=["Model Discovery"])
 app.include_router(integrations.router, prefix="/api/v1/integrations/cms", tags=["CMS Integrations"])
+app.include_router(tms.router, prefix="/api/v1/integrations/tms", tags=["TMS Integrations"])
 
 
 # The Review Shell (frontend/) is a Vite+React app now, not a static HTML

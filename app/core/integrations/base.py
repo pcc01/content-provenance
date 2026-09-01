@@ -24,7 +24,9 @@ app/api/redrive.py).
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Mapping, Optional
+
+from pydantic import BaseModel
 
 
 class CMSIntegration(ABC):
@@ -56,4 +58,71 @@ class CMSIntegration(ABC):
     ) -> Optional[str]:
         """Read `field`'s current value from one entry. None if the entry
         or field doesn't exist / is empty."""
+        raise NotImplementedError
+
+
+# ── TMS integration ────────────────────────────────────────────────────────
+#
+# A TMS (Crowdin, Phrase, Lokalise, ...) manages the translation/review
+# WORKFLOW around content — distinct from a CMS, which publishes it. The
+# contract is one level up from CMSIntegration's single-field push/pull:
+# source strings, translation suggestions, review comments, approved-
+# translation retrieval, and a webhook for approval events. Same failure
+# convention — every method raises plain ValueError (the API layer maps it
+# to an HTTPException), see app/api/tms.py.
+
+
+class TMSApprovalEvent(BaseModel):
+    """Normalized "a translation was approved" signal, parsed out of a
+    provider's webhook payload (or a polling result). `key` is the stable
+    string identifier we set on push — the TranslationUnit id."""
+    key: str
+    language: str            # the provider's own language/locale code
+    approved_text: str
+    translator: Optional[str] = None
+
+
+class TMSIntegration(ABC):
+    provider: str
+
+    @abstractmethod
+    async def upsert_source_string(
+        self, *, key: str, text: str,
+        context: Optional[str] = None, max_length: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Create the source string, or update it if one with this `key`
+        (stable identifier) already exists. Returns {"string_id": ..., ...}."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def add_suggestion(self, *, string_id: str, language: str, text: str) -> Dict[str, Any]:
+        """Add a machine-translation draft as a translation suggestion for
+        a reviewer to accept or edit."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def add_comment(self, *, string_id: str, text: str) -> Dict[str, Any]:
+        """Attach a note (quality score / model / flags) visible in the TMS
+        editor next to the string."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def fetch_approved_translation(self, *, string_id: str, language: str) -> Optional[str]:
+        """The current approved translation for a string + language, or
+        None. The polling fallback for deployments without a public webhook."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def ensure_webhook(self, *, callback_url: str, events: List[str]) -> Dict[str, Any]:
+        """Register a project webhook at `callback_url` for `events`,
+        idempotently (a no-op if one with the same URL already exists)."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def parse_webhook_event(
+        self, headers: Mapping[str, str], body: bytes, secret: str,
+    ) -> Optional[TMSApprovalEvent]:
+        """Verify an inbound webhook (raise ValueError on a bad signature)
+        and parse it. Returns a TMSApprovalEvent for an approval event, or
+        None for events we don't act on."""
         raise NotImplementedError

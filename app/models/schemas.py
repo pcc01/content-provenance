@@ -1173,3 +1173,34 @@ class CMSPullResponse(BaseModel):
     # pulling and deciding how to translate are separate concerns (see
     # cms_service.pull_source_from_cms's docstring).
     source_id: str
+
+
+# ── TMS Integration (Crowdin) — app/api/tms.py, app/core/tms_service.py ────
+
+class TMSSendRequest(BaseModel):
+    unit_id: str
+    provider: Optional[str] = None                 # defaults to settings.tms_provider
+    include_mt_draft: bool = True                  # add unit.target_text as a suggestion
+    include_quality_note: bool = True              # attach latest score/flags as a comment
+
+
+class TMSSendResponse(BaseModel):
+    unit_id: str
+    provider: str
+    string_id: str
+    created: bool                                  # was the source string newly created
+    suggestion_added: bool
+    comment_added: bool
+
+
+class TMSWebhookResult(BaseModel):
+    applied: bool
+    unit_id: Optional[str] = None
+    detail: str
+
+
+class TMSStatusResponse(BaseModel):
+    provider: str
+    configured: bool
+    project_id: Optional[str] = None
+    detail: Optional[str] = None

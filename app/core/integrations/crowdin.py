@@ -53,13 +53,49 @@ def crowdin_lang(locale: str) -> str:
 class CrowdinIntegration(TMSIntegration):
     provider = "crowdin"
 
-    def __init__(self, base_url: str, project_id: str, api_token: str, timeout: float = 20.0):
+    def __init__(
+        self, base_url: str, project_id: str, api_token: str,
+        branch: str = "", timeout: float = 20.0,
+    ):
         self.base_url = base_url.rstrip("/")
         self.project_id = str(project_id)
         self.api_token = api_token
+        self.branch_name = branch or ""
+        self._branch_id: Optional[int] = None
         self.timeout = timeout
 
     # ── source strings ───────────────────────────────────────────────────
+
+    async def _resolve_branch_id(self) -> int:
+        """String-based projects attach strings to a branch. Resolve (and
+        cache) the configured branch by name, or the project's first branch,
+        creating a 'content-provenance' branch only if the project has none."""
+        if self._branch_id is not None:
+            return self._branch_id
+        raw = await self._request(
+            "GET", f"/projects/{self.project_id}/branches", params={"limit": 100},
+        )
+        branches = [row.get("data", row) for row in raw.get("data", [])]
+        if self.branch_name:
+            for b in branches:
+                if b.get("name") == self.branch_name:
+                    self._branch_id = int(b["id"])
+                    return self._branch_id
+            created = await self._request(
+                "POST", f"/projects/{self.project_id}/branches",
+                json={"name": self.branch_name},
+            )
+            self._branch_id = int(_data(created)["id"])
+            return self._branch_id
+        if branches:
+            self._branch_id = int(branches[0]["id"])
+            return self._branch_id
+        created = await self._request(
+            "POST", f"/projects/{self.project_id}/branches",
+            json={"name": "content-provenance"},
+        )
+        self._branch_id = int(_data(created)["id"])
+        return self._branch_id
 
     async def upsert_source_string(
         self, *, key: str, text: str,
@@ -74,7 +110,7 @@ class CrowdinIntegration(TMSIntegration):
             raw = await self._request("PATCH", f"/projects/{self.project_id}/strings/{sid}", json=patch)
             return {"string_id": str(sid), "created": False, "raw": raw}
 
-        body: Dict[str, Any] = {"text": text, "identifier": key}
+        body: Dict[str, Any] = {"text": text, "identifier": key, "branchId": await self._resolve_branch_id()}
         if context is not None:
             body["context"] = context
         if max_length is not None:
@@ -85,7 +121,10 @@ class CrowdinIntegration(TMSIntegration):
     async def _find_string(self, identifier: str) -> Optional[Dict[str, Any]]:
         raw = await self._request(
             "GET", f"/projects/{self.project_id}/strings",
-            params={"filter": identifier, "scope": "identifier", "limit": 50},
+            params={
+                "filter": identifier, "scope": "identifier", "limit": 50,
+                "branchId": await self._resolve_branch_id(),
+            },
         )
         for row in raw.get("data", []):
             d = row.get("data", row)
@@ -96,10 +135,17 @@ class CrowdinIntegration(TMSIntegration):
     # ── suggestions + comments ───────────────────────────────────────────
 
     async def add_suggestion(self, *, string_id: str, language: str, text: str) -> Dict[str, Any]:
-        return await self._request(
-            "POST", f"/projects/{self.project_id}/translations",
-            json={"stringId": int(string_id), "languageId": crowdin_lang(language), "text": text},
-        )
+        try:
+            return await self._request(
+                "POST", f"/projects/{self.project_id}/translations",
+                json={"stringId": int(string_id), "languageId": crowdin_lang(language), "text": text},
+            )
+        except ValueError as exc:
+            # An identical suggestion already exists — not an error for our
+            # purposes, the string is in Crowdin and reviewable.
+            if "Duplicate translation" in str(exc):
+                return {"duplicate": True}
+            raise
 
     async def add_comment(self, *, string_id: str, text: str) -> Dict[str, Any]:
         return await self._request(

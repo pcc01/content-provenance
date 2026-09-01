@@ -181,6 +181,10 @@ class Settings:
     crowdin_base_url: str = os.getenv("CROWDIN_BASE_URL", "https://api.crowdin.com/api/v2")
     crowdin_project_id: str = os.getenv("CROWDIN_PROJECT_ID", "")
     crowdin_api_token: str = os.getenv("CROWDIN_API_TOKEN", "")
+    # String-based Crowdin projects attach strings to a branch. Blank = use
+    # the project's first branch (usually "main"); set a name to target /
+    # create a specific one.
+    crowdin_branch: str = os.getenv("CROWDIN_BRANCH", "")
     # Shared secret appended as ?secret=… to the webhook callback URL and
     # verified (hmac.compare_digest) on every inbound POST /integrations/tms/webhook.
     crowdin_webhook_secret: str = os.getenv("CROWDIN_WEBHOOK_SECRET", "")

@@ -69,6 +69,7 @@ def get_tms_integration(provider: Optional[str] = None) -> TMSIntegration:
             base_url=settings.crowdin_base_url,
             project_id=settings.crowdin_project_id,
             api_token=settings.crowdin_api_token,
+            branch=settings.crowdin_branch,
             timeout=settings.crowdin_timeout_seconds,
         )
 

@@ -484,7 +484,7 @@ just the API — its "Details" tab has a "Record a deployment" form and a
 ```
 
 `method`: `ai` | `human` | `hybrid`  
-`context`: `website` | `banner_ad` | `marketing_campaign` | `email` | `mobile_app` | `social_media` | `print` | `api`  
+`context`: `website` | `banner_ad` | `marketing_campaign` | `email` | `mobile_app` | `social_media` | `print` | `api` | `cms` | `other`  
 `provider`/`model`: optional per-request overrides — see
 [Translation & Evaluation Backends](#translation--evaluation-backends).
 
